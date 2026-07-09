@@ -8,6 +8,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { CompaniesModule } from './modules/companies/companies.module';
+import { ConfigTablesModule } from './modules/config-tables/config-tables.module';
 import { UsersModule } from './modules/users/users.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -20,11 +21,11 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     PrismaModule,
     HealthModule,
-    // Domain module skeletons (Task 0.0) — fleshed out by later tasks.
     AuthModule,
     CompaniesModule,
     BranchesModule,
     UsersModule,
+    ConfigTablesModule,
     AuditModule,
     ApprovalsModule,
     AccountingModule,

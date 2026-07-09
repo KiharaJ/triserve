@@ -10,6 +10,7 @@ import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 import { createHash, randomUUID } from 'node:crypto';
+import type { PaginatedResponse } from '@triserve/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import type {
   AccessTokenPayload,
@@ -18,6 +19,7 @@ import type {
   MfaTokenPayload,
   PublicUser,
   RefreshTokenPayload,
+  SessionEntry,
 } from './auth.types';
 
 /** TOTP issuer shown in authenticator apps. */
@@ -186,6 +188,48 @@ export class AuthService {
       throw new UnauthorizedException('User no longer active');
     }
     return this.toPublicUser(user);
+  }
+
+  // -------------------------------------------------------------------------
+  // Sessions (device / login history)
+  // -------------------------------------------------------------------------
+
+  /**
+   * GET /auth/sessions (Task 0.7) — the CURRENT user's session history for
+   * the security screen, newest activity first. Sessions are scoped by
+   * user_id (never company-wide): a user only ever sees their own devices.
+   */
+  async listSessions(
+    userId: string,
+    currentSessionId: string,
+    page = 1,
+    pageSize = 20,
+  ): Promise<PaginatedResponse<SessionEntry>> {
+    const where = { userId };
+    const [total, rows] = await Promise.all([
+      this.prisma.session.count({ where }),
+      this.prisma.session.findMany({
+        where,
+        orderBy: [{ lastUsedAt: 'desc' }, { id: 'desc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    return {
+      data: rows.map((s) => ({
+        id: s.id,
+        user_agent: s.userAgent,
+        ip: s.ip,
+        created_at: s.createdAt.toISOString(),
+        last_used_at: s.lastUsedAt.toISOString(),
+        revoked_at: s.revokedAt?.toISOString() ?? null,
+        current: s.id === currentSessionId,
+      })),
+      page,
+      page_size: pageSize,
+      total,
+    };
   }
 
   // -------------------------------------------------------------------------

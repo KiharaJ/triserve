@@ -1,8 +1,16 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
+import { BranchesController } from './branches.controller';
+import { BranchesService } from './branches.service';
 
 /**
- * BranchesModule — skeleton (Task 0.0). Providers, controllers and entities
- * are added by later tasks.
+ * BranchesModule — Task 0.7: branch admin CRUD (/api/v1/branches) for the
+ * company & branch admin screens.
  */
-@Module({})
+@Module({
+  imports: [AuthModule],
+  controllers: [BranchesController],
+  providers: [BranchesService],
+  exports: [BranchesService],
+})
 export class BranchesModule {}

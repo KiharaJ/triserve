@@ -135,6 +135,10 @@ async function main(): Promise<void> {
       role: 'SUPER_ADMIN',
       scope: 'group',
       active: true,
+      // Keep the dev admin's password aligned with SEED_ADMIN_PASSWORD:
+      // re-running the seed after changing the env (or after an older seed
+      // hashed a different default) must always leave a working login.
+      passwordHash,
     },
     create: {
       id: randomUUID(),

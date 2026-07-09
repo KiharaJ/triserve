@@ -57,6 +57,21 @@ export interface PublicUser {
   totp_enabled: boolean;
 }
 
+/**
+ * One row of GET /auth/sessions (Task 0.7): device/login history for the
+ * security screen. `current` marks the session behind the presented access
+ * token. Refresh-token hashes never leave the API.
+ */
+export interface SessionEntry {
+  id: string;
+  user_agent: string | null;
+  ip: string | null;
+  created_at: string;
+  last_used_at: string;
+  revoked_at: string | null;
+  current: boolean;
+}
+
 export interface AuthTokensResponse {
   access_token: string;
   refresh_token: string;

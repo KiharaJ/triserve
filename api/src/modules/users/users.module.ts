@@ -1,8 +1,16 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
 
 /**
- * UsersModule — skeleton (Task 0.0). Providers, controllers and entities
- * are added by later tasks.
+ * UsersModule — Task 0.7: user admin CRUD (/api/v1/users) — role, scope,
+ * home branch, activate/deactivate — for the admin screens.
  */
-@Module({})
+@Module({
+  imports: [AuthModule],
+  controllers: [UsersController],
+  providers: [UsersService],
+  exports: [UsersService],
+})
 export class UsersModule {}

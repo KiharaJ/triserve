@@ -1,8 +1,16 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../auth/auth.module';
+import { CompaniesController } from './companies.controller';
+import { CompaniesService } from './companies.service';
 
 /**
- * CompaniesModule — skeleton (Task 0.0). Providers, controllers and entities
- * are added by later tasks.
+ * CompaniesModule — Task 0.7: the caller's company profile
+ * (GET/PATCH /api/v1/company) for the admin screens.
  */
-@Module({})
+@Module({
+  imports: [AuthModule],
+  controllers: [CompaniesController],
+  providers: [CompaniesService],
+  exports: [CompaniesService],
+})
 export class CompaniesModule {}

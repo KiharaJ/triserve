@@ -5,16 +5,20 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import type { PaginatedResponse } from '@triserve/shared';
 import type { Request } from 'express';
+import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { AuthService } from './auth.service';
 import type {
   AuthTokensResponse,
   AuthUser,
   LoginResponse,
   PublicUser,
+  SessionEntry,
 } from './auth.types';
 import { CurrentUser } from './decorators/current-user.decorator';
 import {
@@ -63,6 +67,25 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(@CurrentUser() user: AuthUser): Promise<void> {
     await this.authService.logout(user.sessionId);
+  }
+
+  /**
+   * GET /auth/sessions (Task 0.7) — the current user's device/login
+   * history for the security screen. Own sessions only, newest use first;
+   * `current` marks the session behind the presented access token.
+   */
+  @Get('sessions')
+  @UseGuards(AuthGuard)
+  sessions(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ListQueryDto,
+  ): Promise<PaginatedResponse<SessionEntry>> {
+    return this.authService.listSessions(
+      user.userId,
+      user.sessionId,
+      query.page ?? 1,
+      query.page_size ?? 20,
+    );
   }
 
   @Post('2fa/setup')
