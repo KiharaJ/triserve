@@ -1,16 +1,66 @@
-import { Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
+import type { ReactNode } from 'react'
 import { AppShell } from '@/components/layout/app-shell'
-import { AdminPage } from '@/pages/admin'
+import { useAuth } from '@/lib/auth'
+import { BranchesPage } from '@/pages/admin/branches'
+import { CompanyPage } from '@/pages/admin/company'
+import { ConfigPage } from '@/pages/admin/config'
+import { UsersPage } from '@/pages/admin/users'
+import { ApprovalsPage } from '@/pages/approvals'
+import { AuditPage } from '@/pages/audit'
 import { DashboardPage } from '@/pages/dashboard'
 import { JobsPage } from '@/pages/jobs'
+import { LoginPage } from '@/pages/login'
+import { SecurityPage } from '@/pages/security'
+
+/** Everything behind here requires a session; anonymous users go to /login. */
+function RequireAuth({ children }: { children: ReactNode }) {
+  const { status } = useAuth()
+  const location = useLocation()
+
+  if (status === 'loading') {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm text-muted-foreground">
+        Loading…
+      </div>
+    )
+  }
+  if (status === 'anonymous') {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location.pathname + location.search }}
+      />
+    )
+  }
+  return children
+}
 
 function App() {
   return (
     <Routes>
-      <Route element={<AppShell />}>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <AppShell />
+          </RequireAuth>
+        }
+      >
         <Route index element={<DashboardPage />} />
         <Route path="jobs" element={<JobsPage />} />
-        <Route path="admin" element={<AdminPage />} />
+        <Route path="approvals" element={<ApprovalsPage />} />
+        <Route path="audit" element={<AuditPage />} />
+        <Route path="security" element={<SecurityPage />} />
+        <Route path="admin">
+          <Route index element={<Navigate to="/admin/company" replace />} />
+          <Route path="company" element={<CompanyPage />} />
+          <Route path="branches" element={<BranchesPage />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="config" element={<ConfigPage />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
   )
