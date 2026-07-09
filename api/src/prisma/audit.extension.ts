@@ -92,6 +92,12 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // moves — audited like the other config tables.
   Prisma.ModelName.WorkflowState,
   Prisma.ModelName.WorkflowTransition,
+  // Task 1.3 (§4.3): jobs are audited like every business table. Plain
+  // create/patch record CREATE/UPDATE automatically; a state move ALSO emits
+  // a semantic TRANSITION row via AuditService.record() (the extension only
+  // sees the mechanical UPDATE). JobCounter is NOT listed — it is an internal
+  // sequence written via raw SQL, not business data.
+  Prisma.ModelName.Job,
 ]);
 
 /** Mutations we intercept and audit. */

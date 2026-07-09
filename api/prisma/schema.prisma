@@ -74,6 +74,16 @@ enum PreferredLanguage {
   SW
 }
 
+/// Warranty status of a job (§4.3). Legacy Y/N maps to IW/OW; GOODWILL is a
+/// free repair outside warranty; UNKNOWN is the intake default until the
+/// front desk / diagnosis resolves it.
+enum WarrantyStatus {
+  IW
+  OW
+  GOODWILL
+  UNKNOWN
+}
+
 /// Account classes of the chart of accounts (§4.9 / E1).
 enum AccountType {
   ASSET
@@ -134,6 +144,7 @@ model Company {
   customers      Customer[]
   devices        Device[]
   deviceModels   DeviceModel[]
+  jobs           Job[]
 
   workflowStates      WorkflowState[]
   workflowTransitions WorkflowTransition[]
@@ -165,6 +176,7 @@ model Branch {
   approvals          Approval[]
   journalEntries     JournalEntry[]
   preferredCustomers Customer[]     @relation("CustomerPreferredBranch")
+  jobs               Job[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -229,6 +241,13 @@ model User {
   requestedApprovals   Approval[]     @relation("ApprovalRequestedBy")
   decidedApprovals     Approval[]     @relation("ApprovalApprovedBy")
   postedJournalEntries JournalEntry[] @relation("JournalEntryPostedBy")
+
+  // Task 1.3 (§4.3): the several actor roles a user plays on a job.
+  bookedJobs     Job[] @relation("JobBookedBy")
+  engineerJobs   Job[] @relation("JobAssignedEngineer")
+  dispatchedJobs Job[] @relation("JobDispatchedBy")
+  createdJobs    Job[] @relation("JobCreatedBy")
+  updatedJobs    Job[] @relation("JobUpdatedBy")
 
   @@map("users")
 }
@@ -518,6 +537,7 @@ model Customer {
   company         Company  @relation(fields: [companyId], references: [id])
   preferredBranch Branch?  @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
   devices         Device[]
+  jobs            Job[]
 
   @@index([companyId, phone])
   @@index([companyId, phoneNormalized])
@@ -556,6 +576,7 @@ model Device {
   company     Company      @relation(fields: [companyId], references: [id])
   customer    Customer     @relation(fields: [customerId], references: [id])
   deviceModel DeviceModel? @relation(fields: [modelId], references: [id])
+  jobs        Job[]
 
   @@index([companyId, imeiSerial])
   @@index([customerId])
@@ -595,6 +616,7 @@ model WorkflowState {
   company         Company              @relation(fields: [companyId], references: [id])
   transitionsFrom WorkflowTransition[] @relation("TransitionFromState")
   transitionsTo   WorkflowTransition[] @relation("TransitionToState")
+  jobs            Job[]
 
   @@unique([companyId, code])
   @@map("workflow_states")
@@ -695,6 +717,7 @@ model FaultCode {
   updatedBy   User?     @relation("FaultCodeUpdatedBy", fields: [updatedById], references: [id])
 
   company Company @relation(fields: [companyId], references: [id])
+  jobs    Job[]
 
   @@unique([companyId, code])
   @@map("fault_codes")
@@ -744,4 +767,98 @@ model TaxRate {
 
   @@unique([companyId, code])
   @@map("tax_rates")
+}
+
+// ---------------------------------------------------------------------------
+// Jobs (§4.3 / §5, Task 1.3) — the heart of the system.
+//
+// A job is a device brought in for service. It is created at the workflow
+// INITIAL state (RECEIVED), carries a branch-prefixed human `job_no`
+// (generated concurrency-safely via JobCounter), and moves through the
+// configurable workflow (Task 1.2) EXCLUSIVELY via POST /jobs/{id}/transition
+// — validated by WorkflowService. Jobs are COMPANY- AND BRANCH-scoped (a
+// branch user only sees their branch; TECHNICIANs are further restricted in
+// the service to jobs assigned to them). Mutations are audited; state moves
+// additionally emit a semantic TRANSITION audit row.
+//
+// claim_id / invoice_id are nullable columns reserved for later phases
+// (warranty_claims / invoices tables don't exist yet) — plain CHAR(36) with
+// NO FK, mirroring how those links are backfilled once those modules land.
+model Job {
+  id                 String         @id @default(uuid()) @db.Char(36)
+  companyId          String         @map("company_id") @db.Char(36)
+  /// Human-friendly, branch-prefixed, unique per company: `DAR-2026-000123`.
+  jobNo              String         @map("job_no") @db.VarChar(50)
+  /// Samsung SO / job-card number — stored as a CLEAN string (Excel
+  /// scientific-notation like `4.29260291E9` is expanded on intake).
+  soNumber           String?        @map("so_number") @db.VarChar(100)
+  branchId           String         @map("branch_id") @db.Char(36)
+  customerId         String         @map("customer_id") @db.Char(36)
+  deviceId           String         @map("device_id") @db.Char(36)
+  bookedById         String         @map("booked_by") @db.Char(36)
+  assignedEngineerId String?        @map("assigned_engineer_id") @db.Char(36)
+  warrantyStatus     WarrantyStatus @default(UNKNOWN) @map("warranty_status")
+  faultReported      String?        @map("fault_reported") @db.Text
+  faultCodeId        String?        @map("fault_code_id") @db.Char(36)
+  techReport         String?        @map("tech_report") @db.Text
+  /// FK → workflow_states — the job's current lifecycle status (§4.10).
+  stateId            String         @map("state_id") @db.Char(36)
+  receivedAt         DateTime       @map("received_at") @db.DateTime(3)
+  readyAt            DateTime?      @map("ready_at") @db.DateTime(3)
+  dispatchedAt       DateTime?      @map("dispatched_at") @db.DateTime(3)
+  dispatchedById     String?        @map("dispatched_by") @db.Char(36)
+  receivedByCustomer String?        @map("received_by_customer") @db.VarChar(255)
+  waybillNo          String?        @map("waybill_no") @db.VarChar(100)
+  /// Reserved for later phases (no FK — target tables don't exist yet).
+  claimId            String?        @map("claim_id") @db.Char(36)
+  invoiceId          String?        @map("invoice_id") @db.Char(36)
+  notes              String?        @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company          Company       @relation(fields: [companyId], references: [id])
+  branch           Branch        @relation(fields: [branchId], references: [id])
+  customer         Customer      @relation(fields: [customerId], references: [id])
+  device           Device        @relation(fields: [deviceId], references: [id])
+  bookedBy         User          @relation("JobBookedBy", fields: [bookedById], references: [id])
+  assignedEngineer User?         @relation("JobAssignedEngineer", fields: [assignedEngineerId], references: [id])
+  faultCode        FaultCode?    @relation(fields: [faultCodeId], references: [id])
+  state            WorkflowState @relation(fields: [stateId], references: [id])
+  dispatchedBy     User?         @relation("JobDispatchedBy", fields: [dispatchedById], references: [id])
+  createdBy        User?         @relation("JobCreatedBy", fields: [createdById], references: [id])
+  updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, jobNo])
+  @@index([companyId, branchId, stateId])
+  @@index([companyId, assignedEngineerId])
+  @@index([companyId, receivedAt])
+  @@index([customerId])
+  @@index([deviceId])
+  @@map("jobs")
+}
+
+/// Per-(company, branch, year) monotonic counter backing concurrency-safe
+/// job_no generation (§4.3). Incremented atomically via a single MySQL
+/// `INSERT … ON DUPLICATE KEY UPDATE next_seq = LAST_INSERT_ID(next_seq + 1)`
+/// inside an interactive transaction, so N parallel job creates get N
+/// distinct sequential numbers with no dupes (the @@unique row lock
+/// serializes the increment). Accessed ONLY via raw SQL — it deliberately
+/// has NO relations and is NOT audited (an internal sequence, not business
+/// data). The unique constraint on jobs.job_no is the ultimate backstop.
+model JobCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("job_counters")
 }

@@ -11,6 +11,7 @@ import { CompaniesModule } from './modules/companies/companies.module';
 import { ConfigTablesModule } from './modules/config-tables/config-tables.module';
 import { CustomersModule } from './modules/customers/customers.module';
 import { DevicesModule } from './modules/devices/devices.module';
+import { JobsModule } from './modules/jobs/jobs.module';
 import { ModelsModule } from './modules/models/models.module';
 import { UsersModule } from './modules/users/users.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
@@ -37,6 +38,7 @@ import { PrismaModule } from './prisma/prisma.module';
     DevicesModule,
     ModelsModule,
     WorkflowModule,
+    JobsModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -103,3 +103,23 @@ export function normalizeImeiSerial(
   const cleaned = value.replace(/[\s.\-/]/g, '').toUpperCase();
   return cleaned === '' ? null : cleaned;
 }
+
+/**
+ * Normalize a Samsung SO / job-card number for storage as a CLEAN string
+ * (Task 1.3, §4.3). The legacy spreadsheets carry SO numbers mangled by
+ * Excel into scientific notation ('4.29260291E9' → '4292602910'); expand
+ * those exactly (no float round-trip, reusing {@link expandScientificNotation})
+ * and trim surrounding whitespace. Non-scientific input is stored verbatim
+ * (SO numbers are otherwise free-form text). Returns null for empty/blank
+ * input.
+ */
+export function normalizeSoNumber(
+  raw: string | null | undefined,
+): string | null {
+  if (raw == null) return null;
+  const value = String(raw).trim();
+  if (value === '') return null;
+
+  const expanded = expandScientificNotation(value);
+  return expanded !== null ? expanded : value;
+}

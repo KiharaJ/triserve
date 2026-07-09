@@ -56,6 +56,12 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // model is branch-scoped.
   Prisma.ModelName.WorkflowState,
   Prisma.ModelName.WorkflowTransition,
+  // Task 1.3 (§4.3): jobs are company- AND branch-scoped (see
+  // BRANCH_SCOPED_MODELS below). JobCounter is listed for defense-in-depth,
+  // but in practice it is only ever touched via raw SQL (which bypasses this
+  // extension entirely) — its company_id is passed explicitly there.
+  Prisma.ModelName.Job,
+  Prisma.ModelName.JobCounter,
 ]);
 
 /**
@@ -78,9 +84,16 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
  * device history, E3) from every branch except the preferred one, breaking
  * the "front desk finds/creates customer by phone" flow (§6.1) group-wide.
  * `DeviceModel` is company-level config (like fault codes) — no branch_id.
+ *
+ * `Job` (Task 1.3, §4.3) IS branch-scoped: a job belongs to the branch that
+ * received the device, and a scope='branch' user only sees their branch's
+ * jobs. TECHNICIANs are restricted FURTHER (to jobs assigned to them) inside
+ * JobsService — that is a per-user filter, not a tenancy boundary, so it
+ * lives in the service rather than here.
  */
 export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Approval,
+  Prisma.ModelName.Job,
 ]);
 
 /** Operations that accept a `where` filter we can tighten. */
