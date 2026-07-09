@@ -1,0 +1,26 @@
+{
+  "name": "triserve",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TriServe — Service Centre Management System + POS (Tristate Systems Ltd)",
+  "workspaces": [
+    "packages/*",
+    "api",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev -w @triserve/api\" \"npm run dev -w @triserve/web\"",
+    "dev:api": "npm run dev -w @triserve/api",
+    "dev:web": "npm run dev -w @triserve/web",
+    "build": "npm run build -w @triserve/shared && npm run build -w @triserve/api && npm run build -w @triserve/web",
+    "lint": "npm run lint -w @triserve/api && npm run lint -w @triserve/web",
+    "prisma:migrate": "npm run prisma:migrate -w @triserve/api",
+    "prisma:studio": "npm run prisma:studio -w @triserve/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

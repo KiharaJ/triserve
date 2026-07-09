@@ -1,0 +1,16 @@
+// TriServe Prisma schema.
+//
+// Task 0.0: datasource + generator only — domain models are added by later
+// tasks. Conventions (see /docs/DESIGN.md and /README.md):
+//   - IDs: CHAR(36) UUIDs generated in the app (uuid v4)
+//   - Timestamps: DATETIME(3) stored in UTC
+//   - Money: BIGINT minor units + CHAR(3) currency code — never floats
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
