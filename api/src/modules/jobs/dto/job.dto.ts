@@ -34,6 +34,11 @@ export class JobListQueryDto extends ListQueryDto {
   @IsUUID()
   assigned_engineer_id?: string;
 
+  /** Task 1.5 (CRM stub, §4.2/E2): a customer's jobs for their 360 view. */
+  @IsOptional()
+  @IsUUID()
+  customer_id?: string;
+
   @IsOptional()
   @IsEnum(WarrantyStatus)
   warranty_status?: WarrantyStatus;

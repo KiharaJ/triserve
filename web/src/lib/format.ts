@@ -81,3 +81,20 @@ export function minorToMajor(minor: string | null | undefined): string {
     return ''
   }
 }
+
+/**
+ * Elapsed time since an ISO timestamp as a compact age label ("42m", "3h",
+ * "5d") — used on Kanban cards (Task 1.5). Real elapsed time, so it is not
+ * timezone-sensitive; only formatDate/formatDateTime need the TZ.
+ */
+export function formatAge(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const ms = Date.now() - new Date(iso).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return '0m'
+  const mins = Math.floor(ms / 60_000)
+  if (mins < 60) return `${mins}m`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  return `${days}d`
+}

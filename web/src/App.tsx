@@ -8,8 +8,11 @@ import { ConfigPage } from '@/pages/admin/config'
 import { UsersPage } from '@/pages/admin/users'
 import { ApprovalsPage } from '@/pages/approvals'
 import { AuditPage } from '@/pages/audit'
+import { CustomerDetailPage } from '@/pages/customers/detail'
 import { DashboardPage } from '@/pages/dashboard'
-import { JobsPage } from '@/pages/jobs'
+import { JobsBoardPage } from '@/pages/jobs/board'
+import { JobDetailPage } from '@/pages/jobs/detail'
+import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
 import { SecurityPage } from '@/pages/security'
 
@@ -49,7 +52,12 @@ function App() {
         }
       >
         <Route index element={<DashboardPage />} />
-        <Route path="jobs" element={<JobsPage />} />
+        <Route path="jobs">
+          <Route index element={<JobsBoardPage />} />
+          <Route path="new" element={<JobIntakePage />} />
+          <Route path=":id" element={<JobDetailPage />} />
+        </Route>
+        <Route path="customers/:id" element={<CustomerDetailPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="security" element={<SecurityPage />} />

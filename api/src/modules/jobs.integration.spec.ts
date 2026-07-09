@@ -346,6 +346,38 @@ describe('POST /jobs — concurrency-safe job_no (§4.3)', () => {
   });
 });
 
+describe('GET /jobs?customer_id= (Task 1.5, CRM stub §4.2/E2)', () => {
+  it('filters to only that customer’s jobs (company/branch scoping still applies)', async () => {
+    const cust = await raw.customer.create({
+      data: {
+        companyId,
+        name: `${TEST_PREFIX} CustFilter`,
+        phoneNormalized: '+255765333222',
+      },
+    });
+    const mine = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer_id: cust.id,
+      device: { category: 'HHP', imei_serial: '351000000000060' },
+    });
+    // A second job for a DIFFERENT customer must not show up in the filter.
+    await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} CustFilterOther`, phone: '0765333555' },
+      device: { category: 'HHP', imei_serial: '351000000000078' },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/jobs')
+      .query({ customer_id: cust.id })
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const body = res.body as { data: JobBody[]; total: number };
+    expect(body.total).toBe(1);
+    expect(body.data.map((j) => j.id)).toEqual([mine.id]);
+  });
+});
+
 describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
   it('RECEIVED→DIAGNOSING allowed (advisor) + writes a TRANSITION audit row', async () => {
     const job = await createJob(tokens.advisorDar, {

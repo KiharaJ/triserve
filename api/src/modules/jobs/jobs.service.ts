@@ -159,6 +159,7 @@ export class JobsService {
       companyId: user.companyId,
       deletedAt: null,
       ...(query.branch_id ? { branchId: query.branch_id } : {}),
+      ...(query.customer_id ? { customerId: query.customer_id } : {}),
       ...(query.state ? { state: { code: query.state } } : {}),
       ...(query.warranty_status
         ? { warrantyStatus: query.warranty_status }

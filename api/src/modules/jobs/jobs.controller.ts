@@ -32,7 +32,7 @@ import {
 /**
  * /api/v1/jobs (Task 1.3, DESIGN.md §4.3 / §5).
  *
- *   GET   /jobs?branch_id=&state=&assigned_engineer_id=&warranty_status=&q=&from=&to=&page=
+ *   GET   /jobs?branch_id=&state=&assigned_engineer_id=&customer_id=&warranty_status=&q=&from=&to=&page=
  *                                                       'job.read'
  *   GET   /jobs/{id}                                    'job.read'
  *   POST  /jobs                                         'job.create'

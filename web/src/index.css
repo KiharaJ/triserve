@@ -128,3 +128,26 @@
     @apply font-sans;
     }
 }
+
+/* Printable job ticket (Task 1.5, DESIGN.md §6.1 "prints job ticket + SMS").
+   Only the .job-ticket subtree is shown when printing — the app chrome
+   (sidebar, topbar, buttons) is hidden via visibility so it doesn't reflow
+   the print layout. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .job-ticket,
+  .job-ticket * {
+    visibility: visible;
+  }
+  .job-ticket {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    padding: 1rem;
+    color: #000;
+    background: #fff;
+  }
+}
