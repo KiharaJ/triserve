@@ -7,15 +7,18 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import type { Request } from 'express';
+import { setCurrentUser } from '../../../common/context/request-context';
 import type { AccessTokenPayload, AuthUser } from '../auth.types';
 
 /**
  * Validates the `Authorization: Bearer <access_token>` header and attaches
- * an {@link AuthUser} to `request.user`. Rejects refresh/mfa tokens (wrong
- * secret or wrong `type` claim). Read the user via `@CurrentUser()`.
+ * an {@link AuthUser} to `request.user` AND to the AsyncLocalStorage request
+ * context (Task 0.3) so the Prisma company-scope extension can see the
+ * acting user. Rejects refresh/mfa tokens (wrong secret or wrong `type`
+ * claim). Read the user via `@CurrentUser()`.
  *
- * Authorization (permission matrix, branch scoping) is Task 0.3+ — this
- * guard only authenticates.
+ * Permission checks live in {@link PermissionsGuard} — list this guard
+ * first: `@UseGuards(AuthGuard, PermissionsGuard)`.
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -50,7 +53,7 @@ export class AuthGuard implements CanActivate {
       throw new UnauthorizedException('Invalid or expired access token');
     }
 
-    request.user = {
+    const user: AuthUser = {
       userId: payload.sub,
       sessionId: payload.sid,
       companyId: payload.companyId,
@@ -58,6 +61,10 @@ export class AuthGuard implements CanActivate {
       scope: payload.scope,
       homeBranchId: payload.homeBranchId,
     };
+    request.user = user;
+    // Expose the acting user to the ALS request context so the Prisma
+    // company-scope extension applies tenancy filters (Task 0.3).
+    setCurrentUser(user);
     return true;
   }
 }

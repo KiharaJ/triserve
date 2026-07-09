@@ -2,9 +2,12 @@
  * @triserve/shared — shared TypeScript types/enums used by both
  * @triserve/api and @triserve/web.
  *
- * Domain types/enums are added by later tasks. Task 0.0 only ships the
- * cross-cutting API envelope contracts.
+ * Ships the cross-cutting API envelope contracts (Task 0.0) and the
+ * permission matrix (Task 0.3 / E18). Domain types/enums are added by
+ * later tasks.
  */
+
+export * from './permissions';
 
 /** Standard envelope returned by every list endpoint. */
 export interface PaginatedResponse<T> {

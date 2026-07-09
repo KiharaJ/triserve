@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { RequestContextMiddleware } from './common/context/request-context.middleware';
 import { HealthModule } from './health/health.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
@@ -29,4 +30,10 @@ import { PrismaModule } from './prisma/prisma.module';
     AccountingModule,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    // Enter the AsyncLocalStorage request context for EVERY route so the
+    // Prisma company-scope extension can see the acting user (Task 0.3).
+    consumer.apply(RequestContextMiddleware).forRoutes('{*splat}');
+  }
+}
