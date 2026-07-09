@@ -21,6 +21,16 @@ export const PERMISSIONS = {
     'job.update',
     'job.assign',
     'job.transition',
+    // Task 1.2 (§4.10/E7): granular workflow-transition permissions used by
+    // the seeded default workflow (workflow_transitions.required_permission).
+    // 'job.transition' gates general front-desk moves (intake, diagnosis
+    // routing, cancellation); '.repair' gates bench moves (→IN_REPAIR, →QC,
+    // QC→READY) held by TECHNICIAN + managers; '.dispatch' gates handover
+    // moves (READY→DISPATCHED, DISPATCHED→CLOSED) held by SERVICE_ADVISOR
+    // (front desk) + managers. Technicians deliberately CANNOT dispatch;
+    // advisors deliberately cannot perform bench moves.
+    'job.transition.repair',
+    'job.transition.dispatch',
     'job.reopen',
   ],
   inventory: [
@@ -113,6 +123,8 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.update',
     'job.assign',
     'job.transition',
+    'job.transition.repair',
+    'job.transition.dispatch',
     'job.reopen',
     'inventory.read',
     'inventory.reserve',
@@ -161,6 +173,7 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.read',
     'job.update',
     'job.transition',
+    'job.transition.dispatch',
     'inventory.read',
     'pos.sell',
     'invoice.create',
@@ -174,6 +187,7 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.read',
     'job.update',
     'job.transition',
+    'job.transition.repair',
     'device.read',
     'model.read',
     'inventory.read',

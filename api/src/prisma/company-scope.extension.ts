@@ -51,6 +51,11 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Customer,
   Prisma.ModelName.Device,
   Prisma.ModelName.DeviceModel,
+  // Task 1.2 (§4.10/E7): the workflow engine is COMPANY-level config (like
+  // fault codes) — every branch shares the company's board, so neither
+  // model is branch-scoped.
+  Prisma.ModelName.WorkflowState,
+  Prisma.ModelName.WorkflowTransition,
 ]);
 
 /**

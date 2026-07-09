@@ -8,6 +8,8 @@
  *   - payment_method by (company_id, code)
  *   - approval_rule by (company_id, type)          (Task 0.5, §4.11/E8)
  *   - chart_of_accounts by (company_id, code)      (Task 0.6, §4.9/E1)
+ *   - workflow_state by (company_id, code)         (Task 1.2, §4.10/E7)
+ *   - workflow_transition by (company_id, from_state_id, to_state_id)
  *
  * Run with: npx prisma db seed   (wired via package.json "prisma.seed")
  */
@@ -85,6 +87,76 @@ const CHART_OF_ACCOUNTS: Array<{
   { code: '4000', name: 'Repair Revenue', type: 'REVENUE' },
   { code: '4010', name: 'Warranty Revenue', type: 'REVENUE' },
   { code: '5000', name: 'COGS', type: 'EXPENSE' },
+];
+
+/**
+ * DEFAULT workflow (Task 1.2, DESIGN.md §4.10/§5/E7) — the §5 job lifecycle
+ * as seeded data. Companies reshape it later via /workflow/* admin endpoints.
+ */
+const WORKFLOW_STATES: Array<{
+  code: string;
+  label: string;
+  isInitial?: boolean;
+  isTerminal?: boolean;
+  sortOrder: number;
+}> = [
+  { code: 'RECEIVED', label: 'Received', isInitial: true, sortOrder: 10 },
+  { code: 'DIAGNOSING', label: 'Diagnosing', sortOrder: 20 },
+  { code: 'AWAITING_CUSTOMER_APPROVAL', label: 'Awaiting Customer Approval', sortOrder: 30 },
+  { code: 'AWAITING_PARTS', label: 'Awaiting Parts', sortOrder: 40 },
+  { code: 'IN_REPAIR', label: 'In Repair', sortOrder: 50 },
+  { code: 'QC', label: 'Quality Check', sortOrder: 60 },
+  { code: 'READY', label: 'Ready for Collection', sortOrder: 70 },
+  { code: 'DISPATCHED', label: 'Dispatched', sortOrder: 80 },
+  { code: 'CLOSED', label: 'Closed', isTerminal: true, sortOrder: 90 },
+  { code: 'CANCELLED', label: 'Cancelled', isTerminal: true, sortOrder: 100 },
+  { code: 'RETURNED_UNREPAIRED', label: 'Returned Unrepaired', isTerminal: true, sortOrder: 110 },
+];
+
+/**
+ * Default transition edges + permission mapping:
+ *   - 'job.transition'          front-desk/general moves (intake, diagnosis
+ *                               routing, cancellations) — every job role.
+ *   - 'job.transition.repair'   bench moves (→IN_REPAIR, →QC, QC→READY) —
+ *                               TECHNICIAN + BRANCH_MANAGER (+SUPER_ADMIN).
+ *   - 'job.transition.dispatch' handover moves (READY→DISPATCHED,
+ *                               DISPATCHED→CLOSED) — SERVICE_ADVISOR +
+ *                               BRANCH_MANAGER (+SUPER_ADMIN); technicians
+ *                               deliberately cannot dispatch.
+ *
+ * AWAITING_CUSTOMER_APPROVAL→IN_REPAIR carries guard_code
+ * 'ow_quote_approved' — a stub (always true) until POS lands (Phase 3);
+ * requires_approval stays false for now (OW-quote gating comes with POS).
+ */
+const WORKFLOW_TRANSITIONS: Array<{
+  from: string;
+  to: string;
+  requiredPermission: string | null;
+  requiresApproval?: boolean;
+  guardCode?: string | null;
+}> = [
+  { from: 'RECEIVED', to: 'DIAGNOSING', requiredPermission: 'job.transition' },
+  { from: 'RECEIVED', to: 'CANCELLED', requiredPermission: 'job.transition' },
+  { from: 'DIAGNOSING', to: 'AWAITING_CUSTOMER_APPROVAL', requiredPermission: 'job.transition' },
+  { from: 'DIAGNOSING', to: 'AWAITING_PARTS', requiredPermission: 'job.transition' },
+  { from: 'DIAGNOSING', to: 'RETURNED_UNREPAIRED', requiredPermission: 'job.transition' },
+  { from: 'DIAGNOSING', to: 'CANCELLED', requiredPermission: 'job.transition' },
+  {
+    from: 'AWAITING_CUSTOMER_APPROVAL',
+    to: 'IN_REPAIR',
+    requiredPermission: 'job.transition.repair',
+    requiresApproval: false, // OW-quote approval gating arrives with POS
+    guardCode: 'ow_quote_approved',
+  },
+  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'AWAITING_PARTS', requiredPermission: 'job.transition' },
+  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'CANCELLED', requiredPermission: 'job.transition' },
+  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'RETURNED_UNREPAIRED', requiredPermission: 'job.transition' },
+  { from: 'AWAITING_PARTS', to: 'IN_REPAIR', requiredPermission: 'job.transition.repair' },
+  { from: 'IN_REPAIR', to: 'QC', requiredPermission: 'job.transition.repair' },
+  { from: 'QC', to: 'READY', requiredPermission: 'job.transition.repair' },
+  { from: 'QC', to: 'IN_REPAIR', requiredPermission: 'job.transition.repair' }, // rework
+  { from: 'READY', to: 'DISPATCHED', requiredPermission: 'job.transition.dispatch' },
+  { from: 'DISPATCHED', to: 'CLOSED', requiredPermission: 'job.transition.dispatch' },
 ];
 
 async function main(): Promise<void> {
@@ -201,6 +273,76 @@ async function main(): Promise<void> {
       },
     });
     console.log(`account:        ${account.code} — ${account.name} [${account.type}]`);
+  }
+
+  // --- Default workflow (upsert states by company_id + code, then edges by
+  // --- company_id + from + to, Task 1.2 §4.10/§5/E7) ------------------------
+  const stateIdByCode = new Map<string, string>();
+  for (const s of WORKFLOW_STATES) {
+    const state = await prisma.workflowState.upsert({
+      where: { companyId_code: { companyId: company.id, code: s.code } },
+      update: {
+        label: s.label,
+        isInitial: s.isInitial ?? false,
+        isTerminal: s.isTerminal ?? false,
+        sortOrder: s.sortOrder,
+        active: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        code: s.code,
+        label: s.label,
+        isInitial: s.isInitial ?? false,
+        isTerminal: s.isTerminal ?? false,
+        sortOrder: s.sortOrder,
+      },
+    });
+    stateIdByCode.set(state.code, state.id);
+    const flags = [
+      state.isInitial ? 'initial' : null,
+      state.isTerminal ? 'terminal' : null,
+    ].filter(Boolean);
+    console.log(
+      `workflow state: ${state.code}${flags.length ? ` [${flags.join(', ')}]` : ''}`,
+    );
+  }
+
+  for (const t of WORKFLOW_TRANSITIONS) {
+    const fromStateId = stateIdByCode.get(t.from);
+    const toStateId = stateIdByCode.get(t.to);
+    if (!fromStateId || !toStateId) {
+      throw new Error(`workflow seed: unknown state in edge ${t.from}→${t.to}`);
+    }
+    await prisma.workflowTransition.upsert({
+      where: {
+        companyId_fromStateId_toStateId: {
+          companyId: company.id,
+          fromStateId,
+          toStateId,
+        },
+      },
+      update: {
+        requiredPermission: t.requiredPermission,
+        requiresApproval: t.requiresApproval ?? false,
+        guardCode: t.guardCode ?? null,
+        deletedAt: null,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        fromStateId,
+        toStateId,
+        requiredPermission: t.requiredPermission,
+        requiresApproval: t.requiresApproval ?? false,
+        guardCode: t.guardCode ?? null,
+      },
+    });
+    console.log(
+      `workflow edge:  ${t.from} → ${t.to}` +
+        `${t.requiredPermission ? ` (${t.requiredPermission})` : ''}` +
+        `${t.guardCode ? ` [guard: ${t.guardCode}]` : ''}`,
+    );
   }
 
   console.log('Seed complete.');

@@ -135,6 +135,9 @@ model Company {
   devices        Device[]
   deviceModels   DeviceModel[]
 
+  workflowStates      WorkflowState[]
+  workflowTransitions WorkflowTransition[]
+
   @@map("companies")
 }
 
@@ -216,6 +219,11 @@ model User {
   updatedDevices        Device[]        @relation("DeviceUpdatedBy")
   createdDeviceModels   DeviceModel[]   @relation("DeviceModelCreatedBy")
   updatedDeviceModels   DeviceModel[]   @relation("DeviceModelUpdatedBy")
+
+  createdWorkflowStates      WorkflowState[]      @relation("WorkflowStateCreatedBy")
+  updatedWorkflowStates      WorkflowState[]      @relation("WorkflowStateUpdatedBy")
+  createdWorkflowTransitions WorkflowTransition[] @relation("WorkflowTransitionCreatedBy")
+  updatedWorkflowTransitions WorkflowTransition[] @relation("WorkflowTransitionUpdatedBy")
 
   sessions             Session[]
   requestedApprovals   Approval[]     @relation("ApprovalRequestedBy")
@@ -552,6 +560,76 @@ model Device {
   @@index([companyId, imeiSerial])
   @@index([customerId])
   @@map("devices")
+}
+
+// ---------------------------------------------------------------------------
+// Configurable workflow engine (§4.10 / E7, Task 1.2)
+//
+// Job statuses and their allowed transitions are DATA, not a hardcoded enum,
+// so each company can configure its own flow. The §5 lifecycle is the SEEDED
+// DEFAULT workflow. Task 1.3 makes jobs.status an FK → workflow_states and
+// validates every POST /jobs/{id}/transition through workflow_transitions.
+// ---------------------------------------------------------------------------
+
+/// One job status (a Kanban column). Unique per (company, code);
+/// `is_initial` marks where new jobs start, `is_terminal` where they end,
+/// `sort_order` drives board column ordering.
+model WorkflowState {
+  id         String  @id @default(uuid()) @db.Char(36)
+  companyId  String  @map("company_id") @db.Char(36)
+  code       String  @db.VarChar(50)
+  label      String  @db.VarChar(100)
+  isInitial  Boolean @default(false) @map("is_initial")
+  isTerminal Boolean @default(false) @map("is_terminal")
+  sortOrder  Int     @default(0) @map("sort_order")
+  active     Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("WorkflowStateCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("WorkflowStateUpdatedBy", fields: [updatedById], references: [id])
+
+  company         Company              @relation(fields: [companyId], references: [id])
+  transitionsFrom WorkflowTransition[] @relation("TransitionFromState")
+  transitionsTo   WorkflowTransition[] @relation("TransitionToState")
+
+  @@unique([companyId, code])
+  @@map("workflow_states")
+}
+
+/// One legal edge in the state machine. `required_permission` is a
+/// @triserve/shared permission string the acting user must hold (NULL = any
+/// authenticated user with access to the job); `requires_approval` hooks the
+/// generic approvals framework (§4.11); `guard_code` names a code-side guard
+/// function in the workflow guard registry (e.g. 'ow_quote_approved') so new
+/// business rules plug in WITHOUT schema changes.
+model WorkflowTransition {
+  id                 String  @id @default(uuid()) @db.Char(36)
+  companyId          String  @map("company_id") @db.Char(36)
+  fromStateId        String  @map("from_state_id") @db.Char(36)
+  toStateId          String  @map("to_state_id") @db.Char(36)
+  requiredPermission String? @map("required_permission") @db.VarChar(100)
+  requiresApproval   Boolean @default(false) @map("requires_approval")
+  guardCode          String? @map("guard_code") @db.VarChar(100)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("WorkflowTransitionCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("WorkflowTransitionUpdatedBy", fields: [updatedById], references: [id])
+
+  company   Company       @relation(fields: [companyId], references: [id])
+  fromState WorkflowState @relation("TransitionFromState", fields: [fromStateId], references: [id])
+  toState   WorkflowState @relation("TransitionToState", fields: [toStateId], references: [id])
+
+  @@unique([companyId, fromStateId, toStateId])
+  @@index([toStateId])
+  @@map("workflow_transitions")
 }
 
 // ---------------------------------------------------------------------------

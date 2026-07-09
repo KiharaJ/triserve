@@ -88,6 +88,10 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Customer,
   Prisma.ModelName.Device,
   Prisma.ModelName.DeviceModel,
+  // Task 1.2 (§4.10/E7): workflow config changes reshape every job's legal
+  // moves — audited like the other config tables.
+  Prisma.ModelName.WorkflowState,
+  Prisma.ModelName.WorkflowTransition,
 ]);
 
 /** Mutations we intercept and audit. */
