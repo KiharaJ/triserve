@@ -37,15 +37,19 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.RepairAction,
   Prisma.ModelName.TaxRate,
   Prisma.ModelName.AuditLog,
+  Prisma.ModelName.Approval,
+  Prisma.ModelName.ApprovalRule,
 ]);
 
 /**
  * Models carrying a `branch_id` column: scope='branch' users are further
- * restricted to `branchId = homeBranchId`. None exist yet — future tables
- * (jobs, stock_movements, invoices, …) register here. The `Branch` model
- * itself is special-cased (restricted by `id`).
+ * restricted to `branchId = homeBranchId`. Future tables (jobs,
+ * stock_movements, invoices, …) register here as they arrive. The `Branch`
+ * model itself is special-cased (restricted by `id`).
  */
-export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([]);
+export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
+  Prisma.ModelName.Approval,
+]);
 
 /** Operations that accept a `where` filter we can tighten. */
 const WHERE_OPERATIONS = new Set([

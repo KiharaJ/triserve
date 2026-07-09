@@ -6,10 +6,11 @@
  *   - branch by (company_id, code)
  *   - user by email
  *   - payment_method by (company_id, code)
+ *   - approval_rule by (company_id, type)          (Task 0.5, §4.11/E8)
  *
  * Run with: npx prisma db seed   (wired via package.json "prisma.seed")
  */
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient, type ApprovalType } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 
@@ -32,6 +33,30 @@ const PAYMENT_METHODS: Array<{ code: string; label: string }> = [
   { code: 'AIRTEL', label: 'Airtel Money' },
   { code: 'CARD', label: 'Card' },
   { code: 'BANK', label: 'Bank Transfer' },
+];
+
+/**
+ * Example approval thresholds (Task 0.5, §4.11/E8). Amounts are BIGINT
+ * minor units (senti) of the company base currency — TZS 100,000 = 10,000,000.
+ */
+const APPROVAL_RULES: Array<{
+  type: ApprovalType;
+  thresholdAmount: bigint | null;
+  thresholdPercent: Prisma.Decimal | null;
+  note: string;
+}> = [
+  {
+    type: 'REFUND',
+    thresholdAmount: 100_000n * 100n, // TZS 100,000 in senti
+    thresholdPercent: null,
+    note: 'refunds of TZS 100,000 or more require approval',
+  },
+  {
+    type: 'PRICE_OVERRIDE',
+    thresholdAmount: null,
+    thresholdPercent: new Prisma.Decimal(10),
+    note: 'price overrides of 10% or more require approval',
+  },
 ];
 
 async function main(): Promise<void> {
@@ -108,6 +133,26 @@ async function main(): Promise<void> {
       },
     });
     console.log(`payment method: ${row.code} — ${row.label}`);
+  }
+
+  // --- Approval rules (upsert by company_id + type, Task 0.5) ----------------
+  for (const r of APPROVAL_RULES) {
+    const rule = await prisma.approvalRule.upsert({
+      where: { companyId_type: { companyId: company.id, type: r.type } },
+      update: {
+        thresholdAmount: r.thresholdAmount,
+        thresholdPercent: r.thresholdPercent,
+        enabled: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        type: r.type,
+        thresholdAmount: r.thresholdAmount,
+        thresholdPercent: r.thresholdPercent,
+      },
+    });
+    console.log(`approval rule:  ${rule.type} — ${r.note}`);
   }
 
   console.log('Seed complete.');

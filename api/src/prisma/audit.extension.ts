@@ -68,6 +68,12 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.FaultCode,
   Prisma.ModelName.RepairAction,
   Prisma.ModelName.TaxRate,
+  // Task 0.5: approvals + rules are audited like any other model (CREATE on
+  // request(), a mechanical UPDATE on decide()); ApprovalsService.decide()
+  // ADDITIONALLY writes the semantic APPROVE/REJECT row via
+  // AuditService.record().
+  Prisma.ModelName.Approval,
+  Prisma.ModelName.ApprovalRule,
 ]);
 
 /** Mutations we intercept and audit. */

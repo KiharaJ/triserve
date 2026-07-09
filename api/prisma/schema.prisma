@@ -37,6 +37,26 @@ enum UserScope {
   group
 }
 
+/// Every gate-able action funnels through ONE approvals mechanism (§4.11/E8).
+enum ApprovalType {
+  PRICE_OVERRIDE
+  REFUND
+  INVENTORY_ADJUSTMENT
+  STOCK_TRANSFER
+  PURCHASE_ORDER
+  WARRANTY_CANCELLATION
+  INVOICE_VOID
+  REOPEN_JOB
+  LARGE_CASH_REFUND
+  MANUAL_JOURNAL
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 // ---------------------------------------------------------------------------
 // Org / reference (§4.1)
 // ---------------------------------------------------------------------------
@@ -68,6 +88,8 @@ model Company {
   faultCodes     FaultCode[]
   repairActions  RepairAction[]
   taxRates       TaxRate[]
+  approvals      Approval[]
+  approvalRules  ApprovalRule[]
 
   @@map("companies")
 }
@@ -91,8 +113,9 @@ model Branch {
   createdBy   User?     @relation("BranchCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("BranchUpdatedBy", fields: [updatedById], references: [id])
 
-  company   Company @relation(fields: [companyId], references: [id])
-  homeUsers User[]  @relation("UserHomeBranch")
+  company   Company    @relation(fields: [companyId], references: [id])
+  homeUsers User[]     @relation("UserHomeBranch")
+  approvals Approval[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -142,9 +165,79 @@ model User {
   createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
   updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
 
-  sessions Session[]
+  sessions           Session[]
+  requestedApprovals Approval[] @relation("ApprovalRequestedBy")
+  decidedApprovals   Approval[] @relation("ApprovalApprovedBy")
 
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Approvals (§4.11 / E8, Task 0.5) — ONE generic gate for every sensitive
+// action (refunds, voids, big discounts, POs, adjustments, job reopens, …).
+// Later modules call ApprovalsService.request(...) BEFORE performing a gated
+// action and proceed only once the row is APPROVED.
+// ---------------------------------------------------------------------------
+
+model Approval {
+  id        String       @id @default(uuid()) @db.Char(36)
+  companyId String       @map("company_id") @db.Char(36)
+  branchId  String       @map("branch_id") @db.Char(36)
+  type      ApprovalType
+
+  /// The entity awaiting approval. NULLABLE on purpose: an approval may
+  /// PRECEDE the entity it gates (e.g. approve a refund before the credit
+  /// note row exists) — the caller backfills ref_id afterwards.
+  refType String? @map("ref_type") @db.VarChar(100)
+  refId   String? @map("ref_id") @db.Char(36)
+
+  /// The proposed change (free-form, per type): e.g. {"amount": 15000000,
+  /// "currency": "TZS"} for a REFUND, {"percent": 12} for a PRICE_OVERRIDE.
+  payloadJson Json? @map("payload_json")
+
+  requestedById String         @map("requested_by") @db.Char(36)
+  approvedById  String?        @map("approved_by") @db.Char(36)
+  status        ApprovalStatus @default(PENDING)
+  /// Requester's justification (required, §4.11); a rejection reason
+  /// replaces it on decide (the original is preserved in the audit trail).
+  reason        String         @db.Text
+  requestedAt   DateTime       @default(now()) @map("requested_at") @db.DateTime(3)
+  decidedAt     DateTime?      @map("decided_at") @db.DateTime(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company     Company @relation(fields: [companyId], references: [id])
+  branch      Branch  @relation(fields: [branchId], references: [id])
+  requestedBy User    @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
+  approvedBy  User?   @relation("ApprovalApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([companyId, status, type])
+  @@index([companyId, branchId, status])
+  @@index([refType, refId])
+  @@map("approvals")
+}
+
+/// Per-company config backing ApprovalsService.isRequired(): when does a
+/// given action type need a manager's sign-off? Thresholds are OR-ed —
+/// amount >= threshold_amount, or percent >= threshold_percent. Amounts are
+/// BIGINT minor units of the company base currency (money convention).
+/// No rule / enabled=false → the action never requires approval.
+model ApprovalRule {
+  id               String       @id @default(uuid()) @db.Char(36)
+  companyId        String       @map("company_id") @db.Char(36)
+  type             ApprovalType
+  thresholdAmount  BigInt?      @map("threshold_amount") @db.BigInt
+  thresholdPercent Decimal?     @map("threshold_percent") @db.Decimal(6, 3)
+  enabled          Boolean      @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, type])
+  @@map("approval_rules")
 }
 
 // ---------------------------------------------------------------------------
