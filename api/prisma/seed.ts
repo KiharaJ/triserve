@@ -7,10 +7,16 @@
  *   - user by email
  *   - payment_method by (company_id, code)
  *   - approval_rule by (company_id, type)          (Task 0.5, §4.11/E8)
+ *   - chart_of_accounts by (company_id, code)      (Task 0.6, §4.9/E1)
  *
  * Run with: npx prisma db seed   (wired via package.json "prisma.seed")
  */
-import { Prisma, PrismaClient, type ApprovalType } from '@prisma/client';
+import {
+  Prisma,
+  PrismaClient,
+  type AccountType,
+  type ApprovalType,
+} from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 
@@ -57,6 +63,28 @@ const APPROVAL_RULES: Array<{
     thresholdPercent: new Prisma.Decimal(10),
     note: 'price overrides of 10% or more require approval',
   },
+];
+
+/**
+ * Starter chart of accounts (Task 0.6, DESIGN.md §4.9/E1). Types follow the
+ * code ranges: 1xxx ASSET, 2xxx LIABILITY, 3xxx EQUITY, 4xxx REVENUE,
+ * 5xxx EXPENSE. Intentional seed data — companies extend it later (E17).
+ */
+const CHART_OF_ACCOUNTS: Array<{
+  code: string;
+  name: string;
+  type: AccountType;
+}> = [
+  { code: '1000', name: 'Cash', type: 'ASSET' },
+  { code: '1010', name: 'Bank', type: 'ASSET' },
+  { code: '1200', name: 'AR–Samsung', type: 'ASSET' },
+  { code: '1300', name: 'Inventory', type: 'ASSET' },
+  { code: '2000', name: 'AP–Suppliers', type: 'LIABILITY' },
+  { code: '2100', name: 'VAT Payable', type: 'LIABILITY' },
+  { code: '3000', name: "Owner's Equity", type: 'EQUITY' },
+  { code: '4000', name: 'Repair Revenue', type: 'REVENUE' },
+  { code: '4010', name: 'Warranty Revenue', type: 'REVENUE' },
+  { code: '5000', name: 'COGS', type: 'EXPENSE' },
 ];
 
 async function main(): Promise<void> {
@@ -153,6 +181,22 @@ async function main(): Promise<void> {
       },
     });
     console.log(`approval rule:  ${rule.type} — ${r.note}`);
+  }
+
+  // --- Chart of accounts (upsert by company_id + code, Task 0.6) -------------
+  for (const a of CHART_OF_ACCOUNTS) {
+    const account = await prisma.chartOfAccount.upsert({
+      where: { companyId_code: { companyId: company.id, code: a.code } },
+      update: { name: a.name, type: a.type, isActive: true },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        code: a.code,
+        name: a.name,
+        type: a.type,
+      },
+    });
+    console.log(`account:        ${account.code} — ${account.name} [${account.type}]`);
   }
 
   console.log('Seed complete.');

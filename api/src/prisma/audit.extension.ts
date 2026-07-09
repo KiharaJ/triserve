@@ -74,6 +74,15 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // AuditService.record().
   Prisma.ModelName.Approval,
   Prisma.ModelName.ApprovalRule,
+  // Task 0.6 (§4.9/E1): the ledger is audited. JournalService.post() creates
+  // the entry WITH its lines in ONE nested `journalEntry.create`, which this
+  // hook wraps in one transaction (entry + lines + audit row are atomic) and
+  // records as a single CREATE on the entry. JournalLine itself is NOT
+  // listed: lines are immutable children written only through that nested
+  // create (never as top-level mutations), and per-line audit rows would
+  // only duplicate the entry-level trail.
+  Prisma.ModelName.ChartOfAccount,
+  Prisma.ModelName.JournalEntry,
 ]);
 
 /** Mutations we intercept and audit. */

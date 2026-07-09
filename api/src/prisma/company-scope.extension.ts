@@ -26,6 +26,11 @@ import { getCurrentUser } from '../common/context/request-context';
  * `AuditLog` (Task 0.4) IS listed: reads through the endpoint are tenancy-
  * filtered, and in-context audit inserts get company_id pinned like any
  * other create (system inserts set it explicitly under the bypass rule).
+ * `JournalLine` (Task 0.6) is intentionally absent: it has NO company_id
+ * column, so this extension must never touch it (the injected filter would
+ * be invalid). Lines are reached exclusively through their entry — either
+ * `include: { lines }` on a scoped JournalEntry query or the nested create
+ * inside JournalService.post() — so tenancy is enforced via the entry join.
  */
 export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Company,
@@ -39,6 +44,9 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.AuditLog,
   Prisma.ModelName.Approval,
   Prisma.ModelName.ApprovalRule,
+  // Task 0.6 (§4.9/E1): the ledger is company-scoped like everything else.
+  Prisma.ModelName.ChartOfAccount,
+  Prisma.ModelName.JournalEntry,
 ]);
 
 /**
@@ -46,6 +54,13 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
  * restricted to `branchId = homeBranchId`. Future tables (jobs,
  * stock_movements, invoices, …) register here as they arrive. The `Branch`
  * model itself is special-cased (restricted by `id`).
+ *
+ * `JournalEntry` is deliberately NOT branch-scoped even though it has a
+ * (nullable) branch_id: the ledger is a company-level book (§4.9) — its
+ * branch_id is an analytics dimension, and company-level entries carry
+ * branch_id = NULL, which a branch filter would silently hide. Access is
+ * instead gated by the finance permissions ('accounting.read'/'.post'),
+ * which only ACCOUNTANT/SUPER_ADMIN hold by default.
  */
 export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Approval,

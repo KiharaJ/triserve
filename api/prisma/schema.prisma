@@ -57,6 +57,28 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// Account classes of the chart of accounts (§4.9 / E1).
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+/// What operational event produced a journal entry (§4.9 / E1). Only
+/// MANUAL is writable today (Task 0.6); the others are switched on with
+/// automatic posting in Phase 3 — the enum exists now so no schema rebuild
+/// is needed then.
+enum JournalSourceType {
+  PAYMENT
+  GRN
+  SUPPLIER_PAYMENT
+  WARRANTY
+  ADJUSTMENT
+  MANUAL
+}
+
 // ---------------------------------------------------------------------------
 // Org / reference (§4.1)
 // ---------------------------------------------------------------------------
@@ -90,6 +112,8 @@ model Company {
   taxRates       TaxRate[]
   approvals      Approval[]
   approvalRules  ApprovalRule[]
+  accounts       ChartOfAccount[]
+  journalEntries JournalEntry[]
 
   @@map("companies")
 }
@@ -113,9 +137,10 @@ model Branch {
   createdBy   User?     @relation("BranchCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("BranchUpdatedBy", fields: [updatedById], references: [id])
 
-  company   Company    @relation(fields: [companyId], references: [id])
-  homeUsers User[]     @relation("UserHomeBranch")
-  approvals Approval[]
+  company        Company        @relation(fields: [companyId], references: [id])
+  homeUsers      User[]         @relation("UserHomeBranch")
+  approvals      Approval[]
+  journalEntries JournalEntry[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -165,9 +190,10 @@ model User {
   createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
   updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
 
-  sessions           Session[]
-  requestedApprovals Approval[] @relation("ApprovalRequestedBy")
-  decidedApprovals   Approval[] @relation("ApprovalApprovedBy")
+  sessions             Session[]
+  requestedApprovals   Approval[]     @relation("ApprovalRequestedBy")
+  decidedApprovals     Approval[]     @relation("ApprovalApprovedBy")
+  postedJournalEntries JournalEntry[] @relation("JournalEntryPostedBy")
 
   @@map("users")
 }
@@ -304,6 +330,86 @@ model Session {
 
   @@index([userId])
   @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Accounting ledger (§4.9 / E1, Task 0.6) — TABLES ONLY for now.
+//
+// The double-entry tables exist from Phase 0 so automatic posting can be
+// switched on in Phase 3 without a schema rebuild. Every entry is written
+// EXCLUSIVELY through JournalService.post(), which enforces
+// SUM(debit) == SUM(credit) in code and writes header + lines atomically.
+// Manual journals are approval-gated (§4.11, type MANUAL_JOURNAL).
+// ---------------------------------------------------------------------------
+
+model ChartOfAccount {
+  id        String      @id @default(uuid()) @db.Char(36)
+  companyId String      @map("company_id") @db.Char(36)
+  /// e.g. 1000 Cash, 1010 Bank, 1200 AR–Samsung, 2000 AP–Suppliers, 5000 COGS
+  code      String      @db.VarChar(20)
+  name      String      @db.VarChar(255)
+  type      AccountType
+  isActive  Boolean     @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company Company       @relation(fields: [companyId], references: [id])
+  lines   JournalLine[]
+
+  @@unique([companyId, code])
+  @@map("chart_of_accounts")
+}
+
+model JournalEntry {
+  id        String  @id @default(uuid()) @db.Char(36)
+  companyId String  @map("company_id") @db.Char(36)
+  /// Nullable: company-level entries (e.g. year-end adjustments) have no branch.
+  branchId  String? @map("branch_id") @db.Char(36)
+
+  entryDate  DateTime          @map("entry_date") @db.Date
+  sourceType JournalSourceType @map("source_type")
+  /// Id of the operational row that produced this entry (payment, GRN, …).
+  /// For MANUAL entries: the id of the MANUAL_JOURNAL approval that gated it.
+  sourceId   String?           @map("source_id") @db.Char(36)
+  memo       String?           @db.VarChar(500)
+  postedById String            @map("posted_by") @db.Char(36)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  branch   Branch?       @relation(fields: [branchId], references: [id])
+  postedBy User          @relation("JournalEntryPostedBy", fields: [postedById], references: [id])
+  lines    JournalLine[]
+
+  @@index([companyId, entryDate])
+  @@index([companyId, sourceType, sourceId])
+  @@map("journal_entries")
+}
+
+/// The debits/credits of one entry. No company_id on purpose: lines are
+/// reached ONLY via their (company-scoped) entry — see
+/// company-scope.extension.ts. Money is BIGINT minor units; exactly one of
+/// debit/credit is non-zero per line (enforced by JournalService.post).
+model JournalLine {
+  id        String @id @default(uuid()) @db.Char(36)
+  entryId   String @map("entry_id") @db.Char(36)
+  accountId String @map("account_id") @db.Char(36)
+  debit     BigInt @default(0) @db.BigInt
+  credit    BigInt @default(0) @db.BigInt
+  currency  String @db.Char(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  /// Restrict (never cascade): the ledger is append-only — an entry with
+  /// lines cannot be deleted out from under them.
+  entry   JournalEntry   @relation(fields: [entryId], references: [id], onDelete: Restrict)
+  account ChartOfAccount @relation(fields: [accountId], references: [id], onDelete: Restrict)
+
+  @@index([accountId])
+  @@map("journal_lines")
 }
 
 // ---------------------------------------------------------------------------
