@@ -83,6 +83,11 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // only duplicate the entry-level trail.
   Prisma.ModelName.ChartOfAccount,
   Prisma.ModelName.JournalEntry,
+  // Task 1.1 (§4.2): CRM foundations — customer/device/model mutations are
+  // audited like every other business table.
+  Prisma.ModelName.Customer,
+  Prisma.ModelName.Device,
+  Prisma.ModelName.DeviceModel,
 ]);
 
 /** Mutations we intercept and audit. */

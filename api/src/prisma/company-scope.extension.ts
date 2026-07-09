@@ -47,6 +47,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 0.6 (§4.9/E1): the ledger is company-scoped like everything else.
   Prisma.ModelName.ChartOfAccount,
   Prisma.ModelName.JournalEntry,
+  // Task 1.1 (§4.2/E2/E3): CRM foundations.
+  Prisma.ModelName.Customer,
+  Prisma.ModelName.Device,
+  Prisma.ModelName.DeviceModel,
 ]);
 
 /**
@@ -61,6 +65,14 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
  * branch_id = NULL, which a branch filter would silently hide. Access is
  * instead gated by the finance permissions ('accounting.read'/'.post'),
  * which only ACCOUNTANT/SUPER_ADMIN hold by default.
+ *
+ * `Customer` / `Device` (Task 1.1, §4.2) are deliberately NOT branch-scoped:
+ * a customer belongs to the COMPANY and can be served at any branch —
+ * `customers.preferred_branch_id` is a CRM preference, not an access
+ * boundary. Branch-scoping would hide a returning customer (and their
+ * device history, E3) from every branch except the preferred one, breaking
+ * the "front desk finds/creates customer by phone" flow (§6.1) group-wide.
+ * `DeviceModel` is company-level config (like fault codes) — no branch_id.
  */
 export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Approval,

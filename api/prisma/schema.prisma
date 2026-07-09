@@ -57,6 +57,23 @@ enum ApprovalStatus {
   REJECTED
 }
 
+/// Product/device category (§4.2): handheld (phones/tablets), consumer
+/// electronics (TV/audio), air-con, refrigeration, other. Shared by
+/// `models` and `devices` (and later `parts`).
+enum DeviceCategory {
+  HHP
+  CE
+  AC
+  REF
+  OTHER
+}
+
+/// Customer's preferred notification language (§4.2) — drives SMS templates.
+enum PreferredLanguage {
+  EN
+  SW
+}
+
 /// Account classes of the chart of accounts (§4.9 / E1).
 enum AccountType {
   ASSET
@@ -114,6 +131,9 @@ model Company {
   approvalRules  ApprovalRule[]
   accounts       ChartOfAccount[]
   journalEntries JournalEntry[]
+  customers      Customer[]
+  devices        Device[]
+  deviceModels   DeviceModel[]
 
   @@map("companies")
 }
@@ -137,10 +157,11 @@ model Branch {
   createdBy   User?     @relation("BranchCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("BranchUpdatedBy", fields: [updatedById], references: [id])
 
-  company        Company        @relation(fields: [companyId], references: [id])
-  homeUsers      User[]         @relation("UserHomeBranch")
-  approvals      Approval[]
-  journalEntries JournalEntry[]
+  company            Company        @relation(fields: [companyId], references: [id])
+  homeUsers          User[]         @relation("UserHomeBranch")
+  approvals          Approval[]
+  journalEntries     JournalEntry[]
+  preferredCustomers Customer[]     @relation("CustomerPreferredBranch")
 
   @@unique([companyId, code])
   @@map("branches")
@@ -189,6 +210,12 @@ model User {
   updatedRepairActions  RepairAction[]  @relation("RepairActionUpdatedBy")
   createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
   updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
+  createdCustomers      Customer[]      @relation("CustomerCreatedBy")
+  updatedCustomers      Customer[]      @relation("CustomerUpdatedBy")
+  createdDevices        Device[]        @relation("DeviceCreatedBy")
+  updatedDevices        Device[]        @relation("DeviceUpdatedBy")
+  createdDeviceModels   DeviceModel[]   @relation("DeviceModelCreatedBy")
+  updatedDeviceModels   DeviceModel[]   @relation("DeviceModelUpdatedBy")
 
   sessions             Session[]
   requestedApprovals   Approval[]     @relation("ApprovalRequestedBy")
@@ -410,6 +437,121 @@ model JournalLine {
 
   @@index([accountId])
   @@map("journal_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Customers & devices (§4.2, Task 1.1) — CRM 360 (E2) / device history (E3)
+// foundations.
+//
+// SCOPING DECISION (documented): customers and devices are COMPANY-scoped,
+// deliberately NOT branch-scoped. A customer belongs to the group and can be
+// served at any branch (§4.2); `preferred_branch_id` is a CRM preference /
+// analytics dimension, not an access boundary — branch-scoping would hide a
+// walk-in customer's record (and their device history) from every other
+// branch's front desk. Models are company-level config (like fault codes).
+// ---------------------------------------------------------------------------
+
+/// The `models` lookup (§4.2) — normalises the messy free-text model column
+/// ("A05", "S23 Ultra", "UA40M5000", …). Named DeviceModel in Prisma to
+/// avoid the confusing `prisma.model` delegate; the table is `models`.
+model DeviceModel {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  modelCode String         @map("model_code") @db.VarChar(100)
+  category  DeviceCategory
+  brand     String         @default("Samsung") @db.VarChar(100)
+  active    Boolean        @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("DeviceModelCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("DeviceModelUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company  @relation(fields: [companyId], references: [id])
+  devices Device[]
+
+  @@unique([companyId, brand, modelCode])
+  @@map("models")
+}
+
+/// Customers (§4.2 / E2). Lean record — the rich 360 profile is assembled by
+/// the API from related tables later. `phone` keeps the exact user input;
+/// `phone_normalized` / `alt_phone_normalized` hold the canonical E.164-ish
+/// form produced by normalizePhone() and are what phone search hits.
+model Customer {
+  id                 String            @id @default(uuid()) @db.Char(36)
+  companyId          String            @map("company_id") @db.Char(36)
+  name               String            @db.VarChar(255)
+  phone              String?           @db.VarChar(50)
+  phoneNormalized    String?           @map("phone_normalized") @db.VarChar(50)
+  altPhone           String?           @map("alt_phone") @db.VarChar(50)
+  altPhoneNormalized String?           @map("alt_phone_normalized") @db.VarChar(50)
+  email              String?           @db.VarChar(255)
+  location           String?           @db.VarChar(255)
+  dealerName         String?           @map("dealer_name") @db.VarChar(255)
+  isDealer           Boolean           @default(false) @map("is_dealer")
+  preferredBranchId  String?           @map("preferred_branch_id") @db.Char(36)
+  preferredLanguage  PreferredLanguage @default(EN) @map("preferred_language")
+  /// 1–5 internal customer rating/flag.
+  rating             Int?              @db.TinyInt
+  notes              String?           @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("CustomerCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
+
+  company         Company  @relation(fields: [companyId], references: [id])
+  preferredBranch Branch?  @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
+  devices         Device[]
+
+  @@index([companyId, phone])
+  @@index([companyId, phoneNormalized])
+  @@index([companyId, altPhoneNormalized])
+  @@index([companyId, name])
+  @@map("customers")
+}
+
+/// Devices (§4.2 / E3). `customer_id` is the CURRENT owner — ownership can
+/// change, so `imei_serial` is indexed but deliberately NOT unique (the same
+/// physical device may be re-registered; history persists across owners).
+/// `model` stays free-text (legacy data is messy); `model_id` is the
+/// normalised link to `models` when resolvable.
+model Device {
+  id         String         @id @default(uuid()) @db.Char(36)
+  companyId  String         @map("company_id") @db.Char(36)
+  customerId String         @map("customer_id") @db.Char(36)
+  brand      String         @default("Samsung") @db.VarChar(100)
+  model      String?        @db.VarChar(150)
+  modelId    String?        @map("model_id") @db.Char(36)
+  category   DeviceCategory
+  /// IMEI or serial number; nullable (some CE/AC units lack one). Stored
+  /// cleaned (scientific-notation legacy values expanded, separators
+  /// stripped, uppercased) — see normalizeImeiSerial().
+  imeiSerial String?        @map("imei_serial") @db.VarChar(100)
+  color      String?        @db.VarChar(50)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("DeviceCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("DeviceUpdatedBy", fields: [updatedById], references: [id])
+
+  company     Company      @relation(fields: [companyId], references: [id])
+  customer    Customer     @relation(fields: [customerId], references: [id])
+  deviceModel DeviceModel? @relation(fields: [modelId], references: [id])
+
+  @@index([companyId, imeiSerial])
+  @@index([customerId])
+  @@map("devices")
 }
 
 // ---------------------------------------------------------------------------
