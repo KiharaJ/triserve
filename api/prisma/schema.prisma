@@ -142,7 +142,31 @@ model User {
   createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
   updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
 
+  sessions Session[]
+
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Sessions — device/login history + refresh-token store (§11 / E18, Task 0.2)
+// ---------------------------------------------------------------------------
+
+model Session {
+  id               String    @id @default(uuid()) @db.Char(36)
+  userId           String    @map("user_id") @db.Char(36)
+  // SHA-256 hex of the current (rotated) refresh token — the raw token is
+  // never stored. A mismatch means the token was rotated/revoked → reject.
+  refreshTokenHash String    @map("refresh_token_hash") @db.VarChar(255)
+  userAgent        String?   @map("user_agent") @db.VarChar(500)
+  ip               String?   @db.VarChar(64)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  lastUsedAt       DateTime  @default(now()) @map("last_used_at") @db.DateTime(3)
+  revokedAt        DateTime? @map("revoked_at") @db.DateTime(3)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("sessions")
 }
 
 // ---------------------------------------------------------------------------

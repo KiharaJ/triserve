@@ -1,0 +1,71 @@
+import type { UserRole, UserScope } from '@prisma/client';
+
+/**
+ * Shared auth types (Task 0.2 / E18).
+ *
+ * Three JWT kinds, distinguished by a `type` claim so one can never be
+ * accepted in place of another:
+ *   - access  — 15 min, signed with JWT_ACCESS_SECRET
+ *   - refresh — 7 d,   signed with JWT_REFRESH_SECRET, hash stored per session
+ *   - mfa     — 5 min, signed with JWT_ACCESS_SECRET, only accepted by
+ *               POST /auth/login/verify
+ */
+export type TokenType = 'access' | 'refresh' | 'mfa';
+
+export interface AccessTokenPayload {
+  sub: string; // user id
+  sid: string; // session id
+  companyId: string;
+  role: UserRole;
+  scope: UserScope;
+  homeBranchId: string | null;
+  type: 'access';
+}
+
+export interface RefreshTokenPayload {
+  sub: string;
+  sid: string;
+  /** Unique per issued token — guarantees rotation always changes the hash. */
+  jti: string;
+  type: 'refresh';
+}
+
+export interface MfaTokenPayload {
+  sub: string;
+  type: 'mfa';
+}
+
+/** Attached to `request.user` by {@link AuthGuard}; read via `@CurrentUser()`. */
+export interface AuthUser {
+  userId: string;
+  sessionId: string;
+  companyId: string;
+  role: UserRole;
+  scope: UserScope;
+  homeBranchId: string | null;
+}
+
+/** Sanitized user returned by login/verify and GET /me (snake_case wire format). */
+export interface PublicUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  scope: UserScope;
+  company_id: string;
+  home_branch_id: string | null;
+  totp_enabled: boolean;
+}
+
+export interface AuthTokensResponse {
+  access_token: string;
+  refresh_token: string;
+  user: PublicUser;
+}
+
+export interface MfaRequiredResponse {
+  mfa_required: true;
+  mfa_token: string;
+}
+
+export type LoginResponse = AuthTokensResponse | MfaRequiredResponse;
