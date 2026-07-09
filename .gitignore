@@ -1,0 +1,34 @@
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Build output
+dist/
+build/
+.vite/
+coverage/
+
+# Prisma generated client
+generated/
+**/prisma/client/
+
+# OS
+.DS_Store
+
+# Editors
+.idea/
+*.swp
+
+# Logs
+logs/
+*.log
