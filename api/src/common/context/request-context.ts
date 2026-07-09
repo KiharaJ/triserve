@@ -23,6 +23,10 @@ import type { AuthUser } from '../../modules/auth/auth.types';
  */
 export interface RequestContextStore {
   user?: AuthUser;
+  /** Client IP (Express `req.ip`), set by the middleware (Task 0.4). */
+  ip?: string;
+  /** Raw User-Agent header, set by the middleware (Task 0.4). */
+  userAgent?: string;
 }
 
 const storage = new AsyncLocalStorage<RequestContextStore>();
@@ -43,6 +47,15 @@ export function getRequestContext(): RequestContextStore | undefined {
 /** The authenticated user for this request, or undefined (see bypass note). */
 export function getCurrentUser(): AuthUser | undefined {
   return storage.getStore()?.user;
+}
+
+/**
+ * Request network metadata for audit rows (Task 0.4). Both fields are
+ * undefined outside an HTTP request (system/seed code).
+ */
+export function getRequestMeta(): { ip?: string; userAgent?: string } {
+  const store = storage.getStore();
+  return { ip: store?.ip, userAgent: store?.userAgent };
 }
 
 /**

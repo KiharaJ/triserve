@@ -108,6 +108,10 @@ afterAll(async () => {
   // the two test companies); the real seed stays intact.
   const companyIds = [companyAId, companyBId].filter(Boolean);
   if (companyIds.length > 0) {
+    // Task 0.4: in-context creates through `scoped` are now audited — drop
+    // the audit rows of the test companies too (raw client bypasses the
+    // append-only guard; that guard applies to the DI/extended client only).
+    await raw.auditLog.deleteMany({ where: { companyId: { in: companyIds } } });
     await raw.currency.deleteMany({ where: { companyId: { in: companyIds } } });
     await raw.user.deleteMany({ where: { companyId: { in: companyIds } } });
     await raw.branch.deleteMany({ where: { companyId: { in: companyIds } } });
@@ -270,8 +274,14 @@ describe('real seed data stays intact', () => {
       where: { name: 'Samsung ASC Group' },
     });
     expect(samsung.length).toBe(1);
+    // Exclude __TEST_-prefixed fixtures: the Task 0.4 audit spec (running
+    // in a parallel jest worker) briefly creates a test branch inside the
+    // seeded company; it always cleans up after itself.
     const branchCount = await raw.branch.count({
-      where: { companyId: samsung[0].id },
+      where: {
+        companyId: samsung[0].id,
+        NOT: { name: { startsWith: '__TEST_' } },
+      },
     });
     expect(branchCount).toBe(5);
     const adminCount = await raw.user.count({

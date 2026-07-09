@@ -23,6 +23,9 @@ import { getCurrentUser } from '../common/context/request-context';
  * `Company` itself has no company_id — it is the tenant row, so it is
  * scoped by `id = user's companyId` instead (see {@link scopedWhere}).
  * `Session` is intentionally absent: scoped via its user, not a column.
+ * `AuditLog` (Task 0.4) IS listed: reads through the endpoint are tenancy-
+ * filtered, and in-context audit inserts get company_id pinned like any
+ * other create (system inserts set it explicitly under the bypass rule).
  */
 export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Company,
@@ -33,6 +36,7 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.FaultCode,
   Prisma.ModelName.RepairAction,
   Prisma.ModelName.TaxRate,
+  Prisma.ModelName.AuditLog,
 ]);
 
 /**
