@@ -22,6 +22,10 @@ coverage/
 generated/
 **/prisma/client/
 
+# Local object-storage driver (Task 1.4, §4.12) — dev-only file store,
+# never committed (mirrors how a real S3/MinIO bucket isn't either).
+api/.storage/
+
 # OS
 .DS_Store
 

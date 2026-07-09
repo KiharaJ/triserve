@@ -145,6 +145,7 @@ model Company {
   devices        Device[]
   deviceModels   DeviceModel[]
   jobs           Job[]
+  attachments    Attachment[]
 
   workflowStates      WorkflowState[]
   workflowTransitions WorkflowTransition[]
@@ -177,6 +178,7 @@ model Branch {
   journalEntries     JournalEntry[]
   preferredCustomers Customer[]     @relation("CustomerPreferredBranch")
   jobs               Job[]
+  attachments        Attachment[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -248,6 +250,9 @@ model User {
   dispatchedJobs Job[] @relation("JobDispatchedBy")
   createdJobs    Job[] @relation("JobCreatedBy")
   updatedJobs    Job[] @relation("JobUpdatedBy")
+
+  // Task 1.4 (§4.12): who uploaded a file.
+  uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
 
   @@map("users")
 }
@@ -861,4 +866,87 @@ model JobCounter {
 
   @@unique([companyId, branchId, year])
   @@map("job_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Attachments (§4.12 / E4, Task 1.4) — polymorphic file store.
+//
+// Files themselves NEVER touch the DB: `file_url` holds the object-storage
+// KEY (e.g. `{companyId}/JOB/{jobId}/{uuid}.jpg`), not a browsable URL —
+// StorageService mints a fresh, short-lived presigned/signed GET URL on
+// every read (list/upload response), so the API is the only thing that ever
+// needs real storage credentials.
+//
+// owner_type/owner_id is a polymorphic reference (like AuditLog's
+// entityType/entityId) — deliberately NOT an FK, since one column can't
+// point at five different tables. Existence + access is validated in
+// AttachmentsService before the row is written (load the JOB/CUSTOMER/
+// DEVICE and check company/branch scope); GRN/INVOICE owners are accepted
+// by the enum for forward-compatibility with §4.4b/§4.6 but those tables
+// don't exist yet in this phase, so no existence check runs for them yet —
+// add one the day those modules land.
+// ---------------------------------------------------------------------------
+
+enum AttachmentOwnerType {
+  JOB
+  CUSTOMER
+  DEVICE
+  GRN
+  INVOICE
+}
+
+enum AttachmentKind {
+  SIGNATURE
+  PHOTO_BEFORE
+  PHOTO_AFTER
+  VIDEO
+  WARRANTY_CARD
+  PURCHASE_RECEIPT
+  DOC
+}
+
+/// Polymorphic file store (§4.12). No `deleted_at`: DELETE /attachments/{id}
+/// is a REAL delete of both the object AND the row (the design explicitly
+/// wants the object gone, not just hidden) — the audit extension's DELETE
+/// row is the historical record, not a soft-delete flag.
+///
+/// BRANCH SCOPING CHOICE (documented tradeoff): `branch_id` is derived from
+/// the owning JOB at upload time (nullable — CUSTOMER/DEVICE owners are
+/// company-level, so their attachments carry branch_id = NULL and stay
+/// visible group-wide within the company, matching how Customer/Device
+/// themselves are NOT branch-scoped). Attachment is deliberately **NOT**
+/// added to `BRANCH_SCOPED_MODELS` in company-scope.extension.ts: that
+/// extension tightens reads with a blunt `branchId = user.homeBranchId`
+/// equality clause, which would also exclude the legitimate `branchId =
+/// NULL` (company-level) rows for a branch-scoped user — the opposite of
+/// what §4.12 wants. Instead AttachmentsService applies the correct
+/// `OR: [{ branchId: null }, { branchId: user.homeBranchId }]` filter
+/// itself for scope='branch' users, in both list() and the single-row
+/// lookup used by delete(). Company scoping (`company_id`) IS handled by
+/// the generic extension as normal (Attachment IS in COMPANY_SCOPED_MODELS).
+model Attachment {
+  id           String              @id @default(uuid()) @db.Char(36)
+  companyId    String              @map("company_id") @db.Char(36)
+  /// Derived from the owning Job at upload time; NULL for company-level
+  /// owners (CUSTOMER/DEVICE) — see branch-scoping note above.
+  branchId     String?             @map("branch_id") @db.Char(36)
+  ownerType    AttachmentOwnerType @map("owner_type")
+  ownerId      String              @map("owner_id") @db.Char(36)
+  kind         AttachmentKind
+  /// Object-storage KEY (not a public URL) — see file header note.
+  fileUrl      String              @map("file_url") @db.VarChar(1024)
+  fileName     String              @map("file_name") @db.VarChar(255)
+  mimeType     String              @map("mime_type") @db.VarChar(100)
+  sizeBytes    Int                 @map("size_bytes")
+  uploadedById String              @map("uploaded_by") @db.Char(36)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company    Company @relation(fields: [companyId], references: [id])
+  branch     Branch? @relation(fields: [branchId], references: [id])
+  uploadedBy User    @relation("AttachmentUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([companyId, ownerType, ownerId])
+  @@index([companyId, branchId])
+  @@map("attachments")
 }

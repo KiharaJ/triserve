@@ -33,5 +33,34 @@ services:
       mysql:
         condition: service_healthy
 
+  # Optional: S3-compatible object storage for attachments (Task 1.4, §4.12).
+  # Only needed when STORAGE_DRIVER=s3 in /api/.env — the default
+  # STORAGE_DRIVER=local needs no external service at all (see
+  # api/src/modules/storage). Uncomment to run it locally:
+  #
+  # minio:
+  #   image: minio/minio:latest
+  #   container_name: triserve-minio
+  #   command: server /data --console-address ":9001"
+  #   environment:
+  #     MINIO_ROOT_USER: ${STORAGE_ACCESS_KEY:-minioadmin}
+  #     MINIO_ROOT_PASSWORD: ${STORAGE_SECRET_KEY:-minioadmin}
+  #   ports:
+  #     - '${MINIO_PORT:-9000}:9000'     # S3 API — matches STORAGE_ENDPOINT
+  #     - '${MINIO_CONSOLE_PORT:-9001}:9001' # web console
+  #   volumes:
+  #     - minio_data:/data
+  #   healthcheck:
+  #     test: ['CMD', 'mc', 'ready', 'local']
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 20
+  #
+  # After starting it, create the bucket once (STORAGE_BUCKET default
+  # `triserve-attachments`), e.g. via the console at :9001 or:
+  #   docker exec triserve-minio mc alias set local http://localhost:9000 minioadmin minioadmin
+  #   docker exec triserve-minio mc mb local/triserve-attachments
+
 volumes:
   mysql_data:
+  # minio_data:

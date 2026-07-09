@@ -4,6 +4,7 @@ import { RequestContextMiddleware } from './common/context/request-context.middl
 import { HealthModule } from './health/health.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { ApprovalsModule } from './modules/approvals/approvals.module';
+import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BranchesModule } from './modules/branches/branches.module';
@@ -39,6 +40,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ModelsModule,
     WorkflowModule,
     JobsModule,
+    AttachmentsModule,
   ],
 })
 export class AppModule implements NestModule {

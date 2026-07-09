@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { ApiErrorResponse } from '@triserve/shared';
 import type { Response } from 'express';
+import { MulterError } from 'multer';
 
 /**
  * Global exception filter: every error leaves the API as
@@ -47,6 +48,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
           message = exception.message;
         }
       }
+    } else if (exception instanceof MulterError) {
+      // Task 1.4 (§4.12): multer's OWN limits.fileSize is a memory backstop
+      // (see MULTER_HARD_CEILING_BYTES) — the real, configurable upload cap
+      // is enforced as a normal HttpException in AttachmentsService. This
+      // branch only guards against ever surfacing that backstop as a bare
+      // 500; any multipart upload feature benefits from it.
+      status =
+        exception.code === 'LIMIT_FILE_SIZE'
+          ? HttpStatus.PAYLOAD_TOO_LARGE
+          : HttpStatus.BAD_REQUEST;
+      message = exception.message;
     } else {
       this.logger.error(
         'Unhandled exception',

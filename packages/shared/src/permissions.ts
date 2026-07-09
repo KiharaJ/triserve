@@ -75,6 +75,8 @@ export const PERMISSIONS = {
   reports: ['report.view.branch', 'report.view.group', 'report.view.finance'],
   config: ['config.read', 'config.manage'],
   audit: ['audit.read'],
+  // Task 1.4 (§4.12/E4): signature + before/after photo capture.
+  attachments: ['attachment.create', 'attachment.read', 'attachment.delete'],
 } as const;
 
 /** Union of every permission action string, e.g. 'job.transition'. */
@@ -159,6 +161,10 @@ export const ROLE_PERMISSIONS: Readonly<
     'report.view.branch',
     'config.read',
     'audit.read',
+    // Task 1.4 (§4.12): branch managers capture, view AND remove attachments.
+    'attachment.create',
+    'attachment.read',
+    'attachment.delete',
   ],
 
   SERVICE_ADVISOR: [
@@ -181,6 +187,10 @@ export const ROLE_PERMISSIONS: Readonly<
     'payment.capture',
     'discount.apply',
     'approval.request',
+    // Task 1.4 (§4.12): front desk captures the customer signature +
+    // before-photos at intake.
+    'attachment.create',
+    'attachment.read',
   ],
 
   TECHNICIAN: [
@@ -194,6 +204,9 @@ export const ROLE_PERMISSIONS: Readonly<
     'inventory.reserve',
     'inventory.consume',
     'approval.request',
+    // Task 1.4 (§4.12): bench captures after-photos on completion.
+    'attachment.create',
+    'attachment.read',
   ],
 
   STOREKEEPER: [

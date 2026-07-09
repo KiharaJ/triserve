@@ -98,6 +98,11 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // sees the mechanical UPDATE). JobCounter is NOT listed — it is an internal
   // sequence written via raw SQL, not business data.
   Prisma.ModelName.Job,
+  // Task 1.4 (§4.12/E4): attachments are audited like every business table.
+  // Upload emits a CREATE row (full snapshot incl. the storage key); DELETE
+  // is a REAL delete (no soft-delete column) so the audit DELETE row IS the
+  // historical record that a file + its metadata once existed.
+  Prisma.ModelName.Attachment,
 ]);
 
 /** Mutations we intercept and audit. */

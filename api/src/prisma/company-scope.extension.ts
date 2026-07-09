@@ -62,6 +62,12 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // extension entirely) — its company_id is passed explicitly there.
   Prisma.ModelName.Job,
   Prisma.ModelName.JobCounter,
+  // Task 1.4 (§4.12/E4): attachments are company-scoped like every business
+  // table. Deliberately NOT in BRANCH_SCOPED_MODELS below — see that
+  // constant's doc comment for why (nullable branch_id needs OR-null
+  // semantics this extension's blunt equality can't express; the branch
+  // filter is applied manually in AttachmentsService instead).
+  Prisma.ModelName.Attachment,
 ]);
 
 /**
@@ -95,6 +101,14 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Approval,
   Prisma.ModelName.Job,
 ]);
+// NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
+// though it carries a branch_id column. Its branch_id is NULLABLE (NULL for
+// company-level owners CUSTOMER/DEVICE, set for JOB-owned attachments) —
+// registering it here would apply `branchId = user.homeBranchId`, which
+// EXCLUDES the legitimate `branchId = NULL` rows for a branch-scoped user
+// instead of including them (they should stay visible group-wide, exactly
+// like Customer/Device themselves). AttachmentsService applies the correct
+// `OR: [{ branchId: null }, { branchId: user.homeBranchId }]` filter itself.
 
 /** Operations that accept a `where` filter we can tighten. */
 const WHERE_OPERATIONS = new Set([

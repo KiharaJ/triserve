@@ -92,3 +92,46 @@ Prerequisites: Node.js >= 20, npm >= 10, Docker.
 | `npm run prisma:studio` | Prisma Studio for the dev DB |
 
 Per-workspace scripts can be run with `npm run <script> -w @triserve/<pkg>`.
+
+## Object storage / attachments (Task 1.4, DESIGN.md §4.12)
+
+Attachments (signature capture, before/after repair photos, …) are stored in
+object storage — never in the DB — via `StorageService`
+(`api/src/modules/storage/storage.types.ts`), which has two interchangeable
+drivers selected by `STORAGE_DRIVER` in `api/.env`:
+
+| `STORAGE_DRIVER` | Backing store | When to use |
+| --- | --- | --- |
+| `local` (default) | Filesystem, under `STORAGE_LOCAL_DIR` (default `api/.storage`, gitignored) | No Docker/MinIO available (this repo's default dev setup) |
+| `s3` | Real S3-compatible bucket (MinIO in `docker-compose.yml`'s optional `minio` service, or real AWS S3/any S3-interop store) | Docker available, or a staging/prod environment |
+
+Both drivers implement the exact same interface (`putObject` /
+`getPresignedGetUrl` / `deleteObject`) — **switching drivers is a one-line
+env change with zero code changes** anywhere else in the app.
+
+- **local driver:** "presigned" GET URLs are an HMAC-signed, expiring app
+  route (`GET /attachments/file/:token`, signed with `STORAGE_URL_SECRET`)
+  that streams the file with the right content-type. The token carries the
+  storage key + mime + expiry, tamper-proofed with HMAC-SHA256 — the client
+  never sees the on-disk path or any credential, same safety property as a
+  real presigned URL, just without needing a bucket.
+- **s3 driver:** real presigned GET URLs straight from the bucket (via
+  `@aws-sdk/s3-request-presigner`) — the API never proxies file bytes.
+
+To run against real MinIO instead: uncomment the `minio` service in
+`docker-compose.yml`, create the bucket once (see the comment above it), and
+set in `api/.env`:
+
+```sh
+STORAGE_DRIVER=s3
+STORAGE_ENDPOINT=http://localhost:9000
+STORAGE_BUCKET=triserve-attachments
+STORAGE_ACCESS_KEY=minioadmin
+STORAGE_SECRET_KEY=minioadmin
+STORAGE_REGION=us-east-1
+STORAGE_FORCE_PATH_STYLE=true
+```
+
+See `api/.env.example` for the full list of `STORAGE_*` variables (upload
+size cap, presigned URL TTL, etc.) — the mime allowlist (PNG/JPEG/WEBP
+images, PDF, MP4) is fixed per DESIGN.md §4.12.
