@@ -1,12 +1,15 @@
 import {
+  Boxes,
   Building2,
   ClipboardCheck,
   LayoutDashboard,
   LogOut,
   MapPin,
+  Package,
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
+  Truck,
   Users,
   Wrench,
 } from 'lucide-react'
@@ -49,6 +52,32 @@ const NAV_SECTIONS: NavSection[] = [
         icon: ScrollText,
         end: false,
         permission: 'audit.read',
+      },
+    ],
+  },
+  {
+    heading: 'Inventory',
+    items: [
+      {
+        to: '/inventory',
+        label: 'Stock',
+        icon: Boxes,
+        end: true,
+        permission: 'inventory.read',
+      },
+      {
+        to: '/inventory/parts',
+        label: 'Parts catalogue',
+        icon: Package,
+        end: false,
+        permission: 'part.read',
+      },
+      {
+        to: '/inventory/movements',
+        label: 'Movements',
+        icon: Truck,
+        end: false,
+        permission: 'inventory.read',
       },
     ],
   },

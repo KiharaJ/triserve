@@ -10,6 +10,9 @@ import { ApprovalsPage } from '@/pages/approvals'
 import { AuditPage } from '@/pages/audit'
 import { CustomerDetailPage } from '@/pages/customers/detail'
 import { DashboardPage } from '@/pages/dashboard'
+import { MovementsPage } from '@/pages/inventory/movements'
+import { PartsPage } from '@/pages/inventory/parts'
+import { StockPage } from '@/pages/inventory/stock'
 import { JobsBoardPage } from '@/pages/jobs/board'
 import { JobDetailPage } from '@/pages/jobs/detail'
 import { JobIntakePage } from '@/pages/jobs/intake'
@@ -58,6 +61,11 @@ function App() {
           <Route path=":id" element={<JobDetailPage />} />
         </Route>
         <Route path="customers/:id" element={<CustomerDetailPage />} />
+        <Route path="inventory">
+          <Route index element={<StockPage />} />
+          <Route path="parts" element={<PartsPage />} />
+          <Route path="movements" element={<MovementsPage />} />
+        </Route>
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="security" element={<SecurityPage />} />

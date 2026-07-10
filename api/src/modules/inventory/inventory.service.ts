@@ -80,6 +80,8 @@ export interface StockMovementWire {
   id: string;
   branch_id: string;
   part_id: string;
+  /** Part summary — present on ledger reads, null on adjust/count results. */
+  part: { part_number: string; description: string } | null;
   movement_type: StockMovementType;
   qty: number;
   ref_type: StockRefType | null;
@@ -405,6 +407,7 @@ export class InventoryService {
       this.prisma.stockMovement.count({ where }),
       this.prisma.stockMovement.findMany({
         where,
+        include: { part: { select: { partNumber: true, description: true } } },
         orderBy: [{ movedAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -806,11 +809,18 @@ function prismaToWire(
   });
 }
 
-function movementToWire(m: StockMovement): StockMovementWire {
+function movementToWire(
+  m: StockMovement & {
+    part?: { partNumber: string; description: string } | null;
+  },
+): StockMovementWire {
   return {
     id: m.id,
     branch_id: m.branchId,
     part_id: m.partId,
+    part: m.part
+      ? { part_number: m.part.partNumber, description: m.part.description }
+      : null,
     movement_type: m.movementType,
     qty: m.qty,
     ref_type: m.refType,

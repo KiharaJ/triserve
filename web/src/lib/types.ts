@@ -358,3 +358,84 @@ export interface AttachmentWire {
   url: string
   created_at: string
 }
+
+// --- Parts / inventory (Task 2.1, §4.4 / E10) --------------------------------
+
+export type StockMovementType =
+  | 'RECEIPT'
+  | 'CONSUMPTION'
+  | 'TRANSFER_OUT'
+  | 'TRANSFER_IN'
+  | 'ADJUSTMENT'
+  | 'SALE'
+  | 'RETURN'
+  | 'SUPPLIER_RETURN'
+  | 'RESERVE'
+  | 'UNRESERVE'
+  | 'DAMAGE'
+
+export type StockRefType =
+  | 'JOB'
+  | 'GRN'
+  | 'TRANSFER'
+  | 'POS_SALE'
+  | 'COUNT'
+  | 'ADJUSTMENT'
+
+export interface PartWire {
+  id: string
+  part_number: string
+  description: string
+  category: DeviceCategory
+  /** USD cents (minor units) — landed cost. */
+  unit_cost_usd: string | null
+  /** TZS senti (minor units) — OW counter price. */
+  default_sell_price_tzs: string | null
+  compatible_models: string[]
+  is_serialized: boolean
+  preferred_supplier_id: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface InventoryWire {
+  id: string
+  branch_id: string
+  part_id: string
+  part: { part_number: string; description: string; category: DeviceCategory }
+  bin_location: string | null
+  qty_on_hand: number
+  qty_reserved: number
+  qty_in_transit_in: number
+  qty_damaged: number
+  /** Derived: on_hand − reserved − damaged (§4.4 / E10). */
+  qty_available: number
+  reorder_level: number
+  low_stock: boolean
+  updated_at: string
+}
+
+export interface StockMovementWire {
+  id: string
+  branch_id: string
+  part_id: string
+  part: { part_number: string; description: string } | null
+  movement_type: StockMovementType
+  qty: number
+  ref_type: StockRefType | null
+  ref_id: string | null
+  unit_cost: string | null
+  cost_currency: string | null
+  reason: string | null
+  moved_by: string
+  moved_at: string
+}
+
+/** Result of an adjust/count — applied, or HELD pending approval (§4.11). */
+export interface StockChangeResult {
+  held: boolean
+  movement: StockMovementWire | null
+  inventory: InventoryWire
+  pending_approval?: ApprovalEntry
+}
