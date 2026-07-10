@@ -150,6 +150,11 @@ model Company {
   workflowStates      WorkflowState[]
   workflowTransitions WorkflowTransition[]
 
+  // Task 2.1 (§4.4): parts catalogue + per-branch stock + movement ledger.
+  parts          Part[]
+  inventory      Inventory[]
+  stockMovements StockMovement[]
+
   @@map("companies")
 }
 
@@ -179,6 +184,10 @@ model Branch {
   preferredCustomers Customer[]     @relation("CustomerPreferredBranch")
   jobs               Job[]
   attachments        Attachment[]
+
+  // Task 2.1 (§4.4): per-branch stock rows + the branch's movement ledger.
+  inventory      Inventory[]
+  stockMovements StockMovement[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -253,6 +262,13 @@ model User {
 
   // Task 1.4 (§4.12): who uploaded a file.
   uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
+
+  // Task 2.1 (§4.4): parts/inventory actor roles.
+  createdParts     Part[]          @relation("PartCreatedBy")
+  updatedParts     Part[]          @relation("PartUpdatedBy")
+  createdInventory Inventory[]     @relation("InventoryCreatedBy")
+  updatedInventory Inventory[]     @relation("InventoryUpdatedBy")
+  movedStock       StockMovement[] @relation("StockMovementMovedBy")
 
   @@map("users")
 }
@@ -949,4 +965,165 @@ model Attachment {
   @@index([companyId, ownerType, ownerId])
   @@index([companyId, branchId])
   @@map("attachments")
+}
+
+// ---------------------------------------------------------------------------
+// Parts / inventory (§4.4 / E10, Task 2.1) — the ledger-backed stock model.
+//
+// THREE tables, one invariant:
+//   - `parts`           — the company-level catalogue (one row per part
+//                         number), like `models`: COMPANY-scoped, NOT branch.
+//   - `inventory`       — stock buckets PER (branch, part): the materialized
+//                         view read by every screen. COMPANY- AND BRANCH-scoped.
+//   - `stock_movements` — the APPEND-ONLY ledger that is the SOURCE OF TRUTH
+//                         for the buckets (like journal_lines for the ledger).
+//
+// Available stock (E10) = qty_on_hand − qty_reserved − qty_damaged. Every
+// stock change goes through InventoryService.applyMovement(), which writes ONE
+// stock_movements row AND updates the inventory buckets ATOMICALLY in a single
+// transaction — so the buckets can always be rebuilt from the ledger
+// (reconcile()), and no screen ever sees a movement without its bucket effect.
+//
+// Neither `inventory` nor `stock_movements` is in AUDITED_MODELS: the movement
+// ledger IS inventory's audit trail (every bucket change is a movement row
+// carrying moved_by/moved_at/reason), and auditing rows written inside
+// applyMovement()'s own transaction would violate the audit extension's
+// "no caller-managed transaction" rule. `parts` (infrequent catalogue edits,
+// never written inside a tx) IS audited like `models`.
+// ---------------------------------------------------------------------------
+
+/// What operational event produced a stock movement (§4.4). Signed `qty`:
+/// RECEIPT/TRANSFER_IN/RETURN/UNRESERVE are inbound (+), CONSUMPTION/
+/// TRANSFER_OUT/SALE/SUPPLIER_RETURN/RESERVE/DAMAGE are outbound of their
+/// bucket (−). ADJUSTMENT can be either sign (stock count correction).
+enum StockMovementType {
+  RECEIPT
+  CONSUMPTION
+  TRANSFER_OUT
+  TRANSFER_IN
+  ADJUSTMENT
+  SALE
+  RETURN
+  SUPPLIER_RETURN
+  RESERVE
+  UNRESERVE
+  DAMAGE
+}
+
+/// The kind of source document a movement links back to via ref_id (§4.4).
+/// GRN links a receipt to its goods-received note (and through it the PO /
+/// supplier). Tables for JOB exist; GRN/TRANSFER/POS_SALE arrive in later
+/// Phase-2/3 tasks — the enum is complete now so no rebuild is needed then.
+enum StockRefType {
+  JOB
+  GRN
+  TRANSFER
+  POS_SALE
+  COUNT
+  ADJUSTMENT
+}
+
+/// The spare-parts catalogue (§4.4). One row per part number per company.
+/// Money is BIGINT minor units + a currency: `unit_cost_usd` is the landed
+/// cost in USD cents (Samsung parts are priced in USD), `default_sell_price_tzs`
+/// the OW counter price in TZS minor units. `compatible_models` is a JSON
+/// array of model codes it fits (§4.4 "text[] / join") — kept denormalized for
+/// now; a `part_models` join can replace it without touching callers.
+model Part {
+  id                  String         @id @default(uuid()) @db.Char(36)
+  companyId           String         @map("company_id") @db.Char(36)
+  partNumber          String         @map("part_number") @db.VarChar(100)
+  description         String         @db.VarChar(500)
+  category            DeviceCategory
+  unitCostUsd         BigInt?        @map("unit_cost_usd") @db.BigInt
+  sellPriceTzs        BigInt?        @map("default_sell_price_tzs") @db.BigInt
+  compatibleModels    Json?          @map("compatible_models")
+  isSerialized        Boolean        @default(false) @map("is_serialized")
+  /// Forward-compat (§4.4b, Task 2.5): drives suggested-reorder grouping.
+  /// Plain CHAR(36) with NO FK yet — the `suppliers` table lands in Task 2.5,
+  /// which adds the constraint (mirrors jobs.claim_id / invoice_id).
+  preferredSupplierId String?        @map("preferred_supplier_id") @db.Char(36)
+  active              Boolean        @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("PartCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("PartUpdatedBy", fields: [updatedById], references: [id])
+
+  company   Company         @relation(fields: [companyId], references: [id])
+  inventory Inventory[]
+  movements StockMovement[]
+
+  @@unique([companyId, partNumber])
+  @@index([companyId, category])
+  @@map("parts")
+}
+
+/// Stock buckets for one part at one branch (§4.4 / E10). The `qty_*` columns
+/// are the materialized projection of `stock_movements`; available stock is
+/// derived (`qty_on_hand − qty_reserved − qty_damaged`) in the service, never
+/// stored. `reorder_level` triggers the low-stock alert / suggested reorder.
+model Inventory {
+  id             String  @id @default(uuid()) @db.Char(36)
+  companyId      String  @map("company_id") @db.Char(36)
+  branchId       String  @map("branch_id") @db.Char(36)
+  partId         String  @map("part_id") @db.Char(36)
+  binLocation    String? @map("bin_location") @db.VarChar(50)
+  qtyOnHand      Int     @default(0) @map("qty_on_hand")
+  qtyReserved    Int     @default(0) @map("qty_reserved")
+  qtyInTransitIn Int     @default(0) @map("qty_in_transit_in")
+  qtyDamaged     Int     @default(0) @map("qty_damaged")
+  reorderLevel   Int     @default(0) @map("reorder_level")
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+  createdBy   User?    @relation("InventoryCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?    @relation("InventoryUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company @relation(fields: [companyId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+  part    Part    @relation(fields: [partId], references: [id])
+
+  @@unique([branchId, partId])
+  @@index([companyId, branchId])
+  @@index([partId])
+  @@map("inventory")
+}
+
+/// Append-only stock ledger (§4.4) — the source of truth behind every bucket.
+/// NEVER updated or deleted. `qty` is signed; `ref_type`/`ref_id` link the
+/// causing document (job/GRN/transfer/count); `unit_cost`+`cost_currency`
+/// capture cost at the time of the movement (BIGINT minor units) for
+/// valuation. `reason` is required for ADJUSTMENT/DAMAGE (enforced in service).
+model StockMovement {
+  id           String            @id @default(uuid()) @db.Char(36)
+  companyId    String            @map("company_id") @db.Char(36)
+  branchId     String            @map("branch_id") @db.Char(36)
+  partId       String            @map("part_id") @db.Char(36)
+  movementType StockMovementType @map("movement_type")
+  qty          Int
+  refType      StockRefType?     @map("ref_type")
+  refId        String?           @map("ref_id") @db.Char(36)
+  unitCost     BigInt?           @map("unit_cost") @db.BigInt
+  costCurrency String?           @map("cost_currency") @db.Char(3)
+  reason       String?           @db.Text
+  movedById    String            @map("moved_by") @db.Char(36)
+  movedAt      DateTime          @default(now()) @map("moved_at") @db.DateTime(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company Company @relation(fields: [companyId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+  part    Part    @relation(fields: [partId], references: [id])
+  movedBy User    @relation("StockMovementMovedBy", fields: [movedById], references: [id])
+
+  @@index([companyId, branchId, partId, movedAt])
+  @@index([companyId, movementType, movedAt])
+  @@index([refType, refId])
+  @@map("stock_movements")
 }

@@ -68,6 +68,13 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // semantics this extension's blunt equality can't express; the branch
   // filter is applied manually in AttachmentsService instead).
   Prisma.ModelName.Attachment,
+  // Task 2.1 (§4.4): the parts catalogue is company-level (like models);
+  // inventory + the movement ledger are company- AND branch-scoped (both in
+  // BRANCH_SCOPED_MODELS below). All three get company_id force-injected on
+  // create and every read tenancy-filtered.
+  Prisma.ModelName.Part,
+  Prisma.ModelName.Inventory,
+  Prisma.ModelName.StockMovement,
 ]);
 
 /**
@@ -100,6 +107,14 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
 export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Approval,
   Prisma.ModelName.Job,
+  // Task 2.1 (§4.4): stock is physically located at a branch — a
+  // scope='branch' user only sees their branch's inventory rows and movement
+  // ledger. `Part` (the catalogue) is deliberately absent: it is company-level
+  // like models/fault codes, shared by every branch. Inter-branch transfers
+  // (Task 2.3) move stock between branches but each row still belongs to one
+  // branch, so this per-branch read filter stays correct.
+  Prisma.ModelName.Inventory,
+  Prisma.ModelName.StockMovement,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for

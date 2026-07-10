@@ -33,6 +33,10 @@ export const PERMISSIONS = {
     'job.transition.dispatch',
     'job.reopen',
   ],
+  // Task 2.1 (§4.4): the spare-parts CATALOGUE (part numbers, costs, reorder
+  // config) — company-level like models. Reading stock levels is
+  // 'inventory.read'; editing the catalogue itself is 'part.manage'.
+  parts: ['part.read', 'part.manage'],
   inventory: [
     'inventory.read',
     'inventory.reserve',
@@ -128,6 +132,8 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.transition.repair',
     'job.transition.dispatch',
     'job.reopen',
+    'part.read',
+    'part.manage',
     'inventory.read',
     'inventory.reserve',
     'inventory.consume',
@@ -180,6 +186,7 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.update',
     'job.transition',
     'job.transition.dispatch',
+    'part.read',
     'inventory.read',
     'pos.sell',
     'invoice.create',
@@ -200,6 +207,7 @@ export const ROLE_PERMISSIONS: Readonly<
     'job.transition.repair',
     'device.read',
     'model.read',
+    'part.read',
     'inventory.read',
     'inventory.reserve',
     'inventory.consume',
@@ -210,6 +218,8 @@ export const ROLE_PERMISSIONS: Readonly<
   ],
 
   STOREKEEPER: [
+    'part.read',
+    'part.manage',
     'inventory.read',
     'inventory.reserve',
     'inventory.adjust',
@@ -245,6 +255,7 @@ export const ROLE_PERMISSIONS: Readonly<
     'audit.read',
     'invoice.read',
     'po.read',
+    'part.read',
     'inventory.read',
     'job.read',
     'customer.read',

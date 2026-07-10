@@ -345,6 +345,132 @@ async function main(): Promise<void> {
     );
   }
 
+  // --- Sample parts + opening stock (Task 2.1, §4.4) ------------------------
+  // A few representative spare parts with opening stock at DAR/KRK so the
+  // inventory API is demonstrable before the migration importer (Task 2.10)
+  // loads the real catalogue. Idempotent AND non-destructive: parts are
+  // upserted, but stock quantities are set on CREATE only (re-running the seed
+  // never resets stock that has since been moved through the API), and the
+  // opening RECEIPT ledger row is written exactly once per (branch, part).
+  const branchByCode = new Map<string, string>();
+  for (const b of BRANCHES) {
+    const row = await prisma.branch.findFirstOrThrow({
+      where: { companyId: company.id, code: b.code },
+    });
+    branchByCode.set(b.code, row.id);
+  }
+
+  const SAMPLE_PARTS = [
+    {
+      partNumber: 'GH82-31385A',
+      description: 'Galaxy S24 LCD OLED assembly (black)',
+      category: 'HHP',
+      unitCostUsd: 12_800n, // USD 128.00
+      sellPriceTzs: 45_000_000n, // TZS 450,000
+      reorderLevel: 5,
+      opening: { DAR: 12, KRK: 4 },
+    },
+    {
+      partNumber: 'GH82-30000B',
+      description: 'Galaxy A05 LCD assembly',
+      category: 'HHP',
+      unitCostUsd: 3_200n,
+      sellPriceTzs: 12_000_000n,
+      reorderLevel: 8,
+      opening: { DAR: 20, KRK: 10 },
+    },
+    {
+      partNumber: 'EB-BA556ABY',
+      description: 'Galaxy A55 battery pack',
+      category: 'HHP',
+      unitCostUsd: 1_500n,
+      sellPriceTzs: 5_500_000n,
+      reorderLevel: 15,
+      opening: { DAR: 40, KRK: 18 },
+    },
+    {
+      partNumber: 'DA97-19289X',
+      description: 'Refrigerator door gasket (RT-series)',
+      category: 'REF',
+      unitCostUsd: 900n,
+      sellPriceTzs: 3_500_000n,
+      reorderLevel: 6,
+      opening: { DAR: 7, KRK: 0 },
+    },
+  ] as const;
+
+  for (const p of SAMPLE_PARTS) {
+    const part = await prisma.part.upsert({
+      where: {
+        companyId_partNumber: {
+          companyId: company.id,
+          partNumber: p.partNumber,
+        },
+      },
+      update: {
+        description: p.description,
+        category: p.category,
+        unitCostUsd: p.unitCostUsd,
+        sellPriceTzs: p.sellPriceTzs,
+        active: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        partNumber: p.partNumber,
+        description: p.description,
+        category: p.category,
+        unitCostUsd: p.unitCostUsd,
+        sellPriceTzs: p.sellPriceTzs,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+
+    for (const [code, qty] of Object.entries(p.opening)) {
+      const branchId = branchByCode.get(code);
+      if (!branchId || qty <= 0) continue;
+
+      await prisma.inventory.upsert({
+        where: { branchId_partId: { branchId, partId: part.id } },
+        // Non-destructive: only reorder level is refreshed on re-run; qty is
+        // set on CREATE so live stock is never reset by re-seeding.
+        update: { reorderLevel: p.reorderLevel, updatedById: admin.id },
+        create: {
+          id: randomUUID(),
+          companyId: company.id,
+          branchId,
+          partId: part.id,
+          qtyOnHand: qty,
+          reorderLevel: p.reorderLevel,
+          createdById: admin.id,
+          updatedById: admin.id,
+        },
+      });
+
+      const existing = await prisma.stockMovement.findFirst({
+        where: { branchId, partId: part.id, reason: 'Opening stock (seed)' },
+      });
+      if (!existing) {
+        await prisma.stockMovement.create({
+          data: {
+            id: randomUUID(),
+            companyId: company.id,
+            branchId,
+            partId: part.id,
+            movementType: 'RECEIPT',
+            qty,
+            reason: 'Opening stock (seed)',
+            unitCost: p.unitCostUsd,
+            costCurrency: 'USD',
+            movedById: admin.id,
+          },
+        });
+      }
+    }
+    console.log(`part:           ${part.partNumber} — ${part.description}`);
+  }
+
   console.log('Seed complete.');
 }
 

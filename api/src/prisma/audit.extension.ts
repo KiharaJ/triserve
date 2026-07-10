@@ -103,6 +103,15 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // is a REAL delete (no soft-delete column) so the audit DELETE row IS the
   // historical record that a file + its metadata once existed.
   Prisma.ModelName.Attachment,
+  // Task 2.1 (§4.4): the parts CATALOGUE is audited like models — infrequent
+  // edits, never written inside a caller-managed transaction. `Inventory` and
+  // `StockMovement` are DELIBERATELY EXCLUDED: the append-only stock_movements
+  // ledger IS inventory's audit trail (every bucket change carries
+  // moved_by/moved_at/reason), and both are written together inside
+  // InventoryService.applyMovement()'s own transaction — auditing them here
+  // would violate this extension's "no caller-managed transaction" rule (see
+  // KNOWN LIMITATIONS above), exactly like journal_lines.
+  Prisma.ModelName.Part,
 ]);
 
 /** Mutations we intercept and audit. */
