@@ -439,3 +439,20 @@ export interface StockChangeResult {
   inventory: InventoryWire
   pending_approval?: ApprovalEntry
 }
+
+export type JobPartStatus = 'RESERVED' | 'CONSUMED'
+
+/** A part committed to a job (§4.5, Task 2.2). */
+export interface JobPartWire {
+  id: string
+  job_id: string
+  part_id: string
+  part: { part_number: string; description: string; category: DeviceCategory }
+  qty: number
+  unit_sell_price: string | null
+  currency: string | null
+  is_warranty: boolean
+  status: JobPartStatus
+  reserved_at: string
+  consumed_at: string | null
+}

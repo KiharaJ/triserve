@@ -428,6 +428,15 @@ export class JobsService {
   }
 
   /**
+   * Public scoped job lookup (with state) for sibling services in this module
+   * — e.g. JobPartsService (Task 2.2) reuses the SAME company/branch/technician
+   * scoping so "reserve a part on this job" is gated exactly like the job is.
+   */
+  async loadAccessibleJob(id: string, user: AuthUser): Promise<JobWithState> {
+    return this.getRow(id, user);
+  }
+
+  /**
    * Scoped job lookup (with current state) used by the mutation paths.
    * TECHNICIANs can only load jobs assigned to them → clean 404 otherwise.
    */

@@ -2,7 +2,10 @@ import { Module } from '@nestjs/common';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { InventoryModule } from '../inventory/inventory.module';
 import { WorkflowModule } from '../workflow/workflow.module';
+import { JobPartsController } from './job-parts.controller';
+import { JobPartsService } from './job-parts.service';
 import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
 
@@ -11,11 +14,19 @@ import { JobsService } from './jobs.service';
  *
  * Depends on WorkflowModule (validate every state move), ApprovalsModule
  * (hold requires_approval edges), and AuditModule (semantic TRANSITION rows).
+ * Task 2.2 (§4.5) adds job parts, which reserve/consume stock through
+ * InventoryModule's applyMovement — hence the InventoryModule import.
  */
 @Module({
-  imports: [AuthModule, WorkflowModule, ApprovalsModule, AuditModule],
-  controllers: [JobsController],
-  providers: [JobsService],
+  imports: [
+    AuthModule,
+    WorkflowModule,
+    ApprovalsModule,
+    AuditModule,
+    InventoryModule,
+  ],
+  controllers: [JobsController, JobPartsController],
+  providers: [JobsService, JobPartsService],
   exports: [JobsService],
 })
 export class JobsModule {}

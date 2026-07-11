@@ -12,15 +12,25 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { formatDateTime } from '@/lib/format'
+import { formatDateTime, formatMoney } from '@/lib/format'
 import type {
   AttachmentWire,
   AuditLogEntry,
   JobDetailWire,
+  JobPartWire,
+  PartWire,
   UserWire,
   WarrantyStatus,
 } from '@/lib/types'
@@ -338,11 +348,234 @@ function HistoryTab({ job }: { job: JobDetailWire }) {
   )
 }
 
+function PartsTab({ job }: { job: JobDetailWire }) {
+  const { can } = useAuth()
+  const queryClient = useQueryClient()
+  const [partId, setPartId] = useState('')
+  const [qty, setQty] = useState('1')
+
+  const canReserve = can('inventory.reserve')
+  const canConsume = can('inventory.consume')
+
+  const parts = useQuery({
+    queryKey: ['job-parts', job.id],
+    queryFn: async () =>
+      (await api.get<JobPartWire[]>(`/jobs/${job.id}/parts`)).data,
+  })
+
+  const catalogue = useQuery({
+    queryKey: ['parts', 'options'],
+    enabled: canReserve,
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<PartWire>>('/parts', {
+          params: { page_size: 100, active: true },
+        })
+      ).data.data,
+  })
+
+  const invalidate = async () => {
+    await queryClient.invalidateQueries({ queryKey: ['job-parts', job.id] })
+    await queryClient.invalidateQueries({ queryKey: ['inventory'] })
+  }
+
+  const add = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post<JobPartWire>(`/jobs/${job.id}/parts`, {
+          part_id: partId,
+          qty: Number(qty),
+        })
+      ).data,
+    onSuccess: async () => {
+      toast.success('Part reserved')
+      setPartId('')
+      setQty('1')
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const remove = useMutation({
+    mutationFn: async (lineId: string) =>
+      api.delete(`/jobs/${job.id}/parts/${lineId}`),
+    onSuccess: async () => {
+      toast.success('Reservation released')
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const consume = useMutation({
+    mutationFn: async (lineId: string) =>
+      api.post(`/jobs/${job.id}/parts/${lineId}/consume`),
+    onSuccess: async () => {
+      toast.success('Part consumed')
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const consumeAll = useMutation({
+    mutationFn: async () => api.post(`/jobs/${job.id}/parts/consume`),
+    onSuccess: async () => {
+      toast.success('All reserved parts consumed')
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const lines = parts.data ?? []
+  const reserved = lines.filter((l) => l.status === 'RESERVED')
+  const busy =
+    add.isPending ||
+    remove.isPending ||
+    consume.isPending ||
+    consumeAll.isPending
+
+  return (
+    <div className="flex flex-col gap-4">
+      {parts.isPending && (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      )}
+      {lines.length > 0 && (
+        <div className="rounded-xl border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Part</TableHead>
+                <TableHead className="text-right">Qty</TableHead>
+                <TableHead className="text-right">Unit price</TableHead>
+                <TableHead>Warranty</TableHead>
+                <TableHead>Status</TableHead>
+                {(canReserve || canConsume) && <TableHead className="w-40" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {lines.map((l) => (
+                <TableRow key={l.id}>
+                  <TableCell>
+                    <div className="flex flex-col">
+                      <span className="font-mono text-sm">
+                        {l.part.part_number}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {l.part.description}
+                      </span>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">{l.qty}</TableCell>
+                  <TableCell className="text-right">
+                    {formatMoney(l.unit_sell_price, l.currency ?? 'TZS')}
+                  </TableCell>
+                  <TableCell>
+                    {l.is_warranty ? (
+                      <Badge variant="success">IW</Badge>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {l.status === 'RESERVED' ? (
+                      <Badge variant="warning">Reserved</Badge>
+                    ) : (
+                      <Badge variant="secondary">Consumed</Badge>
+                    )}
+                  </TableCell>
+                  {(canReserve || canConsume) && (
+                    <TableCell>
+                      {l.status === 'RESERVED' && (
+                        <div className="flex gap-1">
+                          {canConsume && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => consume.mutate(l.id)}
+                            >
+                              Consume
+                            </Button>
+                          )}
+                          {canReserve && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={busy}
+                              onClick={() => remove.mutate(l.id)}
+                            >
+                              Remove
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      )}
+      {lines.length === 0 && !parts.isPending && (
+        <p className="text-sm text-muted-foreground">
+          No parts on this job yet.
+        </p>
+      )}
+
+      {canConsume && reserved.length > 0 && (
+        <div>
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => consumeAll.mutate()}
+          >
+            Consume all reserved ({reserved.length})
+          </Button>
+        </div>
+      )}
+
+      {canReserve && (
+        <div className="flex flex-wrap items-end gap-2 border-t pt-4">
+          <FormField label="Add part" htmlFor="jp-part" className="min-w-64">
+            <Select
+              id="jp-part"
+              value={partId}
+              onChange={(e) => setPartId(e.target.value)}
+            >
+              <option value="">— select a part —</option>
+              {catalogue.data?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.part_number} — {p.description}
+                </option>
+              ))}
+            </Select>
+          </FormField>
+          <FormField label="Qty" htmlFor="jp-qty" className="w-24">
+            <Input
+              id="jp-qty"
+              inputMode="numeric"
+              value={qty}
+              onChange={(e) => setQty(e.target.value)}
+            />
+          </FormField>
+          <Button
+            disabled={busy || !partId || Number(qty) < 1}
+            onClick={() => add.mutate()}
+          >
+            Reserve
+          </Button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /**
  * Job detail (Task 1.5, DESIGN.md §8 item 5). Tabs: Details · Tech report ·
- * Attachments · History · Parts/Payment (Phase 2/3 placeholders). Legal next
- * moves come straight from GET /jobs/{id}'s `allowed_next_transitions` —
- * already permission- and guard-filtered server-side (WorkflowService).
+ * Attachments · History · Parts (Task 2.2) · Payment (Phase 3 placeholder).
+ * Legal next moves come straight from GET /jobs/{id}'s
+ * `allowed_next_transitions` — already permission- and guard-filtered
+ * server-side (WorkflowService).
  */
 export function JobDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -412,9 +645,7 @@ export function JobDetailPage() {
           <TabsTrigger value="tech">Tech report</TabsTrigger>
           <TabsTrigger value="attachments">Attachments</TabsTrigger>
           {can('audit.read') && <TabsTrigger value="history">History</TabsTrigger>}
-          <TabsTrigger value="parts" disabled>
-            Parts
-          </TabsTrigger>
+          <TabsTrigger value="parts">Parts</TabsTrigger>
           <TabsTrigger value="payment" disabled>
             Payment
           </TabsTrigger>
@@ -434,7 +665,7 @@ export function JobDetailPage() {
           </TabsContent>
         )}
         <TabsContent value="parts">
-          <p className="text-sm text-muted-foreground">Parts consumption arrives in Phase 2.</p>
+          <PartsTab job={job} />
         </TabsContent>
         <TabsContent value="payment">
           <p className="text-sm text-muted-foreground">

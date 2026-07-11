@@ -154,6 +154,8 @@ model Company {
   parts          Part[]
   inventory      Inventory[]
   stockMovements StockMovement[]
+  // Task 2.2 (§4.5): parts committed to jobs.
+  jobParts       JobPart[]
 
   @@map("companies")
 }
@@ -269,6 +271,10 @@ model User {
   createdInventory Inventory[]     @relation("InventoryCreatedBy")
   updatedInventory Inventory[]     @relation("InventoryUpdatedBy")
   movedStock       StockMovement[] @relation("StockMovementMovedBy")
+
+  // Task 2.2 (§4.5): job-part actor roles.
+  createdJobParts JobPart[] @relation("JobPartCreatedBy")
+  updatedJobParts JobPart[] @relation("JobPartUpdatedBy")
 
   @@map("users")
 }
@@ -853,6 +859,9 @@ model Job {
   createdBy        User?         @relation("JobCreatedBy", fields: [createdById], references: [id])
   updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
 
+  // Task 2.2 (§4.5): parts reserved/consumed on this job.
+  parts JobPart[]
+
   @@unique([companyId, jobNo])
   @@index([companyId, branchId, stateId])
   @@index([companyId, assignedEngineerId])
@@ -1056,10 +1065,58 @@ model Part {
   company   Company         @relation(fields: [companyId], references: [id])
   inventory Inventory[]
   movements StockMovement[]
+  jobParts  JobPart[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
   @@map("parts")
+}
+
+/// Lifecycle of a part committed to a job (§4.5, Task 2.2). RESERVED holds
+/// available stock the moment a part is added to a job (so two technicians
+/// can't both promise the last unit); CONSUMED is written when the part is
+/// physically installed — that releases the reservation AND removes the unit
+/// from on-hand stock (an UNRESERVE + a CONSUMPTION through applyMovement).
+enum JobPartStatus {
+  RESERVED
+  CONSUMED
+}
+
+/// A part committed to a job (§4.5). Adding a line RESERVES branch stock;
+/// consuming it fires a CONSUMPTION (ref_type JOB) through
+/// InventoryService.applyMovement. Money is BIGINT minor units + currency.
+/// Like `inventory`, JobPart is DELIBERATELY NOT audited by the extension: the
+/// line is written inside applyMovement's transaction, and the stock_movements
+/// ledger (RESERVE/UNRESERVE/CONSUMPTION rows, ref_id = the job) is its audit
+/// trail. It carries no branch_id — the affected branch is the job's branch,
+/// and access is always gated through the (branch-scoped) parent job.
+model JobPart {
+  id            String        @id @default(uuid()) @db.Char(36)
+  companyId     String        @map("company_id") @db.Char(36)
+  jobId         String        @map("job_id") @db.Char(36)
+  partId        String        @map("part_id") @db.Char(36)
+  qty           Int
+  unitSellPrice BigInt?       @map("unit_sell_price") @db.BigInt
+  currency      String?       @db.Char(3)
+  isWarranty    Boolean       @default(false) @map("is_warranty")
+  status        JobPartStatus @default(RESERVED)
+  reservedAt    DateTime      @default(now()) @map("reserved_at") @db.DateTime(3)
+  consumedAt    DateTime?     @map("consumed_at") @db.DateTime(3)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+  createdBy   User?    @relation("JobPartCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?    @relation("JobPartUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company @relation(fields: [companyId], references: [id])
+  job     Job     @relation(fields: [jobId], references: [id])
+  part    Part    @relation(fields: [partId], references: [id])
+
+  @@index([companyId, jobId])
+  @@index([partId])
+  @@map("job_parts")
 }
 
 /// Stock buckets for one part at one branch (§4.4 / E10). The `qty_*` columns

@@ -75,6 +75,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Part,
   Prisma.ModelName.Inventory,
   Prisma.ModelName.StockMovement,
+  // Task 2.2 (§4.5): parts committed to jobs. Company-scoped for defense in
+  // depth; NOT branch-scoped (it has no branch_id — access is gated through
+  // the branch-scoped parent job in JobPartsService).
+  Prisma.ModelName.JobPart,
 ]);
 
 /**
