@@ -536,6 +536,31 @@ export interface PurchaseOrderWire {
   lines: PoLineWire[]
 }
 
+// --- Reorder suggestions (Task 2.9, §4.4b) -----------------------------------
+
+export interface ReorderItem {
+  part_id: string
+  part_number: string
+  description: string
+  available: number
+  reorder_level: number
+  suggested_qty: number
+  unit_cost_usd: string | null
+}
+
+export interface ReorderGroup {
+  supplier_id: string | null
+  supplier_name: string | null
+  currency: string | null
+  items: ReorderItem[]
+}
+
+export interface ReorderSuggestions {
+  branch_id: string
+  branch_code: string
+  groups: ReorderGroup[]
+}
+
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'
 
 /** A part committed to a job (§4.5, Task 2.2). */
