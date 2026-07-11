@@ -93,6 +93,25 @@ Prerequisites: Node.js >= 20, npm >= 10, Docker.
 
 Per-workspace scripts can be run with `npm run <script> -w @triserve/<pkg>`.
 
+## Inventory migration importer (Task 2.10, DESIGN.md §10 / §4.4b)
+
+Load the real parts catalogue + opening stock from the spreadsheets. Export
+each sheet to CSV, then (from `/api`):
+
+```sh
+npm run import:inventory -- --parts parts.csv --stock stock.csv --dry   # preview
+npm run import:inventory -- --parts parts.csv --stock stock.csv         # apply
+```
+
+`--dry` parses, validates and reports without writing. The import is idempotent
+and non-destructive (parts/suppliers upserted; opening stock set only when an
+inventory row is first created, so re-running never resets moved stock; each
+opening RECEIPT ledger row written once). The full CSV column format is
+documented at the top of `api/scripts/import-inventory.ts`; see
+`api/scripts/sample-parts.csv` / `sample-stock.csv` for a worked example. Money
+is entered in whole units (USD dollars, TZS shillings) and stored as minor
+units. Target a different tenant with `--company "<name>"`.
+
 ## Object storage / attachments (Task 1.4, DESIGN.md §4.12)
 
 Attachments (signature capture, before/after repair photos, …) are stored in

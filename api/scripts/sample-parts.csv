@@ -1,0 +1,5 @@
+part_number,description,category,unit_cost_usd,sell_price_tzs,reorder_level,preferred_supplier,is_serialized,compatible_models
+GH82-33385A,S928B LCD OLED assembly,HHP,152,520000,5,Samsung Parts Distributor,yes,"S24 Ultra,S928B"
+GH82-30000C,A15 LCD assembly,HHP,34,120000,8,Samsung Parts Distributor,no,A15
+EB-BA556ABY,A55 battery pack,HHP,15,55000,15,Samsung Parts Distributor,no,A55
+DA29-00020B,Refrigerator water filter,REF,9,35000,6,Dar Local Spares Ltd,no,
