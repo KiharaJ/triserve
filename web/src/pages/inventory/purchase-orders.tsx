@@ -89,9 +89,18 @@ export function PurchaseOrdersPage() {
   const [lines, setLines] = useState<DraftLine[]>([
     { part_id: '', qty: '1', unit_cost: '' },
   ])
+  // Receive dialog state: the PO being received + per-line qty/bin inputs.
+  const [receiveTarget, setReceiveTarget] = useState<PurchaseOrderWire | null>(
+    null,
+  )
+  const [receiveLines, setReceiveLines] = useState<
+    Record<string, { qty: string; bin: string }>
+  >({})
+  const [deliveryRef, setDeliveryRef] = useState('')
 
   const canCreate = can('po.create')
   const canApprove = can('po.approve')
+  const canReceive = can('grn.receive')
 
   const branches = useQuery({
     queryKey: ['branches', 'all'],
@@ -190,6 +199,40 @@ export function PurchaseOrdersPage() {
     onError: (e) => toast.error(apiErrorMessage(e)),
   })
 
+  function openReceive(po: PurchaseOrderWire) {
+    setReceiveTarget(po)
+    setDeliveryRef('')
+    const init: Record<string, { qty: string; bin: string }> = {}
+    for (const l of po.lines) {
+      const outstanding = l.qty_ordered - l.qty_received
+      init[l.id] = { qty: outstanding > 0 ? String(outstanding) : '0', bin: '' }
+    }
+    setReceiveLines(init)
+  }
+
+  const receive = useMutation({
+    mutationFn: async () => {
+      if (!receiveTarget) return
+      return api.post(`/purchase-orders/${receiveTarget.id}/receipts`, {
+        supplier_delivery_ref: deliveryRef || undefined,
+        lines: receiveTarget.lines
+          .map((l) => ({
+            po_line_id: l.id,
+            qty_received: Number(receiveLines[l.id]?.qty ?? '0'),
+            bin_location: receiveLines[l.id]?.bin || undefined,
+          }))
+          .filter((l) => l.qty_received > 0),
+      })
+    },
+    onSuccess: async () => {
+      toast.success('Goods received')
+      setReceiveTarget(null)
+      await invalidate()
+      await queryClient.invalidateQueries({ queryKey: ['inventory'] })
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
   const busy = create.isPending || lifecycle.isPending
   const validLines = lines.filter(
     (l) => l.part_id && Number(l.qty) > 0 && l.unit_cost !== '',
@@ -236,7 +279,9 @@ export function PurchaseOrdersPage() {
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                {canCreate && <TableHead className="w-56" />}
+                {(canCreate || canReceive) && (
+                  <TableHead className="w-56" />
+                )}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -275,10 +320,22 @@ export function PurchaseOrdersPage() {
                     <TableCell className="text-sm text-muted-foreground">
                       {formatDate(po.created_at)}
                     </TableCell>
-                    {canCreate && (
+                    {(canCreate || canReceive) && (
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {po.status === 'DRAFT' && (
+                          {canReceive &&
+                            (po.status === 'ORDERED' ||
+                              po.status === 'PARTIALLY_RECEIVED') && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busy}
+                                onClick={() => openReceive(po)}
+                              >
+                                Receive
+                              </Button>
+                            )}
+                          {canCreate && po.status === 'DRAFT' && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -307,7 +364,7 @@ export function PurchaseOrdersPage() {
                                 Approve
                               </Button>
                             )}
-                          {showOrder && (
+                          {canCreate && showOrder && (
                             <Button
                               variant="ghost"
                               size="sm"
@@ -319,7 +376,8 @@ export function PurchaseOrdersPage() {
                               Order
                             </Button>
                           )}
-                          {po.status !== 'RECEIVED' &&
+                          {canCreate &&
+                            po.status !== 'RECEIVED' &&
                             po.status !== 'CANCELLED' &&
                             po.status !== 'ORDERED' && (
                               <Button
@@ -519,6 +577,86 @@ export function PurchaseOrdersPage() {
               onClick={() => create.mutate()}
             >
               {create.isPending ? 'Saving…' : 'Create draft'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={receiveTarget !== null}
+        onOpenChange={(o) => !o && setReceiveTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Receive {receiveTarget?.po_no}</DialogTitle>
+            <DialogDescription>
+              Enter the quantity received per line. This posts the stock into{' '}
+              {receiveTarget?.branch_code} immediately.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            {receiveTarget?.lines.map((l) => {
+              const outstanding = l.qty_ordered - l.qty_received
+              return (
+                <div key={l.id} className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <div className="font-mono text-sm">
+                      {l.part.part_number}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      ordered {l.qty_ordered} · received {l.qty_received} ·
+                      outstanding {outstanding}
+                    </div>
+                  </div>
+                  <Input
+                    inputMode="numeric"
+                    className="w-16"
+                    aria-label="Qty received"
+                    value={receiveLines[l.id]?.qty ?? '0'}
+                    onChange={(e) =>
+                      setReceiveLines((rl) => ({
+                        ...rl,
+                        [l.id]: { ...rl[l.id], qty: e.target.value },
+                      }))
+                    }
+                  />
+                  <Input
+                    className="w-24"
+                    aria-label="Bin"
+                    placeholder="Bin"
+                    value={receiveLines[l.id]?.bin ?? ''}
+                    onChange={(e) =>
+                      setReceiveLines((rl) => ({
+                        ...rl,
+                        [l.id]: { ...rl[l.id], bin: e.target.value },
+                      }))
+                    }
+                  />
+                </div>
+              )
+            })}
+            <FormField label="Delivery reference (optional)" htmlFor="grn-ref">
+              <Input
+                id="grn-ref"
+                value={deliveryRef}
+                onChange={(e) => setDeliveryRef(e.target.value)}
+                placeholder="Supplier waybill / delivery note"
+              />
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setReceiveTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={receive.isPending}
+              onClick={() => receive.mutate()}
+            >
+              {receive.isPending ? 'Receiving…' : 'Post receipt'}
             </Button>
           </DialogFooter>
         </DialogContent>

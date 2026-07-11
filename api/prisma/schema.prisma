@@ -162,6 +162,8 @@ model Company {
   suppliers      Supplier[]
   // Task 2.6 (§4.4b): orders sent to suppliers.
   purchaseOrders PurchaseOrder[]
+  // Task 2.7 (§4.4b): deliveries received against orders.
+  grns           GoodsReceivedNote[]
 
   @@map("companies")
 }
@@ -197,10 +199,12 @@ model Branch {
   inventory      Inventory[]
   stockMovements StockMovement[]
   // Task 2.3 (§4.4): transfers dispatched from / received at this branch.
-  transfersOut   StockTransfer[] @relation("TransferFromBranch")
-  transfersIn    StockTransfer[] @relation("TransferToBranch")
+  transfersOut   StockTransfer[]     @relation("TransferFromBranch")
+  transfersIn    StockTransfer[]     @relation("TransferToBranch")
   // Task 2.6 (§4.4b): POs destined for this branch.
   purchaseOrders PurchaseOrder[]
+  // Task 2.7 (§4.4b): deliveries landed at this branch.
+  grns           GoodsReceivedNote[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -301,6 +305,9 @@ model User {
   approvedPurchaseOrders PurchaseOrder[] @relation("PoApprovedBy")
   createdPurchaseOrders  PurchaseOrder[] @relation("PoCreatedBy")
   updatedPurchaseOrders  PurchaseOrder[] @relation("PoUpdatedBy")
+
+  // Task 2.7 (§4.4b): who received a delivery.
+  receivedGrns GoodsReceivedNote[] @relation("GrnReceivedBy")
 
   @@map("users")
 }
@@ -1094,6 +1101,7 @@ model Part {
   jobParts          JobPart[]
   transferLines     StockTransferLine[]
   poLines           PurchaseOrderLine[]
+  grnLines          GrnLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1425,6 +1433,7 @@ model PurchaseOrder {
   createdBy  User?               @relation("PoCreatedBy", fields: [createdById], references: [id])
   updatedBy  User?               @relation("PoUpdatedBy", fields: [updatedById], references: [id])
   lines      PurchaseOrderLine[]
+  grns       GoodsReceivedNote[]
 
   @@unique([companyId, poNo])
   @@index([companyId, status])
@@ -1447,8 +1456,9 @@ model PurchaseOrderLine {
 
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
-  po   PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  part Part          @relation(fields: [partId], references: [id])
+  po       PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  part     Part          @relation(fields: [partId], references: [id])
+  grnLines GrnLine[]
 
   @@index([poId])
   @@index([partId])
@@ -1469,4 +1479,86 @@ model PurchaseOrderCounter {
 
   @@unique([companyId, branchId, year])
   @@map("purchase_order_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Goods received notes (§4.4b, Task 2.7) — an actual delivery against a PO.
+//
+// Posting a GRN is what MOVES stock: each grn_line writes a RECEIPT into
+// stock_movements (ref_type GRN, ref_id = the GRN, unit_cost from the GRN),
+// increments inventory.qty_on_hand, bumps purchase_order_lines.qty_received,
+// and — when every line is fully received — flips the PO to RECEIVED (else
+// PARTIALLY_RECEIVED). A PO can have several GRNs (partial deliveries). All of
+// this happens in ONE transaction through InventoryService.applyMovement.
+//
+// Company- AND branch-scoped (branch_id = where stock landed = the PO's
+// branch). NOT extension-audited (written inside the stock transaction); the
+// stock ledger + the GRN record are the trail, plus a semantic AuditService
+// CREATE row. `qty_rejected` (damaged/wrong, sent back) does NOT move stock —
+// it feeds supplier performance (E9-proc).
+// ---------------------------------------------------------------------------
+
+model GoodsReceivedNote {
+  id                  String   @id @default(uuid()) @db.Char(36)
+  companyId           String   @map("company_id") @db.Char(36)
+  grnNo               String   @map("grn_no") @db.VarChar(50)
+  poId                String   @map("po_id") @db.Char(36)
+  branchId            String   @map("branch_id") @db.Char(36)
+  receivedDate        DateTime @map("received_date") @db.Date
+  receivedById        String   @map("received_by") @db.Char(36)
+  supplierDeliveryRef String?  @map("supplier_delivery_ref") @db.VarChar(100)
+  notes               String?  @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company    Company       @relation(fields: [companyId], references: [id])
+  po         PurchaseOrder @relation(fields: [poId], references: [id])
+  branch     Branch        @relation(fields: [branchId], references: [id])
+  receivedBy User          @relation("GrnReceivedBy", fields: [receivedById], references: [id])
+  lines      GrnLine[]
+
+  @@unique([companyId, grnNo])
+  @@index([companyId, branchId])
+  @@index([poId])
+  @@map("goods_received_notes")
+}
+
+/// One received part on a GRN. `qty_received` moved into stock this delivery;
+/// `qty_rejected` was sent back. No company_id — reached via its GRN.
+model GrnLine {
+  id          String  @id @default(uuid()) @db.Char(36)
+  grnId       String  @map("grn_id") @db.Char(36)
+  poLineId    String  @map("po_line_id") @db.Char(36)
+  partId      String  @map("part_id") @db.Char(36)
+  qtyReceived Int     @map("qty_received")
+  qtyRejected Int     @default(0) @map("qty_rejected")
+  unitCost    BigInt  @map("unit_cost") @db.BigInt
+  binLocation String? @map("bin_location") @db.VarChar(50)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  grn    GoodsReceivedNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poLine PurchaseOrderLine @relation(fields: [poLineId], references: [id])
+  part   Part              @relation(fields: [partId], references: [id])
+
+  @@index([grnId])
+  @@index([poLineId])
+  @@index([partId])
+  @@map("grn_lines")
+}
+
+/// Per-(company, branch, year) monotonic counter for grn_no (§4.4b) — same
+/// atomic MySQL idiom as job_no; raw-SQL only, no relations, not audited.
+model GrnCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("grn_counters")
 }

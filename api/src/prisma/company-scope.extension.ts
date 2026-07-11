@@ -93,6 +93,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // PurchaseOrderCounter is raw-SQL only (company_id passed explicitly there).
   Prisma.ModelName.PurchaseOrder,
   Prisma.ModelName.PurchaseOrderCounter,
+  // Task 2.7 (§4.4b): goods received notes are company- AND branch-scoped
+  // (branch_id = where stock landed). GrnCounter is raw-SQL only.
+  Prisma.ModelName.GoodsReceivedNote,
+  Prisma.ModelName.GrnCounter,
 ]);
 
 /**
@@ -136,6 +140,8 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 2.6 (§4.4b): a PO belongs to its destination branch — a scope='branch'
   // user only sees/acts on their branch's orders, like jobs.
   Prisma.ModelName.PurchaseOrder,
+  // Task 2.7 (§4.4b): a GRN belongs to the branch where stock landed.
+  Prisma.ModelName.GoodsReceivedNote,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for
