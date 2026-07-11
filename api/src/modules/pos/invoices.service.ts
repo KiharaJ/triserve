@@ -21,6 +21,7 @@ import type {
   InvoiceListQueryDto,
   UpdateInvoiceDto,
 } from './dto/invoice.dto';
+import { toWire as toPaymentWire, type PaymentWire } from './payments.service';
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -50,11 +51,16 @@ export interface InvoiceWire {
   discount: string;
   tax: string;
   total: string;
+  /** Σ payments (Task 3.2). */
+  amount_paid: string;
+  /** total − amount_paid. */
+  balance: string;
   status: InvoiceStatus;
   sold_by: string;
   notes: string | null;
   created_at: string;
   lines: InvoiceLineWire[];
+  payments: PaymentWire[];
 }
 
 /** Result of a void — applied, or HELD pending approval (§4.11). */
@@ -65,7 +71,13 @@ export interface VoidResult {
 }
 
 type InvoiceFull = Prisma.InvoiceGetPayload<{
-  include: { branch: true; customer: true; job: true; lines: true };
+  include: {
+    branch: true;
+    customer: true;
+    job: true;
+    lines: true;
+    payments: true;
+  };
 }>;
 
 const FULL_INCLUDE = {
@@ -73,6 +85,7 @@ const FULL_INCLUDE = {
   customer: true,
   job: true,
   lines: true,
+  payments: true,
 } as const;
 
 /**
@@ -417,6 +430,7 @@ function toLineData(
 }
 
 function toWire(inv: InvoiceFull): InvoiceWire {
+  const amountPaid = inv.payments.reduce((s, p) => s + p.amount, 0n);
   return {
     id: inv.id,
     invoice_no: inv.invoiceNo,
@@ -432,10 +446,13 @@ function toWire(inv: InvoiceFull): InvoiceWire {
     discount: inv.discount.toString(),
     tax: inv.tax.toString(),
     total: inv.total.toString(),
+    amount_paid: amountPaid.toString(),
+    balance: (inv.total - amountPaid).toString(),
     status: inv.status,
     sold_by: inv.soldById,
     notes: inv.notes,
     created_at: inv.createdAt.toISOString(),
+    payments: inv.payments.map(toPaymentWire),
     lines: inv.lines.map((l) => ({
       id: l.id,
       line_type: l.lineType,

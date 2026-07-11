@@ -105,6 +105,8 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // selling branch, like jobs). InvoiceCounter is raw-SQL only.
   Prisma.ModelName.Invoice,
   Prisma.ModelName.InvoiceCounter,
+  // Task 3.2 (§4.6): payments are company- AND branch-scoped (branch = invoice).
+  Prisma.ModelName.Payment,
 ]);
 
 /**
@@ -152,6 +154,8 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.GoodsReceivedNote,
   // Task 3.1 (§4.6): an invoice belongs to the branch that sold it.
   Prisma.ModelName.Invoice,
+  // Task 3.2 (§4.6): a payment belongs to its invoice's branch.
+  Prisma.ModelName.Payment,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for

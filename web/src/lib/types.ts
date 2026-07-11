@@ -600,6 +600,26 @@ export type InvoiceStatus =
   | 'VOID'
   | 'REFUNDED'
 export type InvoiceLineType = 'PART' | 'PRODUCT' | 'SERVICE' | 'CUSTOM'
+export type PaymentMethodType =
+  | 'CASH'
+  | 'MPESA'
+  | 'TIGOPESA'
+  | 'AIRTEL'
+  | 'CARD'
+  | 'BANK'
+
+export interface PaymentWire {
+  id: string
+  invoice_id: string
+  method: PaymentMethodType
+  amount: string
+  currency: string
+  reference: string | null
+  paid_at: string
+  received_by: string
+  notes: string | null
+  created_at: string
+}
 
 export interface InvoiceLineWire {
   id: string
@@ -627,11 +647,14 @@ export interface InvoiceWire {
   discount: string
   tax: string
   total: string
+  amount_paid: string
+  balance: string
   status: InvoiceStatus
   sold_by: string
   notes: string | null
   created_at: string
   lines: InvoiceLineWire[]
+  payments: PaymentWire[]
 }
 
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'

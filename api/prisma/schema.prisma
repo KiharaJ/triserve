@@ -168,6 +168,8 @@ model Company {
   partUnits      PartUnit[]
   // Task 3.1 (§4.6): POS invoices.
   invoices       Invoice[]
+  // Task 3.2 (§4.6): payments taken.
+  payments       Payment[]
 
   @@map("companies")
 }
@@ -213,6 +215,8 @@ model Branch {
   partUnits      PartUnit[]
   // Task 3.1 (§4.6): invoices sold at this branch.
   invoices       Invoice[]
+  // Task 3.2 (§4.6): payments taken at this branch.
+  payments       Payment[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -322,7 +326,9 @@ model User {
   updatedPartUnits PartUnit[] @relation("PartUnitUpdatedBy")
 
   // Task 3.1 (§4.6): who sold an invoice.
-  soldInvoices Invoice[] @relation("InvoiceSoldBy")
+  soldInvoices     Invoice[] @relation("InvoiceSoldBy")
+  // Task 3.2 (§4.6): who took a payment.
+  receivedPayments Payment[] @relation("PaymentReceivedBy")
 
   @@map("users")
 }
@@ -1717,6 +1723,7 @@ model Invoice {
   job      Job?          @relation(fields: [jobId], references: [id])
   soldBy   User          @relation("InvoiceSoldBy", fields: [soldById], references: [id])
   lines    InvoiceLine[]
+  payments Payment[]
 
   @@unique([companyId, invoiceNo])
   @@index([companyId, status])
@@ -1763,4 +1770,54 @@ model InvoiceCounter {
 
   @@unique([companyId, branchId, year])
   @@map("invoice_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Payments (§4.6, Task 3.2) — money in the door against an invoice.
+//
+// Multiple payment rows against one invoice give the DEPOSIT → BALANCE → PAID
+// pattern: each POST records one payment; the invoice flips DRAFT/PARTIAL →
+// PARTIAL → PAID when the running total covers it — all in ONE transaction.
+// Append-only (a reversal is a separate row later); BIGINT minor units.
+// Company- AND branch-scoped (branch = the invoice's). NOT extension-audited
+// (written inside the payment transaction); the payment rows + the invoice
+// status + the ledger (Task 3.3) are the trail, plus a semantic AuditService
+// row. `PaymentMethodType` is a fixed enum (mobile money is essential in TZ) —
+// distinct from the per-company `payment_methods` config table.
+// ---------------------------------------------------------------------------
+
+enum PaymentMethodType {
+  CASH
+  MPESA
+  TIGOPESA
+  AIRTEL
+  CARD
+  BANK
+}
+
+model Payment {
+  id           String            @id @default(uuid()) @db.Char(36)
+  companyId    String            @map("company_id") @db.Char(36)
+  invoiceId    String            @map("invoice_id") @db.Char(36)
+  branchId     String            @map("branch_id") @db.Char(36)
+  method       PaymentMethodType
+  amount       BigInt            @db.BigInt
+  currency     String            @db.Char(3)
+  /// Gateway/txn reference — the M-Pesa code, card auth, bank ref, …
+  reference    String?           @db.VarChar(100)
+  paidAt       DateTime          @default(now()) @map("paid_at") @db.DateTime(3)
+  receivedById String            @map("received_by") @db.Char(36)
+  notes        String?           @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company    Company @relation(fields: [companyId], references: [id])
+  invoice    Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  branch     Branch  @relation(fields: [branchId], references: [id])
+  receivedBy User    @relation("PaymentReceivedBy", fields: [receivedById], references: [id])
+
+  @@index([companyId, invoiceId])
+  @@index([companyId, branchId, paidAt])
+  @@index([companyId, method, paidAt])
+  @@map("payments")
 }

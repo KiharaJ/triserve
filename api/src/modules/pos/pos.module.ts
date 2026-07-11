@@ -4,17 +4,18 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
+import { PaymentsController } from './payments.controller';
+import { PaymentsService } from './payments.service';
 
 /**
- * PosModule — Task 3.1 (§4.6): the sell side (/api/v1/invoices). Depends on
- * ApprovalsModule (void gating) and AuditModule (semantic lifecycle rows).
- * Payments + receipts (Task 3.2) and accounting posting (Task 3.3) build on the
- * exported InvoicesService.
+ * PosModule — Tasks 3.1/3.2 (§4.6): the sell side (/api/v1/invoices, payments).
+ * Depends on ApprovalsModule (void gating) and AuditModule (semantic lifecycle
+ * + payment rows). Accounting posting (Task 3.3) will build on these services.
  */
 @Module({
   imports: [AuthModule, ApprovalsModule, AuditModule],
-  controllers: [InvoicesController],
-  providers: [InvoicesService],
-  exports: [InvoicesService],
+  controllers: [InvoicesController, PaymentsController],
+  providers: [InvoicesService, PaymentsService],
+  exports: [InvoicesService, PaymentsService],
 })
 export class PosModule {}

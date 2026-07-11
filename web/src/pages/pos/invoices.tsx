@@ -26,14 +26,24 @@ import {
 } from '@/components/ui/table'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { formatDate, formatMoney, majorToMinor } from '@/lib/format'
+import { formatDate, formatMoney, majorToMinor, minorToMajor } from '@/lib/format'
 import type {
   BranchWire,
   InvoiceStatus,
   InvoiceType,
   InvoiceWire,
   PartWire,
+  PaymentMethodType,
 } from '@/lib/types'
+
+const PAYMENT_METHODS: PaymentMethodType[] = [
+  'CASH',
+  'MPESA',
+  'TIGOPESA',
+  'AIRTEL',
+  'CARD',
+  'BANK',
+]
 
 const TYPES: InvoiceType[] = [
   'REPAIR_OW',
@@ -99,7 +109,14 @@ export function InvoicesPage() {
 
   const canCreate = can('invoice.create')
   const canVoid = can('invoice.void')
+  const canPay = can('payment.capture')
   const isGroup = user?.scope === 'group'
+
+  // Payment dialog state.
+  const [payTarget, setPayTarget] = useState<InvoiceWire | null>(null)
+  const [payMethod, setPayMethod] = useState<PaymentMethodType>('CASH')
+  const [payAmount, setPayAmount] = useState('')
+  const [payRef, setPayRef] = useState('')
 
   const branches = useQuery({
     queryKey: ['branches', 'all'],
@@ -194,6 +211,37 @@ export function InvoicesPage() {
     },
   })
 
+  function openPay(inv: InvoiceWire) {
+    setPayTarget(inv)
+    setPayMethod('CASH')
+    setPayAmount(minorToMajor(inv.balance)) // default to the outstanding balance
+    setPayRef('')
+  }
+
+  const recordPayment = useMutation({
+    mutationFn: async () => {
+      if (!payTarget) return
+      return (
+        await api.post<{ invoice: { status: string } }>(
+          `/invoices/${payTarget.id}/payments`,
+          {
+            method: payMethod,
+            amount: majorToMinor(payAmount) ?? '0',
+            reference: payRef || undefined,
+          },
+        )
+      ).data
+    },
+    onSuccess: async (res) => {
+      toast.success(
+        res?.invoice.status === 'PAID' ? 'Invoice fully paid' : 'Payment recorded',
+      )
+      setPayTarget(null)
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
   const validLines = lines.filter(
     (l) => l.description && Number(l.qty) > 0 && l.unit_price,
   )
@@ -238,16 +286,17 @@ export function InvoicesPage() {
                 <TableHead>Customer</TableHead>
                 <TableHead>Type</TableHead>
                 <TableHead className="text-right">Total</TableHead>
+                <TableHead className="text-right">Balance</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                {canVoid && <TableHead className="w-20" />}
+                {(canVoid || canPay) && <TableHead className="w-28" />}
               </TableRow>
             </TableHeader>
             <TableBody>
               {invoices.data.data.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={7}
+                    colSpan={8}
                     className="text-center text-muted-foreground"
                   >
                     No invoices
@@ -266,23 +315,44 @@ export function InvoicesPage() {
                   <TableCell className="text-right">
                     {formatMoney(inv.total, inv.currency)}
                   </TableCell>
+                  <TableCell className="text-right">
+                    {inv.status === 'PAID' || inv.status === 'VOID' ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      formatMoney(inv.balance, inv.currency)
+                    )}
+                  </TableCell>
                   <TableCell>{statusBadge(inv.status)}</TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(inv.created_at)}
                   </TableCell>
-                  {canVoid && (
+                  {(canVoid || canPay) && (
                     <TableCell>
-                      {(inv.status === 'DRAFT' ||
-                        inv.status === 'PARTIAL') && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          disabled={voidInvoice.isPending}
-                          onClick={() => voidInvoice.mutate(inv.id)}
-                        >
-                          Void
-                        </Button>
-                      )}
+                      <div className="flex gap-1">
+                        {canPay &&
+                          (inv.status === 'DRAFT' ||
+                            inv.status === 'PARTIAL') && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openPay(inv)}
+                            >
+                              Pay
+                            </Button>
+                          )}
+                        {canVoid &&
+                          (inv.status === 'DRAFT' ||
+                            inv.status === 'PARTIAL') && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={voidInvoice.isPending}
+                              onClick={() => voidInvoice.mutate(inv.id)}
+                            >
+                              Void
+                            </Button>
+                          )}
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
@@ -498,6 +568,76 @@ export function InvoicesPage() {
               onClick={() => create.mutate()}
             >
               {create.isPending ? 'Saving…' : 'Create invoice'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={payTarget !== null}
+        onOpenChange={(o) => !o && setPayTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Record payment — {payTarget?.invoice_no}</DialogTitle>
+            <DialogDescription>
+              Outstanding balance{' '}
+              {payTarget &&
+                formatMoney(payTarget.balance, payTarget.currency)}
+              . Amount is in whole shillings.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField label="Method" htmlFor="pay-method">
+                <Select
+                  id="pay-method"
+                  value={payMethod}
+                  onChange={(e) =>
+                    setPayMethod(e.target.value as PaymentMethodType)
+                  }
+                >
+                  {PAYMENT_METHODS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+              <FormField label="Amount" htmlFor="pay-amount">
+                <Input
+                  id="pay-amount"
+                  inputMode="numeric"
+                  value={payAmount}
+                  onChange={(e) => setPayAmount(e.target.value)}
+                />
+              </FormField>
+            </div>
+            <FormField
+              label="Reference (optional)"
+              htmlFor="pay-ref"
+              hint="M-Pesa code, card auth, bank ref…"
+            >
+              <Input
+                id="pay-ref"
+                value={payRef}
+                onChange={(e) => setPayRef(e.target.value)}
+              />
+            </FormField>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setPayTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={recordPayment.isPending || !payAmount}
+              onClick={() => recordPayment.mutate()}
+            >
+              {recordPayment.isPending ? 'Saving…' : 'Record payment'}
             </Button>
           </DialogFooter>
         </DialogContent>
