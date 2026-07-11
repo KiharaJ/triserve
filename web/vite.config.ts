@@ -23,8 +23,11 @@ export default defineConfig({
     include: ['@triserve/shared'],
   },
   server: {
-    // Forward API calls to the NestJS backend in dev, so the default
-    // VITE_API_BASE_URL=/api/v1 works without CORS setup.
+    // Bind to all interfaces so the dev app is reachable from other devices on
+    // the LAN (e.g. a phone at http://<mac-lan-ip>:5173). API calls stay
+    // relative (/api/v1) and are proxied server-side to :3000 below, so this
+    // needs no CORS or API-URL change.
+    host: true,
     proxy: {
       '/api': {
         target: 'http://localhost:3000',
