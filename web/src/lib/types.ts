@@ -586,6 +586,54 @@ export interface PartUnitWire {
   created_at: string
 }
 
+// --- POS invoices (Task 3.1, §4.6) -------------------------------------------
+
+export type InvoiceType =
+  | 'REPAIR_OW'
+  | 'PRODUCT_SALE'
+  | 'PARTS_SALE'
+  | 'ACCESSORY'
+export type InvoiceStatus =
+  | 'DRAFT'
+  | 'PARTIAL'
+  | 'PAID'
+  | 'VOID'
+  | 'REFUNDED'
+export type InvoiceLineType = 'PART' | 'PRODUCT' | 'SERVICE' | 'CUSTOM'
+
+export interface InvoiceLineWire {
+  id: string
+  line_type: InvoiceLineType
+  part_id: string | null
+  description: string
+  qty: number
+  unit_price: string
+  line_total: string
+  is_warranty: boolean
+}
+
+export interface InvoiceWire {
+  id: string
+  invoice_no: string
+  branch_id: string
+  branch_code: string
+  customer_id: string | null
+  customer_name: string | null
+  job_id: string | null
+  job_no: string | null
+  type: InvoiceType
+  currency: string
+  subtotal: string
+  discount: string
+  tax: string
+  total: string
+  status: InvoiceStatus
+  sold_by: string
+  notes: string | null
+  created_at: string
+  lines: InvoiceLineWire[]
+}
+
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'
 
 /** A part committed to a job (§4.5, Task 2.2). */

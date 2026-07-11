@@ -8,6 +8,7 @@ import {
   LogOut,
   MapPin,
   Package,
+  Receipt,
   RefreshCw,
   ScanBarcode,
   ScrollText,
@@ -118,6 +119,18 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Truck,
         end: false,
         permission: 'inventory.read',
+      },
+    ],
+  },
+  {
+    heading: 'Sales',
+    items: [
+      {
+        to: '/invoices',
+        label: 'Invoices',
+        icon: Receipt,
+        end: false,
+        permission: 'invoice.read',
       },
     ],
   },

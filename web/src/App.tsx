@@ -22,6 +22,7 @@ import { JobsBoardPage } from '@/pages/jobs/board'
 import { JobDetailPage } from '@/pages/jobs/detail'
 import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
+import { InvoicesPage } from '@/pages/pos/invoices'
 import { SecurityPage } from '@/pages/security'
 
 /** Everything behind here requires a session; anonymous users go to /login. */
@@ -76,6 +77,7 @@ function App() {
           <Route path="transfers" element={<TransfersPage />} />
           <Route path="movements" element={<MovementsPage />} />
         </Route>
+        <Route path="invoices" element={<InvoicesPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="security" element={<SecurityPage />} />

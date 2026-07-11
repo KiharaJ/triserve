@@ -166,6 +166,8 @@ model Company {
   grns           GoodsReceivedNote[]
   // Task 2.4 (§4.4/E11): serial/batch tracked units.
   partUnits      PartUnit[]
+  // Task 3.1 (§4.6): POS invoices.
+  invoices       Invoice[]
 
   @@map("companies")
 }
@@ -209,6 +211,8 @@ model Branch {
   grns           GoodsReceivedNote[]
   // Task 2.4 (§4.4/E11): serial units currently located at this branch.
   partUnits      PartUnit[]
+  // Task 3.1 (§4.6): invoices sold at this branch.
+  invoices       Invoice[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -316,6 +320,9 @@ model User {
   // Task 2.4 (§4.4/E11): serial-unit actor roles.
   createdPartUnits PartUnit[] @relation("PartUnitCreatedBy")
   updatedPartUnits PartUnit[] @relation("PartUnitUpdatedBy")
+
+  // Task 3.1 (§4.6): who sold an invoice.
+  soldInvoices Invoice[] @relation("InvoiceSoldBy")
 
   @@map("users")
 }
@@ -602,10 +609,11 @@ model Customer {
   createdBy   User?     @relation("CustomerCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
 
-  company         Company  @relation(fields: [companyId], references: [id])
-  preferredBranch Branch?  @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
+  company         Company   @relation(fields: [companyId], references: [id])
+  preferredBranch Branch?   @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
   devices         Device[]
   jobs            Job[]
+  invoices        Invoice[]
 
   @@index([companyId, phone])
   @@index([companyId, phoneNormalized])
@@ -901,7 +909,9 @@ model Job {
   updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
 
   // Task 2.2 (§4.5): parts reserved/consumed on this job.
-  parts JobPart[]
+  parts    JobPart[]
+  // Task 3.1 (§4.6): invoices for this repair.
+  invoices Invoice[]
 
   @@unique([companyId, jobNo])
   @@index([companyId, branchId, stateId])
@@ -1111,6 +1121,7 @@ model Part {
   poLines           PurchaseOrderLine[]
   grnLines          GrnLine[]
   units             PartUnit[]
+  invoiceLines      InvoiceLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1634,4 +1645,122 @@ model PartUnit {
   @@index([companyId, branchId, status])
   @@index([partId, status])
   @@map("part_units")
+}
+
+// ---------------------------------------------------------------------------
+// POS & invoicing (§4.6, Task 3.1) — the sell side.
+//
+// An invoice is an OW sale: a repair payment (linked to a job), a parts/
+// accessory sale, or a product sale. It is built as DRAFT, then payments
+// (Task 3.2) move it DRAFT → PARTIAL → PAID; a void (approval-gated,
+// INVOICE_VOID) makes it VOID. Money is BIGINT minor units of `currency`;
+// subtotal = Σ line totals, total = subtotal − discount + tax (computed in the
+// service). Company- AND branch-scoped (branch_id = selling branch, like jobs).
+//
+// NOT extension-audited: payment (Task 3.2) and accounting posting (Task 3.3)
+// update the invoice status INSIDE their transaction, so the invoice/payment
+// records + the ledger are the trail; the service emits semantic AuditService
+// rows on create/void.
+// ---------------------------------------------------------------------------
+
+enum InvoiceType {
+  REPAIR_OW
+  PRODUCT_SALE
+  PARTS_SALE
+  ACCESSORY
+}
+
+enum InvoiceStatus {
+  DRAFT
+  PARTIAL
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum InvoiceLineType {
+  PART
+  PRODUCT
+  SERVICE
+  CUSTOM
+}
+
+model Invoice {
+  id         String      @id @default(uuid()) @db.Char(36)
+  companyId  String      @map("company_id") @db.Char(36)
+  invoiceNo  String      @map("invoice_no") @db.VarChar(50)
+  branchId   String      @map("branch_id") @db.Char(36)
+  customerId String?     @map("customer_id") @db.Char(36)
+  jobId      String?     @map("job_id") @db.Char(36)
+  type       InvoiceType
+  currency   String      @db.Char(3)
+
+  /// BIGINT minor units. total = subtotal − discount + tax.
+  subtotal BigInt @default(0) @db.BigInt
+  discount BigInt @default(0) @db.BigInt
+  tax      BigInt @default(0) @db.BigInt
+  total    BigInt @default(0) @db.BigInt
+
+  status   InvoiceStatus @default(DRAFT)
+  soldById String        @map("sold_by") @db.Char(36)
+  notes    String?       @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  branch   Branch        @relation(fields: [branchId], references: [id])
+  customer Customer?     @relation(fields: [customerId], references: [id])
+  job      Job?          @relation(fields: [jobId], references: [id])
+  soldBy   User          @relation("InvoiceSoldBy", fields: [soldById], references: [id])
+  lines    InvoiceLine[]
+
+  @@unique([companyId, invoiceNo])
+  @@index([companyId, status])
+  @@index([companyId, branchId, status])
+  @@index([customerId])
+  @@index([jobId])
+  @@map("invoices")
+}
+
+/// One line on an invoice. `part_id` links a PART line to the catalogue (no FK
+/// for PRODUCT/SERVICE/CUSTOM). No company_id — reached via its invoice.
+model InvoiceLine {
+  id          String          @id @default(uuid()) @db.Char(36)
+  invoiceId   String          @map("invoice_id") @db.Char(36)
+  lineType    InvoiceLineType @map("line_type")
+  partId      String?         @map("part_id") @db.Char(36)
+  description String          @db.VarChar(500)
+  qty         Int
+  unitPrice   BigInt          @map("unit_price") @db.BigInt
+  lineTotal   BigInt          @map("line_total") @db.BigInt
+  isWarranty  Boolean         @default(false) @map("is_warranty")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  part    Part?   @relation(fields: [partId], references: [id])
+
+  @@index([invoiceId])
+  @@index([partId])
+  @@map("invoice_lines")
+}
+
+/// Per-(company, branch, year) monotonic counter for invoice_no (§4.6) — same
+/// atomic MySQL idiom as job_no; raw-SQL only, no relations, not audited.
+model InvoiceCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("invoice_counters")
 }

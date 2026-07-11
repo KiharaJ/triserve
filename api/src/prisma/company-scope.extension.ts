@@ -101,6 +101,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // (a serial's history must be visible group-wide for recall — branch_id is
   // the unit's current location, like customers/devices).
   Prisma.ModelName.PartUnit,
+  // Task 3.1 (§4.6): invoices are company- AND branch-scoped (branch_id = the
+  // selling branch, like jobs). InvoiceCounter is raw-SQL only.
+  Prisma.ModelName.Invoice,
+  Prisma.ModelName.InvoiceCounter,
 ]);
 
 /**
@@ -146,6 +150,8 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.PurchaseOrder,
   // Task 2.7 (§4.4b): a GRN belongs to the branch where stock landed.
   Prisma.ModelName.GoodsReceivedNote,
+  // Task 3.1 (§4.6): an invoice belongs to the branch that sold it.
+  Prisma.ModelName.Invoice,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for
