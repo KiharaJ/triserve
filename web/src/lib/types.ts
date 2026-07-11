@@ -493,6 +493,49 @@ export interface TransferDispatchResult {
   pending_approval?: ApprovalEntry
 }
 
+export type PurchaseOrderStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'ORDERED'
+  | 'PARTIALLY_RECEIVED'
+  | 'RECEIVED'
+  | 'CANCELLED'
+
+export interface PoLineWire {
+  id: string
+  part_id: string
+  part: { part_number: string; description: string }
+  qty_ordered: number
+  qty_received: number
+  unit_cost: string
+  currency: string
+  line_status: string
+}
+
+export interface PurchaseOrderWire {
+  id: string
+  po_no: string
+  supplier_id: string
+  supplier_name: string
+  branch_id: string
+  branch_code: string
+  status: PurchaseOrderStatus
+  currency: string
+  order_date: string | null
+  expected_date: string | null
+  subtotal: string
+  tax: string
+  shipping: string
+  total: string
+  requires_approval: boolean
+  approved_by: string | null
+  ordered_at: string | null
+  notes: string | null
+  created_at: string
+  lines: PoLineWire[]
+}
+
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'
 
 /** A part committed to a job (§4.5, Task 2.2). */

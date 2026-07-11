@@ -12,6 +12,7 @@ import { CustomerDetailPage } from '@/pages/customers/detail'
 import { DashboardPage } from '@/pages/dashboard'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
+import { PurchaseOrdersPage } from '@/pages/inventory/purchase-orders'
 import { StockPage } from '@/pages/inventory/stock'
 import { SuppliersPage } from '@/pages/inventory/suppliers'
 import { TransfersPage } from '@/pages/inventory/transfers'
@@ -67,6 +68,7 @@ function App() {
           <Route index element={<StockPage />} />
           <Route path="parts" element={<PartsPage />} />
           <Route path="suppliers" element={<SuppliersPage />} />
+          <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="transfers" element={<TransfersPage />} />
           <Route path="movements" element={<MovementsPage />} />
         </Route>

@@ -88,6 +88,11 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 2.5 (§4.4b): suppliers are company-level master data like the parts
   // catalogue — company-scoped, not branch-scoped.
   Prisma.ModelName.Supplier,
+  // Task 2.6 (§4.4b): purchase orders are company- AND branch-scoped (branch_id
+  // = the destination branch, like jobs — see BRANCH_SCOPED_MODELS below).
+  // PurchaseOrderCounter is raw-SQL only (company_id passed explicitly there).
+  Prisma.ModelName.PurchaseOrder,
+  Prisma.ModelName.PurchaseOrderCounter,
 ]);
 
 /**
@@ -128,6 +133,9 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // branch, so this per-branch read filter stays correct.
   Prisma.ModelName.Inventory,
   Prisma.ModelName.StockMovement,
+  // Task 2.6 (§4.4b): a PO belongs to its destination branch — a scope='branch'
+  // user only sees/acts on their branch's orders, like jobs.
+  Prisma.ModelName.PurchaseOrder,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for

@@ -10,6 +10,7 @@ import {
   Package,
   ScrollText,
   ShieldCheck,
+  ShoppingCart,
   SlidersHorizontal,
   Truck,
   Users,
@@ -80,6 +81,13 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Factory,
         end: false,
         permission: 'supplier.read',
+      },
+      {
+        to: '/inventory/purchase-orders',
+        label: 'Purchase orders',
+        icon: ShoppingCart,
+        end: false,
+        permission: 'po.read',
       },
       {
         to: '/inventory/transfers',

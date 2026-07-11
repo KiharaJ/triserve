@@ -160,6 +160,8 @@ model Company {
   stockTransfers StockTransfer[]
   // Task 2.5 (§4.4b): the vendors we buy spares from.
   suppliers      Supplier[]
+  // Task 2.6 (§4.4b): orders sent to suppliers.
+  purchaseOrders PurchaseOrder[]
 
   @@map("companies")
 }
@@ -197,6 +199,8 @@ model Branch {
   // Task 2.3 (§4.4): transfers dispatched from / received at this branch.
   transfersOut   StockTransfer[] @relation("TransferFromBranch")
   transfersIn    StockTransfer[] @relation("TransferToBranch")
+  // Task 2.6 (§4.4b): POs destined for this branch.
+  purchaseOrders PurchaseOrder[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -292,6 +296,11 @@ model User {
   // Task 2.5 (§4.4b): supplier actor roles.
   createdSuppliers Supplier[] @relation("SupplierCreatedBy")
   updatedSuppliers Supplier[] @relation("SupplierUpdatedBy")
+
+  // Task 2.6 (§4.4b): purchase-order actor roles.
+  approvedPurchaseOrders PurchaseOrder[] @relation("PoApprovedBy")
+  createdPurchaseOrders  PurchaseOrder[] @relation("PoCreatedBy")
+  updatedPurchaseOrders  PurchaseOrder[] @relation("PoUpdatedBy")
 
   @@map("users")
 }
@@ -1084,6 +1093,7 @@ model Part {
   movements         StockMovement[]
   jobParts          JobPart[]
   transferLines     StockTransferLine[]
+  poLines           PurchaseOrderLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1335,10 +1345,128 @@ model Supplier {
   createdBy   User?     @relation("SupplierCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("SupplierUpdatedBy", fields: [updatedById], references: [id])
 
-  company           Company @relation(fields: [companyId], references: [id])
+  company           Company         @relation(fields: [companyId], references: [id])
   preferredForParts Part[]
+  purchaseOrders    PurchaseOrder[]
 
   @@unique([companyId, name])
   @@index([companyId, active])
   @@map("suppliers")
+}
+
+// ---------------------------------------------------------------------------
+// Purchase orders (§4.4b, Task 2.6) — the order you send to a supplier.
+//
+// Lifecycle: DRAFT → SUBMITTED → (APPROVED) → ORDERED → PARTIALLY_RECEIVED →
+// RECEIVED (or → CANCELLED before any receipt). Submitting computes whether the
+// order needs manager sign-off (value ≥ the PURCHASE_ORDER threshold, §4.11); a
+// PO that requires approval cannot be ORDERED until APPROVED. Receiving happens
+// in Task 2.7 (GRN): a GRN posts RECEIPT movements, bumps `qty_received`, and
+// flips the PO to PARTIALLY_RECEIVED / RECEIVED.
+//
+// Company- AND branch-scoped (branch_id = the destination branch), like jobs.
+// NOT extension-audited: Task 2.7 updates the PO + its lines INSIDE the GRN's
+// stock transaction, so the PO/GRN records + the stock ledger are the trail;
+// the PO service emits semantic AuditService rows on lifecycle transitions.
+// ---------------------------------------------------------------------------
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchaseOrderLineStatus {
+  PENDING
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model PurchaseOrder {
+  id         String              @id @default(uuid()) @db.Char(36)
+  companyId  String              @map("company_id") @db.Char(36)
+  poNo       String              @map("po_no") @db.VarChar(50)
+  supplierId String              @map("supplier_id") @db.Char(36)
+  branchId   String              @map("branch_id") @db.Char(36)
+  status     PurchaseOrderStatus @default(DRAFT)
+  currency   String              @db.Char(3)
+
+  orderDate    DateTime? @map("order_date") @db.Date
+  expectedDate DateTime? @map("expected_date") @db.Date
+
+  /// Money: BIGINT minor units of `currency`. subtotal = Σ line(qty × cost);
+  /// total = subtotal + tax + shipping (computed in the service).
+  subtotal BigInt @default(0) @db.BigInt
+  tax      BigInt @default(0) @db.BigInt
+  shipping BigInt @default(0) @db.BigInt
+  total    BigInt @default(0) @db.BigInt
+
+  /// Set at submit — does this order need manager approval before ordering?
+  requiresApproval Boolean   @default(false) @map("requires_approval")
+  approvedById     String?   @map("approved_by") @db.Char(36)
+  orderedAt        DateTime? @map("ordered_at") @db.DateTime(3)
+  notes            String?   @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company    Company             @relation(fields: [companyId], references: [id])
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  branch     Branch              @relation(fields: [branchId], references: [id])
+  approvedBy User?               @relation("PoApprovedBy", fields: [approvedById], references: [id])
+  createdBy  User?               @relation("PoCreatedBy", fields: [createdById], references: [id])
+  updatedBy  User?               @relation("PoUpdatedBy", fields: [updatedById], references: [id])
+  lines      PurchaseOrderLine[]
+
+  @@unique([companyId, poNo])
+  @@index([companyId, status])
+  @@index([companyId, branchId, status])
+  @@index([supplierId])
+  @@map("purchase_orders")
+}
+
+/// One part+qty on a PO. `qty_received` is a running total bumped by each GRN
+/// (Task 2.7). No company_id — reached via its (company-scoped) PO.
+model PurchaseOrderLine {
+  id          String                  @id @default(uuid()) @db.Char(36)
+  poId        String                  @map("po_id") @db.Char(36)
+  partId      String                  @map("part_id") @db.Char(36)
+  qtyOrdered  Int                     @map("qty_ordered")
+  qtyReceived Int                     @default(0) @map("qty_received")
+  unitCost    BigInt                  @map("unit_cost") @db.BigInt
+  currency    String                  @db.Char(3)
+  lineStatus  PurchaseOrderLineStatus @default(PENDING) @map("line_status")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  po   PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+  part Part          @relation(fields: [partId], references: [id])
+
+  @@index([poId])
+  @@index([partId])
+  @@map("purchase_order_lines")
+}
+
+/// Per-(company, branch, year) monotonic counter for po_no (§4.4b) — same
+/// atomic MySQL idiom as job_no; raw-SQL only, no relations, not audited.
+model PurchaseOrderCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("purchase_order_counters")
 }
