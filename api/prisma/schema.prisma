@@ -158,6 +158,8 @@ model Company {
   jobParts       JobPart[]
   // Task 2.3 (§4.4): inter-branch transfers.
   stockTransfers StockTransfer[]
+  // Task 2.5 (§4.4b): the vendors we buy spares from.
+  suppliers      Supplier[]
 
   @@map("companies")
 }
@@ -286,6 +288,10 @@ model User {
   receivedTransfers   StockTransfer[] @relation("TransferReceivedBy")
   createdTransfers    StockTransfer[] @relation("TransferCreatedBy")
   updatedTransfers    StockTransfer[] @relation("TransferUpdatedBy")
+
+  // Task 2.5 (§4.4b): supplier actor roles.
+  createdSuppliers Supplier[] @relation("SupplierCreatedBy")
+  updatedSuppliers Supplier[] @relation("SupplierUpdatedBy")
 
   @@map("users")
 }
@@ -1059,9 +1065,8 @@ model Part {
   sellPriceTzs        BigInt?        @map("default_sell_price_tzs") @db.BigInt
   compatibleModels    Json?          @map("compatible_models")
   isSerialized        Boolean        @default(false) @map("is_serialized")
-  /// Forward-compat (§4.4b, Task 2.5): drives suggested-reorder grouping.
-  /// Plain CHAR(36) with NO FK yet — the `suppliers` table lands in Task 2.5,
-  /// which adds the constraint (mirrors jobs.claim_id / invoice_id).
+  /// Preferred supplier (§4.4b) — drives suggested-reorder grouping. FK added
+  /// in Task 2.5 now that `suppliers` exists (see `preferredSupplier` below).
   preferredSupplierId String?        @map("preferred_supplier_id") @db.Char(36)
   active              Boolean        @default(true)
 
@@ -1073,14 +1078,16 @@ model Part {
   createdBy   User?     @relation("PartCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("PartUpdatedBy", fields: [updatedById], references: [id])
 
-  company       Company             @relation(fields: [companyId], references: [id])
-  inventory     Inventory[]
-  movements     StockMovement[]
-  jobParts      JobPart[]
-  transferLines StockTransferLine[]
+  company           Company             @relation(fields: [companyId], references: [id])
+  preferredSupplier Supplier?           @relation(fields: [preferredSupplierId], references: [id])
+  inventory         Inventory[]
+  movements         StockMovement[]
+  jobParts          JobPart[]
+  transferLines     StockTransferLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
+  @@index([preferredSupplierId])
   @@map("parts")
 }
 
@@ -1293,4 +1300,45 @@ model TransferCounter {
 
   @@unique([companyId, year])
   @@map("transfer_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Suppliers (§4.4b, Task 2.5) — the vendors we buy spares from (the Samsung
+// parts distributor, local vendors). Company-level master data like the parts
+// catalogue: COMPANY-scoped, audited, never branch-scoped. `lead_time_days`
+// feeds reorder suggestions; `default_currency` is often USD (Samsung parts) or
+// TZS (local). Supplier PERFORMANCE (E9-proc — avg delivery days, late/reject
+// rates, price history) is computed from PO/GRN history in Tasks 2.6/2.7; the
+// master lands here first so parts can carry a preferred supplier.
+// ---------------------------------------------------------------------------
+
+model Supplier {
+  id              String  @id @default(uuid()) @db.Char(36)
+  companyId       String  @map("company_id") @db.Char(36)
+  name            String  @db.VarChar(255)
+  contactPerson   String? @map("contact_person") @db.VarChar(255)
+  phone           String? @db.VarChar(50)
+  email           String? @db.VarChar(255)
+  address         String? @db.VarChar(500)
+  /// Default buying currency (USD for Samsung parts, TZS for local vendors).
+  defaultCurrency String  @default("USD") @map("default_currency") @db.Char(3)
+  /// Expected delivery time — feeds reorder suggestions (§4.4b).
+  leadTimeDays    Int?    @map("lead_time_days")
+  paymentTerms    String? @map("payment_terms") @db.VarChar(100)
+  active          Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("SupplierCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("SupplierUpdatedBy", fields: [updatedById], references: [id])
+
+  company           Company @relation(fields: [companyId], references: [id])
+  preferredForParts Part[]
+
+  @@unique([companyId, name])
+  @@index([companyId, active])
+  @@map("suppliers")
 }

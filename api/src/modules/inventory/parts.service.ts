@@ -1,9 +1,10 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type DeviceCategory, type Part } from '@prisma/client';
+import { Prisma, type DeviceCategory } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
@@ -24,10 +25,16 @@ export interface PartWire {
   compatible_models: string[];
   is_serialized: boolean;
   preferred_supplier_id: string | null;
+  /** Resolved preferred supplier (Task 2.5) — null when unset. */
+  preferred_supplier: { id: string; name: string } | null;
   active: boolean;
   created_at: string;
   updated_at: string;
 }
+
+type PartWithSupplier = Prisma.PartGetPayload<{
+  include: { preferredSupplier: true };
+}>;
 
 const DEFAULT_PAGE_SIZE = 20;
 
@@ -68,6 +75,7 @@ export class PartsService {
       this.prisma.part.count({ where }),
       this.prisma.part.findMany({
         where,
+        include: { preferredSupplier: true },
         orderBy: [{ partNumber: 'asc' }, { id: 'asc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -79,16 +87,20 @@ export class PartsService {
 
   /** GET /parts/{id}. */
   async get(id: string, user: AuthUser): Promise<PartWire> {
+    void user;
     const part = await this.prisma.part.findFirst({
       where: { id, deletedAt: null },
+      include: { preferredSupplier: true },
     });
     if (!part) throw new NotFoundException('Part not found');
-    void user;
     return toWire(part);
   }
 
   /** POST /parts — 409 on a duplicate part number within the company. */
   async create(dto: CreatePartDto, user: AuthUser): Promise<PartWire> {
+    if (dto.preferred_supplier_id) {
+      await this.assertSupplierInCompany(dto.preferred_supplier_id);
+    }
     try {
       const part = await this.prisma.part.create({
         data: {
@@ -106,6 +118,7 @@ export class PartsService {
           createdById: user.userId,
           updatedById: user.userId,
         },
+        include: { preferredSupplier: true },
       });
       return toWire(part);
     } catch (e) {
@@ -120,10 +133,14 @@ export class PartsService {
     user: AuthUser,
   ): Promise<PartWire> {
     await this.get(id, user); // clean 404, tenancy-checked
+    if (dto.preferred_supplier_id) {
+      await this.assertSupplierInCompany(dto.preferred_supplier_id);
+    }
 
     try {
       const part = await this.prisma.part.update({
         where: { id },
+        include: { preferredSupplier: true },
         data: {
           ...(dto.part_number !== undefined
             ? { partNumber: dto.part_number }
@@ -158,6 +175,18 @@ export class PartsService {
       throw mapUniqueViolation(e);
     }
   }
+
+  /** 400 if preferred_supplier_id is not an active supplier of the company. */
+  private async assertSupplierInCompany(supplierId: string): Promise<void> {
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id: supplierId, deletedAt: null },
+    });
+    if (!supplier) {
+      throw new BadRequestException(
+        'preferred_supplier_id does not match a supplier of your company',
+      );
+    }
+  }
 }
 
 function toBigIntOrNull(v: string | null | undefined): bigint | null {
@@ -172,7 +201,7 @@ function mapUniqueViolation(e: unknown): unknown {
   return e;
 }
 
-function toWire(p: Part): PartWire {
+function toWire(p: PartWithSupplier): PartWire {
   return {
     id: p.id,
     part_number: p.partNumber,
@@ -185,6 +214,9 @@ function toWire(p: Part): PartWire {
       : [],
     is_serialized: p.isSerialized,
     preferred_supplier_id: p.preferredSupplierId,
+    preferred_supplier: p.preferredSupplier
+      ? { id: p.preferredSupplier.id, name: p.preferredSupplier.name }
+      : null,
     active: p.active,
     created_at: p.createdAt.toISOString(),
     updated_at: p.updatedAt.toISOString(),

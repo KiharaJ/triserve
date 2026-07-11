@@ -112,6 +112,9 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // would violate this extension's "no caller-managed transaction" rule (see
   // KNOWN LIMITATIONS above), exactly like journal_lines.
   Prisma.ModelName.Part,
+  // Task 2.5 (§4.4b): suppliers are audited like the parts catalogue —
+  // infrequent config edits, never written inside a caller transaction.
+  Prisma.ModelName.Supplier,
 ]);
 
 /** Mutations we intercept and audit. */

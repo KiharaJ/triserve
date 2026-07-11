@@ -382,6 +382,21 @@ export type StockRefType =
   | 'COUNT'
   | 'ADJUSTMENT'
 
+export interface SupplierWire {
+  id: string
+  name: string
+  contact_person: string | null
+  phone: string | null
+  email: string | null
+  address: string | null
+  default_currency: string
+  lead_time_days: number | null
+  payment_terms: string | null
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface PartWire {
   id: string
   part_number: string
@@ -394,6 +409,7 @@ export interface PartWire {
   compatible_models: string[]
   is_serialized: boolean
   preferred_supplier_id: string | null
+  preferred_supplier: { id: string; name: string } | null
   active: boolean
   created_at: string
   updated_at: string

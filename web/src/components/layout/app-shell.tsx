@@ -3,6 +3,7 @@ import {
   Boxes,
   Building2,
   ClipboardCheck,
+  Factory,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -72,6 +73,13 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Package,
         end: false,
         permission: 'part.read',
+      },
+      {
+        to: '/inventory/suppliers',
+        label: 'Suppliers',
+        icon: Factory,
+        end: false,
+        permission: 'supplier.read',
       },
       {
         to: '/inventory/transfers',

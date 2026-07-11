@@ -13,6 +13,7 @@ import { DashboardPage } from '@/pages/dashboard'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
 import { StockPage } from '@/pages/inventory/stock'
+import { SuppliersPage } from '@/pages/inventory/suppliers'
 import { TransfersPage } from '@/pages/inventory/transfers'
 import { JobsBoardPage } from '@/pages/jobs/board'
 import { JobDetailPage } from '@/pages/jobs/detail'
@@ -65,6 +66,7 @@ function App() {
         <Route path="inventory">
           <Route index element={<StockPage />} />
           <Route path="parts" element={<PartsPage />} />
+          <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="transfers" element={<TransfersPage />} />
           <Route path="movements" element={<MovementsPage />} />
         </Route>

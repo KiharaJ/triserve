@@ -360,6 +360,56 @@ async function main(): Promise<void> {
     branchByCode.set(b.code, row.id);
   }
 
+  // --- Suppliers (Task 2.5, §4.4b) — the parts vendors --------------------
+  const SAMPLE_SUPPLIERS = [
+    {
+      name: 'Samsung Parts Distributor',
+      contactPerson: 'SPD Orders Desk',
+      email: 'orders@samsungparts.example',
+      defaultCurrency: 'USD',
+      leadTimeDays: 21,
+      paymentTerms: '30 days',
+    },
+    {
+      name: 'Dar Local Spares Ltd',
+      contactPerson: 'John Mushi',
+      phone: '+255754000111',
+      defaultCurrency: 'TZS',
+      leadTimeDays: 3,
+      paymentTerms: 'Prepaid',
+    },
+  ];
+  const supplierIdByName = new Map<string, string>();
+  for (const s of SAMPLE_SUPPLIERS) {
+    const supplier = await prisma.supplier.upsert({
+      where: { companyId_name: { companyId: company.id, name: s.name } },
+      update: {
+        contactPerson: s.contactPerson ?? null,
+        phone: s.phone ?? null,
+        email: s.email ?? null,
+        defaultCurrency: s.defaultCurrency,
+        leadTimeDays: s.leadTimeDays,
+        paymentTerms: s.paymentTerms,
+        active: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        name: s.name,
+        contactPerson: s.contactPerson ?? null,
+        phone: s.phone ?? null,
+        email: s.email ?? null,
+        defaultCurrency: s.defaultCurrency,
+        leadTimeDays: s.leadTimeDays,
+        paymentTerms: s.paymentTerms,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+    supplierIdByName.set(supplier.name, supplier.id);
+    console.log(`supplier:       ${supplier.name} (${supplier.defaultCurrency})`);
+  }
+
   const SAMPLE_PARTS = [
     {
       partNumber: 'GH82-31385A',
@@ -368,6 +418,7 @@ async function main(): Promise<void> {
       unitCostUsd: 12_800n, // USD 128.00
       sellPriceTzs: 45_000_000n, // TZS 450,000
       reorderLevel: 5,
+      supplier: 'Samsung Parts Distributor',
       opening: { DAR: 12, KRK: 4 },
     },
     {
@@ -377,6 +428,7 @@ async function main(): Promise<void> {
       unitCostUsd: 3_200n,
       sellPriceTzs: 12_000_000n,
       reorderLevel: 8,
+      supplier: 'Samsung Parts Distributor',
       opening: { DAR: 20, KRK: 10 },
     },
     {
@@ -386,6 +438,7 @@ async function main(): Promise<void> {
       unitCostUsd: 1_500n,
       sellPriceTzs: 5_500_000n,
       reorderLevel: 15,
+      supplier: 'Samsung Parts Distributor',
       opening: { DAR: 40, KRK: 18 },
     },
     {
@@ -395,6 +448,7 @@ async function main(): Promise<void> {
       unitCostUsd: 900n,
       sellPriceTzs: 3_500_000n,
       reorderLevel: 6,
+      supplier: 'Dar Local Spares Ltd',
       opening: { DAR: 7, KRK: 0 },
     },
   ] as const;
@@ -412,6 +466,7 @@ async function main(): Promise<void> {
         category: p.category,
         unitCostUsd: p.unitCostUsd,
         sellPriceTzs: p.sellPriceTzs,
+        preferredSupplierId: supplierIdByName.get(p.supplier) ?? null,
         active: true,
       },
       create: {
@@ -422,6 +477,7 @@ async function main(): Promise<void> {
         category: p.category,
         unitCostUsd: p.unitCostUsd,
         sellPriceTzs: p.sellPriceTzs,
+        preferredSupplierId: supplierIdByName.get(p.supplier) ?? null,
         createdById: admin.id,
         updatedById: admin.id,
       },

@@ -85,6 +85,9 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // raw SQL (company_id passed explicitly there), like JobCounter.
   Prisma.ModelName.StockTransfer,
   Prisma.ModelName.TransferCounter,
+  // Task 2.5 (§4.4b): suppliers are company-level master data like the parts
+  // catalogue — company-scoped, not branch-scoped.
+  Prisma.ModelName.Supplier,
 ]);
 
 /**

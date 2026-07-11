@@ -31,7 +31,7 @@ import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatMoney, majorToMinor, minorToMajor } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
-import type { DeviceCategory, PartWire } from '@/lib/types'
+import type { DeviceCategory, PartWire, SupplierWire } from '@/lib/types'
 
 const CATEGORIES: DeviceCategory[] = ['HHP', 'CE', 'AC', 'REF', 'OTHER']
 const WHOLE_OR_BLANK = /^\d*$/
@@ -47,6 +47,7 @@ const partSchema = z.object({
     .string()
     .refine((v) => WHOLE_OR_BLANK.test(v), 'Whole amount, e.g. 450000'),
   compatible_models: z.string().max(2000),
+  preferred_supplier_id: z.string(),
   is_serialized: z.enum(['no', 'yes']),
   active: z.boolean(),
 })
@@ -60,6 +61,7 @@ const EMPTY: PartForm = {
   unit_cost_usd: '',
   default_sell_price_tzs: '',
   compatible_models: '',
+  preferred_supplier_id: '',
   is_serialized: 'no',
   active: true,
 }
@@ -96,6 +98,17 @@ export function PartsPage() {
       ).data,
   })
 
+  const suppliers = useQuery({
+    queryKey: ['suppliers', 'options'],
+    enabled: can('supplier.read'),
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<SupplierWire>>('/suppliers', {
+          params: { page_size: 100, active: true },
+        })
+      ).data.data,
+  })
+
   const form = useForm<PartForm>({
     resolver: zodResolver(partSchema),
     defaultValues: EMPTY,
@@ -116,6 +129,7 @@ export function PartsPage() {
       unit_cost_usd: minorToMajor(p.unit_cost_usd),
       default_sell_price_tzs: minorToMajor(p.default_sell_price_tzs),
       compatible_models: p.compatible_models.join(', '),
+      preferred_supplier_id: p.preferred_supplier_id ?? '',
       is_serialized: p.is_serialized ? 'yes' : 'no',
       active: p.active,
     })
@@ -135,6 +149,7 @@ export function PartsPage() {
           .split(',')
           .map((m) => m.trim())
           .filter(Boolean),
+        preferred_supplier_id: values.preferred_supplier_id || null,
         is_serialized: values.is_serialized === 'yes',
         active: values.active,
       }
@@ -203,6 +218,7 @@ export function PartsPage() {
                 <TableHead>Category</TableHead>
                 <TableHead className="text-right">Unit cost</TableHead>
                 <TableHead className="text-right">Sell price</TableHead>
+                <TableHead>Supplier</TableHead>
                 <TableHead>Serialized</TableHead>
                 <TableHead>Status</TableHead>
                 {canManage && <TableHead className="w-20" />}
@@ -212,7 +228,7 @@ export function PartsPage() {
               {parts.data.data.length === 0 && (
                 <TableRow>
                   <TableCell
-                    colSpan={canManage ? 8 : 7}
+                    colSpan={canManage ? 9 : 8}
                     className="text-center text-muted-foreground"
                   >
                     No parts found
@@ -231,6 +247,9 @@ export function PartsPage() {
                   </TableCell>
                   <TableCell className="text-right">
                     {formatMoney(p.default_sell_price_tzs, 'TZS')}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {p.preferred_supplier?.name ?? '—'}
                   </TableCell>
                   <TableCell>
                     {p.is_serialized ? (
@@ -346,6 +365,25 @@ export function PartsPage() {
             >
               <Input id="part-models" {...form.register('compatible_models')} />
             </FormField>
+            {can('supplier.read') && (
+              <FormField
+                label="Preferred supplier"
+                htmlFor="part-supplier"
+                hint="Drives suggested reorder grouping"
+              >
+                <Select
+                  id="part-supplier"
+                  {...form.register('preferred_supplier_id')}
+                >
+                  <option value="">— none —</option>
+                  {suppliers.data?.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            )}
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField
                 label="Serial tracked"
