@@ -111,11 +111,17 @@ export interface StockChangeResult {
  *   RECEIPT / RETURN                       qty > 0  → +on_hand
  *   CONSUMPTION / SALE / SUPPLIER_RETURN /
  *   TRANSFER_OUT                           qty < 0  → −on_hand
- *   TRANSFER_IN                            qty > 0  → +on_hand, −in_transit_in
+ *   TRANSFER_IN                            qty > 0  → +on_hand
  *   ADJUSTMENT                             either   → ±on_hand
  *   RESERVE                                qty > 0  → +reserved
  *   UNRESERVE                              qty < 0  → −reserved
  *   DAMAGE                                 qty > 0  → +damaged
+ *
+ * NOTE: `qty_in_transit_in` is DELIBERATELY not touched by any movement — it is
+ * a transient tracker maintained by the transfer flow (Task 2.3) via
+ * {@link InventoryService.bumpInTransit}, not derived from the ledger. Only the
+ * three buckets that feed available stock (on_hand/reserved/damaged) are
+ * movement-derived, so reconcile() can rebuild them from the ledger alone.
  */
 export function movementBucketDeltas(
   type: StockMovementType,
@@ -128,10 +134,9 @@ export function movementBucketDeltas(
     case 'SALE':
     case 'SUPPLIER_RETURN':
     case 'TRANSFER_OUT':
+    case 'TRANSFER_IN':
     case 'ADJUSTMENT':
       return { onHand: qty };
-    case 'TRANSFER_IN':
-      return { onHand: qty, inTransitIn: -qty };
     case 'RESERVE':
     case 'UNRESERVE':
       return { reserved: qty };
@@ -500,7 +505,9 @@ export class InventoryService {
   /**
    * POST /inventory/reconcile — rebuild the (branch, part) buckets from the
    * full movement ledger and persist them. The ledger is the source of truth;
-   * this proves it (and repairs any drift). Read-mostly, but writes the
+   * this proves it (and repairs any drift). `qty_in_transit_in` is transfer-
+   * managed (not movement-derived, Task 2.3), so it is PRESERVED, not rebuilt —
+   * only the three ledger buckets are recomputed. Read-mostly, but writes the
    * corrected buckets, so gated by inventory.adjust at the controller.
    */
   async reconcile(
@@ -537,21 +544,62 @@ export class InventoryService {
         partId,
         qtyOnHand: buckets.onHand,
         qtyReserved: buckets.reserved,
-        qtyInTransitIn: buckets.inTransitIn,
         qtyDamaged: buckets.damaged,
         createdById: user.userId,
         updatedById: user.userId,
       },
+      // in_transit_in intentionally omitted — preserved, not rebuilt.
       update: {
         qtyOnHand: buckets.onHand,
         qtyReserved: buckets.reserved,
-        qtyInTransitIn: buckets.inTransitIn,
         qtyDamaged: buckets.damaged,
         updatedById: user.userId,
       },
     });
 
     return this.get(branchId, partId, user);
+  }
+
+  /**
+   * Adjust a (branch, part)'s `qty_in_transit_in` by `delta` inside a caller
+   * transaction (Task 2.3 dispatch +qty / receive −qty). This bucket is NOT
+   * ledger-derived, so it is written directly (never via a movement). Raw SQL
+   * so it works cross-branch: dispatch bumps the DESTINATION branch, which a
+   * source-branch user can't reach through the branch-scoped Prisma client —
+   * company_id/branch_id are passed explicitly (validated by the caller).
+   */
+  async bumpInTransit(
+    companyId: string,
+    branchId: string,
+    partId: string,
+    delta: number,
+    actorId: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    await tx.$executeRaw`
+      INSERT INTO inventory
+        (id, company_id, branch_id, part_id, qty_on_hand, qty_reserved,
+         qty_in_transit_in, qty_damaged, reorder_level, created_at, updated_at,
+         created_by, updated_by)
+      VALUES
+        (${randomUUID()}, ${companyId}, ${branchId}, ${partId},
+         0, 0, 0, 0, 0, NOW(3), NOW(3), ${actorId}, ${actorId})
+      ON DUPLICATE KEY UPDATE id = id`;
+
+    const rows = await tx.$queryRaw<Array<{ inTransitIn: number }>>`
+      SELECT qty_in_transit_in AS inTransitIn FROM inventory
+      WHERE branch_id = ${branchId} AND part_id = ${partId} FOR UPDATE`;
+    const next = rows[0].inTransitIn + delta;
+    if (next < 0) {
+      throw new UnprocessableEntityException(
+        'In-transit quantity cannot go negative',
+      );
+    }
+
+    await tx.$executeRaw`
+      UPDATE inventory SET qty_in_transit_in = ${next}, updated_by = ${actorId},
+        updated_at = NOW(3)
+      WHERE branch_id = ${branchId} AND part_id = ${partId}`;
   }
 
   /**

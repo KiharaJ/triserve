@@ -440,6 +440,43 @@ export interface StockChangeResult {
   pending_approval?: ApprovalEntry
 }
 
+export type StockTransferStatus =
+  | 'DRAFT'
+  | 'DISPATCHED'
+  | 'RECEIVED'
+  | 'CANCELLED'
+
+export interface TransferLineWire {
+  id: string
+  part_id: string
+  part: { part_number: string; description: string }
+  qty: number
+}
+
+export interface TransferWire {
+  id: string
+  transfer_no: string
+  from_branch_id: string
+  from_branch_code: string
+  to_branch_id: string
+  to_branch_code: string
+  status: StockTransferStatus
+  notes: string | null
+  dispatched_at: string | null
+  dispatched_by: string | null
+  received_at: string | null
+  received_by: string | null
+  created_at: string
+  lines: TransferLineWire[]
+}
+
+/** Result of a dispatch — applied, or HELD pending approval (§4.11). */
+export interface TransferDispatchResult {
+  held: boolean
+  transfer: TransferWire
+  pending_approval?: ApprovalEntry
+}
+
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'
 
 /** A part committed to a job (§4.5, Task 2.2). */

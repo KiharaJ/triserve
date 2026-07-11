@@ -156,6 +156,8 @@ model Company {
   stockMovements StockMovement[]
   // Task 2.2 (§4.5): parts committed to jobs.
   jobParts       JobPart[]
+  // Task 2.3 (§4.4): inter-branch transfers.
+  stockTransfers StockTransfer[]
 
   @@map("companies")
 }
@@ -190,6 +192,9 @@ model Branch {
   // Task 2.1 (§4.4): per-branch stock rows + the branch's movement ledger.
   inventory      Inventory[]
   stockMovements StockMovement[]
+  // Task 2.3 (§4.4): transfers dispatched from / received at this branch.
+  transfersOut   StockTransfer[] @relation("TransferFromBranch")
+  transfersIn    StockTransfer[] @relation("TransferToBranch")
 
   @@unique([companyId, code])
   @@map("branches")
@@ -275,6 +280,12 @@ model User {
   // Task 2.2 (§4.5): job-part actor roles.
   createdJobParts JobPart[] @relation("JobPartCreatedBy")
   updatedJobParts JobPart[] @relation("JobPartUpdatedBy")
+
+  // Task 2.3 (§4.4): stock-transfer actor roles.
+  dispatchedTransfers StockTransfer[] @relation("TransferDispatchedBy")
+  receivedTransfers   StockTransfer[] @relation("TransferReceivedBy")
+  createdTransfers    StockTransfer[] @relation("TransferCreatedBy")
+  updatedTransfers    StockTransfer[] @relation("TransferUpdatedBy")
 
   @@map("users")
 }
@@ -1062,10 +1073,11 @@ model Part {
   createdBy   User?     @relation("PartCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("PartUpdatedBy", fields: [updatedById], references: [id])
 
-  company   Company         @relation(fields: [companyId], references: [id])
-  inventory Inventory[]
-  movements StockMovement[]
-  jobParts  JobPart[]
+  company       Company             @relation(fields: [companyId], references: [id])
+  inventory     Inventory[]
+  movements     StockMovement[]
+  jobParts      JobPart[]
+  transferLines StockTransferLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1183,4 +1195,102 @@ model StockMovement {
   @@index([companyId, movementType, movedAt])
   @@index([refType, refId])
   @@map("stock_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Inter-branch stock transfers (§4.4, Task 2.3).
+//
+// Lifecycle: DRAFT → DISPATCHED → RECEIVED (or DRAFT → CANCELLED). A transfer
+// moves stock in two phases through the same ledger engine (ref_type TRANSFER):
+//   - dispatch: a TRANSFER_OUT at the SOURCE (source on_hand −qty) AND bumps
+//     the DESTINATION's qty_in_transit_in +qty (visibility of incoming stock);
+//   - receive:  a TRANSFER_IN at the DESTINATION (dest on_hand +qty) AND clears
+//     the destination's qty_in_transit_in −qty.
+// Dispatch is approval-gated by value (STOCK_TRANSFER, §4.11). Available stock
+// (on_hand − reserved − damaged) stays fully ledger-backed; qty_in_transit_in
+// is a transient tracker MAINTAINED BY THIS FLOW (not by movements), so
+// InventoryService.reconcile() rebuilds only the three ledger buckets.
+//
+// Like inventory/job_parts, StockTransfer is NOT extension-audited: dispatch/
+// receive update its status INSIDE applyMovement's transaction, and the
+// stock_movements ledger (TRANSFER_OUT/IN rows, ref_id = the transfer) is the
+// trail. It is company-scoped but NOT branch-scoped (it has TWO branch columns
+// — visibility is filtered in the service by from/to = the user's branch).
+// ---------------------------------------------------------------------------
+
+enum StockTransferStatus {
+  DRAFT
+  DISPATCHED
+  RECEIVED
+  CANCELLED
+}
+
+model StockTransfer {
+  id           String              @id @default(uuid()) @db.Char(36)
+  companyId    String              @map("company_id") @db.Char(36)
+  transferNo   String              @map("transfer_no") @db.VarChar(50)
+  fromBranchId String              @map("from_branch_id") @db.Char(36)
+  toBranchId   String              @map("to_branch_id") @db.Char(36)
+  status       StockTransferStatus @default(DRAFT)
+  notes        String?             @db.Text
+
+  dispatchedAt   DateTime? @map("dispatched_at") @db.DateTime(3)
+  dispatchedById String?   @map("dispatched_by") @db.Char(36)
+  receivedAt     DateTime? @map("received_at") @db.DateTime(3)
+  receivedById   String?   @map("received_by") @db.Char(36)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company      Company             @relation(fields: [companyId], references: [id])
+  fromBranch   Branch              @relation("TransferFromBranch", fields: [fromBranchId], references: [id])
+  toBranch     Branch              @relation("TransferToBranch", fields: [toBranchId], references: [id])
+  dispatchedBy User?               @relation("TransferDispatchedBy", fields: [dispatchedById], references: [id])
+  receivedBy   User?               @relation("TransferReceivedBy", fields: [receivedById], references: [id])
+  createdBy    User?               @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  updatedBy    User?               @relation("TransferUpdatedBy", fields: [updatedById], references: [id])
+  lines        StockTransferLine[]
+
+  @@unique([companyId, transferNo])
+  @@index([companyId, status])
+  @@index([companyId, fromBranchId])
+  @@index([companyId, toBranchId])
+  @@map("stock_transfers")
+}
+
+/// One part+qty on a transfer. No company_id — reached only via its
+/// (company-scoped) transfer, like journal_lines.
+model StockTransferLine {
+  id         String @id @default(uuid()) @db.Char(36)
+  transferId String @map("transfer_id") @db.Char(36)
+  partId     String @map("part_id") @db.Char(36)
+  qty        Int
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  part     Part          @relation(fields: [partId], references: [id])
+
+  @@index([transferId])
+  @@index([partId])
+  @@map("stock_transfer_lines")
+}
+
+/// Per-(company, year) monotonic counter backing concurrency-safe transfer_no
+/// generation (§4.4). Bumped with the same atomic MySQL idiom as JobCounter;
+/// accessed ONLY via raw SQL, no relations, not audited.
+model TransferCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, year])
+  @@map("transfer_counters")
 }

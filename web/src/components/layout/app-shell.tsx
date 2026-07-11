@@ -1,4 +1,5 @@
 import {
+  ArrowLeftRight,
   Boxes,
   Building2,
   ClipboardCheck,
@@ -71,6 +72,13 @@ const NAV_SECTIONS: NavSection[] = [
         icon: Package,
         end: false,
         permission: 'part.read',
+      },
+      {
+        to: '/inventory/transfers',
+        label: 'Transfers',
+        icon: ArrowLeftRight,
+        end: false,
+        permission: 'inventory.read',
       },
       {
         to: '/inventory/movements',

@@ -79,6 +79,12 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // depth; NOT branch-scoped (it has no branch_id — access is gated through
   // the branch-scoped parent job in JobPartsService).
   Prisma.ModelName.JobPart,
+  // Task 2.3 (§4.4): inter-branch transfers. Company-scoped; NOT branch-scoped
+  // (two branch columns — from/to visibility is filtered in the service).
+  // TransferCounter is listed for defense in depth but only ever touched via
+  // raw SQL (company_id passed explicitly there), like JobCounter.
+  Prisma.ModelName.StockTransfer,
+  Prisma.ModelName.TransferCounter,
 ]);
 
 /**
