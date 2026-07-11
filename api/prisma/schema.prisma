@@ -164,6 +164,8 @@ model Company {
   purchaseOrders PurchaseOrder[]
   // Task 2.7 (§4.4b): deliveries received against orders.
   grns           GoodsReceivedNote[]
+  // Task 2.4 (§4.4/E11): serial/batch tracked units.
+  partUnits      PartUnit[]
 
   @@map("companies")
 }
@@ -205,6 +207,8 @@ model Branch {
   purchaseOrders PurchaseOrder[]
   // Task 2.7 (§4.4b): deliveries landed at this branch.
   grns           GoodsReceivedNote[]
+  // Task 2.4 (§4.4/E11): serial units currently located at this branch.
+  partUnits      PartUnit[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -308,6 +312,10 @@ model User {
 
   // Task 2.7 (§4.4b): who received a delivery.
   receivedGrns GoodsReceivedNote[] @relation("GrnReceivedBy")
+
+  // Task 2.4 (§4.4/E11): serial-unit actor roles.
+  createdPartUnits PartUnit[] @relation("PartUnitCreatedBy")
+  updatedPartUnits PartUnit[] @relation("PartUnitUpdatedBy")
 
   @@map("users")
 }
@@ -1102,6 +1110,7 @@ model Part {
   transferLines     StockTransferLine[]
   poLines           PurchaseOrderLine[]
   grnLines          GrnLine[]
+  units             PartUnit[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1561,4 +1570,68 @@ model GrnCounter {
 
   @@unique([companyId, branchId, year])
   @@map("grn_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Serial / batch unit tracking (§4.4 / E11, Task 2.4) — enabled per part via
+// parts.is_serialized. High-value parts (LCDs, PBAs) are tracked unit-by-unit
+// here for recall handling, "which exact unit failed", and supplier-quality
+// traceability; cheap consumables stay quantity-only (no rows here).
+//
+// COMPANY-scoped, deliberately NOT branch-scoped (like customers/devices): a
+// serial's full history — where it is now, which job it went into — must be
+// visible group-wide for recall/lookup, so `branch_id` here is the unit's
+// CURRENT LOCATION, an analytics/logistics dimension, not an access boundary.
+// supplier_id / grn_id / *_job_id are plain CHAR(36) provenance references with
+// NO FK (validated in the service), mirroring jobs.claim_id — they point at
+// branch-scoped rows the unit's owner may legitimately outlive/cross.
+//
+// This is an OVERLAY registry: the quantity ledger (inventory) remains the
+// source of truth for available stock; part_units adds unit-level identity on
+// top for serialized parts. Reconciling unit counts with qty is a future step.
+// ---------------------------------------------------------------------------
+
+enum PartUnitStatus {
+  IN_STOCK
+  RESERVED
+  INSTALLED
+  RETURNED
+  DAMAGED
+}
+
+model PartUnit {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  partId    String         @map("part_id") @db.Char(36)
+  /// Samsung part serial number or batch lot — unique per (company, part).
+  serialNo  String         @map("serial_no") @db.VarChar(100)
+  /// Current physical location.
+  branchId  String         @map("branch_id") @db.Char(36)
+  status    PartUnitStatus @default(IN_STOCK)
+
+  /// Provenance + job linkage (no FK — see header note).
+  supplierId       String? @map("supplier_id") @db.Char(36)
+  grnId            String? @map("grn_id") @db.Char(36)
+  installedOnJobId String? @map("installed_on_job_id") @db.Char(36)
+  removedFromJobId String? @map("removed_from_job_id") @db.Char(36)
+
+  warrantyExpiry DateTime? @map("warranty_expiry") @db.Date
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("PartUnitCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("PartUnitUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company @relation(fields: [companyId], references: [id])
+  part    Part    @relation(fields: [partId], references: [id])
+  branch  Branch  @relation(fields: [branchId], references: [id])
+
+  @@unique([companyId, partId, serialNo])
+  @@index([companyId, serialNo])
+  @@index([companyId, branchId, status])
+  @@index([partId, status])
+  @@map("part_units")
 }

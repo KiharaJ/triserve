@@ -115,6 +115,10 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 2.5 (§4.4b): suppliers are audited like the parts catalogue —
   // infrequent config edits, never written inside a caller transaction.
   Prisma.ModelName.Supplier,
+  // Task 2.4 (§4.4/E11): serial units are audited — each is a tracked,
+  // high-value asset (register/status change/installation), never mutated
+  // inside a caller-managed transaction.
+  Prisma.ModelName.PartUnit,
 ]);
 
 /** Mutations we intercept and audit. */

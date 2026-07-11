@@ -561,6 +561,31 @@ export interface ReorderSuggestions {
   groups: ReorderGroup[]
 }
 
+// --- Serial units (Task 2.4, §4.4 / E11) -------------------------------------
+
+export type PartUnitStatus =
+  | 'IN_STOCK'
+  | 'RESERVED'
+  | 'INSTALLED'
+  | 'RETURNED'
+  | 'DAMAGED'
+
+export interface PartUnitWire {
+  id: string
+  part_id: string
+  part: { part_number: string; description: string }
+  serial_no: string
+  branch_id: string
+  branch_code: string
+  status: PartUnitStatus
+  supplier_id: string | null
+  grn_id: string | null
+  installed_on_job_id: string | null
+  removed_from_job_id: string | null
+  warranty_expiry: string | null
+  created_at: string
+}
+
 export type JobPartStatus = 'RESERVED' | 'CONSUMED'
 
 /** A part committed to a job (§4.5, Task 2.2). */

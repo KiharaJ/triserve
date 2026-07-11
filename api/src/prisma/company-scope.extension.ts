@@ -97,6 +97,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // (branch_id = where stock landed). GrnCounter is raw-SQL only.
   Prisma.ModelName.GoodsReceivedNote,
   Prisma.ModelName.GrnCounter,
+  // Task 2.4 (§4.4/E11): serial units are company-scoped but NOT branch-scoped
+  // (a serial's history must be visible group-wide for recall — branch_id is
+  // the unit's current location, like customers/devices).
+  Prisma.ModelName.PartUnit,
 ]);
 
 /**

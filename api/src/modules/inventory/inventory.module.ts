@@ -5,6 +5,8 @@ import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
 import { PartsController } from './parts.controller';
 import { PartsService } from './parts.service';
+import { PartUnitsController } from './part-units.controller';
+import { PartUnitsService } from './part-units.service';
 import { ReorderController } from './reorder.controller';
 import { ReorderService } from './reorder.service';
 import { StockTransferController } from './stock-transfer.controller';
@@ -27,12 +29,14 @@ import { StockTransferService } from './stock-transfer.service';
     InventoryController,
     StockTransferController,
     ReorderController,
+    PartUnitsController,
   ],
   providers: [
     PartsService,
     InventoryService,
     StockTransferService,
     ReorderService,
+    PartUnitsService,
   ],
   exports: [PartsService, InventoryService],
 })
