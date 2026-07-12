@@ -33,6 +33,65 @@ export interface CustomerWire {
   updated_at: string;
 }
 
+/** A money total in one currency (minor-unit string) — computed, never stored. */
+export interface MoneyByCurrency {
+  currency: string;
+  amount: string;
+}
+export interface CustomerProfileWire {
+  customer: CustomerWire;
+  stats: {
+    total_jobs: number;
+    active_jobs: number;
+    total_devices: number;
+    total_invoices: number;
+    /** Σ payments across the customer's invoices, per currency. */
+    lifetime_spend: MoneyByCurrency[];
+    /** Σ (invoice total − paid) for DRAFT/PARTIAL invoices, per currency. */
+    outstanding: MoneyByCurrency[];
+    warranty_claims: number;
+    warranty_reimbursed_usd: string;
+    first_seen: string | null;
+    last_visit: string | null;
+  };
+  devices: Array<{
+    id: string;
+    brand: string;
+    model: string | null;
+    category: string;
+    imei_serial: string | null;
+    color: string | null;
+  }>;
+  jobs: Array<{
+    id: string;
+    job_no: string;
+    state_code: string;
+    state_label: string;
+    is_terminal: boolean;
+    warranty_status: string;
+    device_model: string | null;
+    received_at: string;
+  }>;
+  invoices: Array<{
+    id: string;
+    invoice_no: string;
+    type: string;
+    currency: string;
+    total: string;
+    balance: string;
+    status: string;
+    created_at: string;
+  }>;
+  warranty: Array<{
+    id: string;
+    claim_no: string | null;
+    status: string;
+    claim_amount_usd: string;
+    reimbursed_amount_usd: string | null;
+    created_at: string;
+  }>;
+}
+
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
@@ -90,6 +149,124 @@ export class CustomersService {
     });
     if (!customer) throw new NotFoundException('Customer not found');
     return customer;
+  }
+
+  /**
+   * GET /customers/{id}/profile — the Customer 360 (E2). Assembled from related
+   * tables; lifetime spend and outstanding balance are COMPUTED here (never
+   * stored, so they can't drift). Branch-scoped users see only their branch's
+   * jobs/invoices/claims for the customer (the scope extension filters those),
+   * which is the correct per-branch 360; group users see everything.
+   */
+  async getProfile(id: string): Promise<CustomerProfileWire> {
+    const customer = await this.getRow(id);
+
+    const [devices, jobs, invoices, warranty] = await Promise.all([
+      this.prisma.device.findMany({
+        where: { customerId: id, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.job.findMany({
+        where: { customerId: id, deletedAt: null },
+        include: { state: true, device: { select: { model: true } } },
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+      }),
+      this.prisma.invoice.findMany({
+        where: { customerId: id, deletedAt: null },
+        include: { payments: { select: { amount: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+      this.prisma.warrantyClaim.findMany({
+        where: { job: { customerId: id }, deletedAt: null },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+    ]);
+
+    // Per-currency lifetime spend (Σ payments) and outstanding (Σ unpaid balance).
+    const spend = new Map<string, bigint>();
+    const outstanding = new Map<string, bigint>();
+    for (const inv of invoices) {
+      const paid = inv.payments.reduce((s, p) => s + p.amount, 0n);
+      if (paid > 0n) spend.set(inv.currency, (spend.get(inv.currency) ?? 0n) + paid);
+      if (inv.status === 'DRAFT' || inv.status === 'PARTIAL') {
+        const bal = inv.total - paid;
+        if (bal > 0n)
+          outstanding.set(inv.currency, (outstanding.get(inv.currency) ?? 0n) + bal);
+      }
+    }
+    const warrantyReimbursed = warranty.reduce(
+      (s, c) => s + (c.reimbursedAmountUsd ?? 0n),
+      0n,
+    );
+
+    // first/last activity across jobs + invoices.
+    const dates = [
+      ...jobs.map((j) => j.receivedAt.getTime()),
+      ...invoices.map((i) => i.createdAt.getTime()),
+    ];
+    const first = dates.length ? new Date(Math.min(...dates)) : null;
+    const last = dates.length ? new Date(Math.max(...dates)) : null;
+
+    const toMoney = (m: Map<string, bigint>): MoneyByCurrency[] =>
+      [...m.entries()].map(([currency, amount]) => ({
+        currency,
+        amount: amount.toString(),
+      }));
+
+    return {
+      customer: toWire(customer),
+      stats: {
+        total_jobs: jobs.length,
+        active_jobs: jobs.filter((j) => !j.state.isTerminal).length,
+        total_devices: devices.length,
+        total_invoices: invoices.filter((i) => i.status !== 'VOID').length,
+        lifetime_spend: toMoney(spend),
+        outstanding: toMoney(outstanding),
+        warranty_claims: warranty.length,
+        warranty_reimbursed_usd: warrantyReimbursed.toString(),
+        first_seen: first ? first.toISOString() : null,
+        last_visit: last ? last.toISOString() : null,
+      },
+      devices: devices.map((d) => ({
+        id: d.id,
+        brand: d.brand,
+        model: d.model,
+        category: d.category,
+        imei_serial: d.imeiSerial,
+        color: d.color,
+      })),
+      jobs: jobs.map((j) => ({
+        id: j.id,
+        job_no: j.jobNo,
+        state_code: j.state.code,
+        state_label: j.state.label,
+        is_terminal: j.state.isTerminal,
+        warranty_status: j.warrantyStatus,
+        device_model: j.device.model,
+        received_at: j.receivedAt.toISOString(),
+      })),
+      invoices: invoices.map((inv) => {
+        const paid = inv.payments.reduce((s, p) => s + p.amount, 0n);
+        return {
+          id: inv.id,
+          invoice_no: inv.invoiceNo,
+          type: inv.type,
+          currency: inv.currency,
+          total: inv.total.toString(),
+          balance: (inv.total - paid).toString(),
+          status: inv.status,
+          created_at: inv.createdAt.toISOString(),
+        };
+      }),
+      warranty: warranty.map((c) => ({
+        id: c.id,
+        claim_no: c.claimNo,
+        status: c.status,
+        claim_amount_usd: c.claimAmountUsd.toString(),
+        reimbursed_amount_usd: c.reimbursedAmountUsd?.toString() ?? null,
+        created_at: c.createdAt.toISOString(),
+      })),
+    };
   }
 
   /** POST /customers — phones normalized on save. */

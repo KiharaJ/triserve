@@ -16,7 +16,11 @@ import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { DevicesService, type DeviceWire } from '../devices/devices.service';
-import { CustomersService, type CustomerWire } from './customers.service';
+import {
+  CustomersService,
+  type CustomerProfileWire,
+  type CustomerWire,
+} from './customers.service';
 import {
   CreateCustomerDto,
   CustomerListQueryDto,
@@ -57,6 +61,15 @@ export class CustomersController {
   @RequirePermissions('customer.read')
   get(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerWire> {
     return this.customers.get(id);
+  }
+
+  /** Customer 360 (E2): profile + devices + jobs + invoices + warranty + totals. */
+  @Get(':id/profile')
+  @RequirePermissions('customer.read')
+  profile(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CustomerProfileWire> {
+    return this.customers.getProfile(id);
   }
 
   @Get(':id/devices')

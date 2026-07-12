@@ -674,6 +674,64 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Customer 360 (Phase 5, §4.2 / E2) ---------------------------------------
+
+export interface ProfileMoney {
+  currency: string
+  amount: string
+}
+export interface CustomerProfileWire {
+  customer: CustomerWire
+  stats: {
+    total_jobs: number
+    active_jobs: number
+    total_devices: number
+    total_invoices: number
+    lifetime_spend: ProfileMoney[]
+    outstanding: ProfileMoney[]
+    warranty_claims: number
+    warranty_reimbursed_usd: string
+    first_seen: string | null
+    last_visit: string | null
+  }
+  devices: Array<{
+    id: string
+    brand: string
+    model: string | null
+    category: DeviceCategory
+    imei_serial: string | null
+    color: string | null
+  }>
+  jobs: Array<{
+    id: string
+    job_no: string
+    state_code: string
+    state_label: string
+    is_terminal: boolean
+    warranty_status: WarrantyStatus
+    device_model: string | null
+    received_at: string
+  }>
+  invoices: Array<{
+    id: string
+    invoice_no: string
+    type: InvoiceType
+    currency: string
+    total: string
+    balance: string
+    status: InvoiceStatus
+    created_at: string
+  }>
+  warranty: Array<{
+    id: string
+    claim_no: string | null
+    status: WarrantyClaimStatus
+    claim_amount_usd: string
+    reimbursed_amount_usd: string | null
+    created_at: string
+  }>
+}
+
 // --- Warranty claims (Phase 4, §4.7) -----------------------------------------
 
 export type LabourCode = 'FEM' | 'LEM' | 'SEM'
