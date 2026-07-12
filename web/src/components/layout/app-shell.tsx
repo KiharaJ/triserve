@@ -21,9 +21,32 @@ import {
 } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import type { Permission } from '@triserve/shared'
+import { Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth'
+import { useTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
+
+/** Light/dark toggle for the topbar. */
+function ThemeToggle() {
+  const { resolved, toggle } = useTheme()
+  return (
+    <Button
+      variant="outline"
+      size="icon"
+      className="size-9"
+      onClick={toggle}
+      aria-label={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={resolved === 'dark' ? 'Light mode' : 'Dark mode'}
+    >
+      {resolved === 'dark' ? (
+        <Sun className="size-4" />
+      ) : (
+        <Moon className="size-4" />
+      )}
+    </Button>
+  )
+}
 
 interface NavItem {
   to: string
@@ -206,10 +229,13 @@ export function AppShell() {
         {/* Topbar */}
         <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b bg-background/80 px-6 backdrop-blur">
           <h1 className="text-base font-semibold">{currentTitle(pathname)}</h1>
-          <span className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="hidden size-1.5 rounded-full bg-emerald-500 sm:inline-block" />
-            Samsung Authorized Service Centre
-          </span>
+          <div className="flex items-center gap-3">
+            <span className="hidden items-center gap-2 text-sm text-muted-foreground md:flex">
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              Samsung Authorized Service Centre
+            </span>
+            <ThemeToggle />
+          </div>
         </header>
         <main className="flex-1 overflow-y-auto bg-muted/30 p-6">
           <Outlet />
