@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -10,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { PaginatedResponse } from '@triserve/shared';
+import { IsString, MaxLength } from 'class-validator';
 import { PermissionsGuard } from '../../common/authz/permissions.guard';
 import { RequirePermissions } from '../../common/authz/require-permissions.decorator';
 import type { AuthUser } from '../auth/auth.types';
@@ -23,9 +25,19 @@ import {
   WarrantyClaimListQueryDto,
 } from './dto/warranty-claim.dto';
 import {
+  GspnBridgeService,
+  type GspnImportReport,
+} from './gspn-bridge.service';
+import {
   WarrantyClaimsService,
   type WarrantyClaimWire,
 } from './warranty-claims.service';
+
+class GspnImportDto {
+  @IsString()
+  @MaxLength(5_000_000)
+  csv!: string;
+}
 
 /**
  * /api/v1/warranty-claims (Task 4.1, DESIGN.md §4.7) — the IW (warranty) side.
@@ -41,7 +53,32 @@ import {
 @Controller('warranty-claims')
 @UseGuards(AuthGuard, PermissionsGuard)
 export class WarrantyClaimsController {
-  constructor(private readonly claims: WarrantyClaimsService) {}
+  constructor(
+    private readonly claims: WarrantyClaimsService,
+    private readonly gspn: GspnBridgeService,
+  ) {}
+
+  /** GSPN bridge (E13): download claims as a CSV to file with Samsung. */
+  @Get('export')
+  @RequirePermissions('warranty.claim.read')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  @Header('Content-Disposition', 'attachment; filename="gspn-claims.csv"')
+  export(
+    @Query('status') status: string | undefined,
+    @CurrentUser() user: AuthUser,
+  ): Promise<string> {
+    return this.gspn.exportCsv(status, user);
+  }
+
+  /** GSPN bridge (E13): apply Samsung's reconciliation CSV to the claims. */
+  @Post('import')
+  @RequirePermissions('warranty.claim.reconcile')
+  import(
+    @Body() dto: GspnImportDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<GspnImportReport> {
+    return this.gspn.importReconciliations(dto.csv ?? '', user);
+  }
 
   @Get()
   @RequirePermissions('warranty.claim.read')

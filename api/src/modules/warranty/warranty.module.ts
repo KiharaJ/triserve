@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
+import { GspnBridgeService } from './gspn-bridge.service';
 import { WarrantyClaimsController } from './warranty-claims.controller';
 import { WarrantyClaimsService } from './warranty-claims.service';
 
@@ -14,7 +15,7 @@ import { WarrantyClaimsService } from './warranty-claims.service';
 @Module({
   imports: [AuthModule, AuditModule, AccountingModule],
   controllers: [WarrantyClaimsController],
-  providers: [WarrantyClaimsService],
+  providers: [WarrantyClaimsService, GspnBridgeService],
   exports: [WarrantyClaimsService],
 })
 export class WarrantyModule {}

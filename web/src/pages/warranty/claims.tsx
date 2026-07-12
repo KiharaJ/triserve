@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Download, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import type { PaginatedResponse } from '@triserve/shared'
@@ -78,9 +79,13 @@ export function WarrantyClaimsPage() {
   const [claimNo, setClaimNo] = useState('')
   const [notes, setNotes] = useState('')
 
+  const [importOpen, setImportOpen] = useState(false)
+  const [importCsv, setImportCsv] = useState('')
+
   const canCreate = can('warranty.claim.create')
   const canSubmit = can('warranty.claim.submit')
   const canReconcile = can('warranty.claim.reconcile')
+  const canRead = can('warranty.claim.read')
 
   // Recent jobs to attach a claim to. Not filtered to IW: a job's warranty
   // status can be corrected here, and legacy/imported jobs are UNKNOWN.
@@ -222,6 +227,49 @@ export function WarrantyClaimsPage() {
     },
   })
 
+  // GSPN bridge (E13): download claims CSV to file with Samsung.
+  const exportCsv = useMutation({
+    mutationFn: async () => {
+      const res = await api.get<string>('/warranty-claims/export', {
+        responseType: 'text',
+        params: statusFilter ? { status: statusFilter } : undefined,
+      })
+      const blob = new Blob([res.data], { type: 'text/csv' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'gspn-claims.csv'
+      a.click()
+      URL.revokeObjectURL(url)
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  // GSPN bridge (E13): apply Samsung's reconciliation CSV.
+  const importCsvMut = useMutation({
+    mutationFn: async () =>
+      (
+        await api.post<{
+          total: number
+          applied: number
+          errors: { claim_no: string; reason: string }[]
+        }>('/warranty-claims/import', { csv: importCsv })
+      ).data,
+    onSuccess: async (report) => {
+      if (report.errors.length === 0) {
+        toast.success(`Applied ${report.applied} of ${report.total} rows`)
+      } else {
+        toast.warning(
+          `Applied ${report.applied}/${report.total}; ${report.errors.length} row(s) skipped`,
+        )
+      }
+      setImportOpen(false)
+      setImportCsv('')
+      await invalidate()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -242,6 +290,27 @@ export function WarrantyClaimsPage() {
           ))}
         </Select>
         <div className="flex-1" />
+        {canRead && (
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => exportCsv.mutate()}
+            disabled={exportCsv.isPending}
+            title="Download claims as a GSPN CSV"
+          >
+            <Download className="size-4" /> Export GSPN
+          </Button>
+        )}
+        {canReconcile && (
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            onClick={() => setImportOpen(true)}
+            title="Apply a GSPN reconciliation CSV"
+          >
+            <Upload className="size-4" /> Import GSPN
+          </Button>
+        )}
         {canCreate && <Button onClick={openCreate}>New claim</Button>}
       </div>
 
@@ -409,6 +478,50 @@ export function WarrantyClaimsPage() {
             </Button>
             <Button onClick={() => save.mutate()} disabled={save.isPending}>
               {editId ? 'Save' : 'Create claim'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import GSPN reconciliation</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm text-muted-foreground">
+              Paste (or upload) Samsung's decision CSV. Columns:{' '}
+              <code className="rounded bg-muted px-1 text-xs">
+                claim_no, outcome, reimbursed_usd
+              </code>
+              . Outcome is APPROVED, REJECTED or PAID; reimbursed_usd (dollars) is
+              used for PAID.
+            </p>
+            <Input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void file.text().then(setImportCsv)
+              }}
+            />
+            <Textarea
+              rows={7}
+              value={importCsv}
+              onChange={(e) => setImportCsv(e.target.value)}
+              placeholder={'claim_no,outcome,reimbursed_usd\n691010338615,PAID,95.00'}
+              className="font-mono text-xs"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => importCsvMut.mutate()}
+              disabled={importCsvMut.isPending || !importCsv.trim()}
+            >
+              Apply
             </Button>
           </DialogFooter>
         </DialogContent>

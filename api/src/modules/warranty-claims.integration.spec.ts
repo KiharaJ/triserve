@@ -443,3 +443,82 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
     await submit(tokens.advisorDar, draft.id, { claim_no: 'X-1' }, 403);
   });
 });
+
+async function claimNoOf(id: string): Promise<string> {
+  const c = await raw.warrantyClaim.findUnique({
+    where: { id },
+    select: { claimNo: true },
+  });
+  return c!.claimNo!;
+}
+
+describe('GSPN CSV bridge (E13, Task 4.3)', () => {
+  it('exports SUBMITTED claims as CSV', async () => {
+    const id = await submittedClaim('7500'); // $75.00
+    const cno = await claimNoOf(id);
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/warranty-claims/export')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .expect(200);
+    expect(res.headers['content-type']).toMatch(/csv/);
+    expect(res.text).toContain('claim_no,job_no,imei_serial');
+    expect(res.text).toContain(cno);
+    expect(res.text).toContain('75.00');
+  });
+
+  it('imports a reconciliation CSV → applies matches, reports the rest', async () => {
+    const id = await submittedClaim('10000');
+    const cno = await claimNoOf(id);
+    const csv = [
+      'claim_no,outcome,reimbursed_usd',
+      `${cno},APPROVED,`,
+      'NO-SUCH-CLAIM,APPROVED,',
+      'BAD-ROW,WHATEVER,',
+    ].join('\n');
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .send({ csv })
+      .expect(201);
+    const report = res.body as {
+      total: number;
+      applied: number;
+      errors: { claim_no: string; reason: string }[];
+    };
+    expect(report.total).toBe(3);
+    expect(report.applied).toBe(1);
+    expect(report.errors).toHaveLength(2);
+    expect(report.errors.map((e) => e.claim_no)).toEqual(
+      expect.arrayContaining(['NO-SUCH-CLAIM', 'BAD-ROW']),
+    );
+    const after = await raw.warrantyClaim.findUnique({ where: { id } });
+    expect(after!.status).toBe('APPROVED');
+  });
+
+  it('imports PAID with a reimbursed dollar amount → records it (cents)', async () => {
+    const id = await submittedClaim('10000');
+    const cno = await claimNoOf(id);
+    await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .send({ csv: `claim_no,outcome,reimbursed_usd\n${cno},APPROVED,` })
+      .expect(201);
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .send({ csv: `claim_no,outcome,reimbursed_usd\n${cno},PAID,95.00` })
+      .expect(201);
+    expect((res.body as { applied: number }).applied).toBe(1);
+    const after = await raw.warrantyClaim.findUnique({ where: { id } });
+    expect(after!.status).toBe('PAID');
+    expect(after!.reimbursedAmountUsd).toBe(9_500n);
+  });
+
+  it('import needs warranty.claim.reconcile — a SERVICE_ADVISOR is 403', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ csv: 'claim_no,outcome\nX,APPROVED' })
+      .expect(403);
+  });
+});
