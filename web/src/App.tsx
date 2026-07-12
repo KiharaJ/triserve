@@ -18,8 +18,8 @@ import { SerialUnitsPage } from '@/pages/inventory/serial-units'
 import { StockPage } from '@/pages/inventory/stock'
 import { SuppliersPage } from '@/pages/inventory/suppliers'
 import { TransfersPage } from '@/pages/inventory/transfers'
-import { JobsBoardPage } from '@/pages/jobs/board'
 import { JobDetailPage } from '@/pages/jobs/detail'
+import { JobsPage } from '@/pages/jobs'
 import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
 import { InvoicesPage } from '@/pages/pos/invoices'
@@ -63,7 +63,7 @@ function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="jobs">
-          <Route index element={<JobsBoardPage />} />
+          <Route index element={<JobsPage />} />
           <Route path="new" element={<JobIntakePage />} />
           <Route path=":id" element={<JobDetailPage />} />
         </Route>
