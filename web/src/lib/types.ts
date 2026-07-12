@@ -674,6 +674,48 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Financial reports (Phase 5 / E1) ----------------------------------------
+
+export interface TrialBalanceRow {
+  code: string
+  name: string
+  type: string
+  debit: string
+  credit: string
+  balance: string
+}
+export interface TrialBalanceCurrency {
+  currency: string
+  rows: TrialBalanceRow[]
+  total_debit: string
+  total_credit: string
+  balanced: boolean
+}
+export interface TrialBalanceWire {
+  from: string | null
+  to: string | null
+  currencies: TrialBalanceCurrency[]
+}
+
+export interface PlLine {
+  code: string
+  name: string
+  amount: string
+}
+export interface ProfitLossCurrency {
+  currency: string
+  revenue: PlLine[]
+  total_revenue: string
+  expenses: PlLine[]
+  total_expenses: string
+  net_profit: string
+}
+export interface ProfitLossWire {
+  from: string | null
+  to: string | null
+  currencies: ProfitLossCurrency[]
+}
+
 // --- Customer 360 (Phase 5, §4.2 / E2) ---------------------------------------
 
 export interface ProfileMoney {

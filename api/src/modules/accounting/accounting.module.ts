@@ -6,6 +6,8 @@ import { ChartOfAccountsService } from './chart-of-accounts.service';
 import { JournalEntriesController } from './journal-entries.controller';
 import { JournalService } from './journal.service';
 import { PostingService } from './posting.service';
+import { ReportsController } from './reports.controller';
+import { ReportsService } from './reports.service';
 
 /**
  * AccountingModule — Task 0.6 (§4.9 / E1): chart of accounts + double-entry
@@ -16,8 +18,8 @@ import { PostingService } from './posting.service';
  */
 @Module({
   imports: [AuthModule, ApprovalsModule],
-  controllers: [AccountsController, JournalEntriesController],
-  providers: [ChartOfAccountsService, JournalService, PostingService],
+  controllers: [AccountsController, JournalEntriesController, ReportsController],
+  providers: [ChartOfAccountsService, JournalService, PostingService, ReportsService],
   exports: [JournalService, PostingService],
 })
 export class AccountingModule {}

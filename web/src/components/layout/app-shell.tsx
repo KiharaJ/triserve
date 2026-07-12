@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  BarChart3,
   Boxes,
   Building2,
   ClipboardCheck,
@@ -91,6 +92,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/invoices', label: 'Invoices', icon: Receipt, end: false, permission: 'invoice.read', color: 'bg-green-500/15 text-green-600 dark:text-green-400' },
       { to: '/warranty-claims', label: 'Warranty claims', icon: ShieldCheck, end: false, permission: 'warranty.claim.read', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
+      { to: '/reports', label: 'Reports', icon: BarChart3, end: false, permission: 'accounting.read', color: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' },
     ],
   },
   {

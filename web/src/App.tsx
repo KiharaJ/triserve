@@ -23,6 +23,7 @@ import { JobsPage } from '@/pages/jobs'
 import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
 import { InvoicesPage } from '@/pages/pos/invoices'
+import { ReportsPage } from '@/pages/reports'
 import { SecurityPage } from '@/pages/security'
 import { WarrantyClaimsPage } from '@/pages/warranty/claims'
 
@@ -80,6 +81,7 @@ function App() {
         </Route>
         <Route path="invoices" element={<InvoicesPage />} />
         <Route path="warranty-claims" element={<WarrantyClaimsPage />} />
+        <Route path="reports" element={<ReportsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="security" element={<SecurityPage />} />
