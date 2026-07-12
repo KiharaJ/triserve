@@ -153,12 +153,26 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const testUserIds = Object.values(ids);
+  // Task 3.3: recording a payment auto-posts a journal entry (posted_by = the
+  // paying test user). Remove those before the users/company they reference.
+  const entries = await raw.journalEntry.findMany({
+    where: { postedById: { in: testUserIds } },
+    select: { id: true },
+  });
+  const entryIds = entries.map((e) => e.id);
+  await raw.journalLine.deleteMany({ where: { entryId: { in: entryIds } } });
+  await raw.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
   await raw.payment.deleteMany({
     where: { invoiceId: { in: createdInvoiceIds } },
   });
   await raw.invoice.deleteMany({ where: { id: { in: createdInvoiceIds } } }); // cascades lines
   await raw.auditLog.deleteMany({
-    where: { companyId, entityType: 'Payment' },
+    where: {
+      OR: [
+        { companyId, entityType: 'Payment' },
+        { actorUserId: { in: testUserIds } },
+      ],
+    },
   });
   await raw.session.deleteMany({ where: { userId: { in: testUserIds } } });
   await raw.user.deleteMany({
