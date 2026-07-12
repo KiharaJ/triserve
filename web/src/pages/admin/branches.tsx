@@ -156,7 +156,7 @@ export function BranchesPage() {
         </p>
       )}
       {branches.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

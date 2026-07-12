@@ -269,7 +269,7 @@ export function PurchaseOrdersPage() {
         <p className="text-sm text-destructive">{apiErrorMessage(pos.error)}</p>
       )}
       {pos.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

@@ -439,7 +439,7 @@ function PartsTab({ job }: { job: JobDetailWire }) {
         <p className="text-sm text-muted-foreground">Loading…</p>
       )}
       {lines.length > 0 && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

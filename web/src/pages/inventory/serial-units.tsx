@@ -201,7 +201,7 @@ export function SerialUnitsPage() {
         </p>
       )}
       {units.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

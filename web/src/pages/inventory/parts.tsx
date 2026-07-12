@@ -209,7 +209,7 @@ export function PartsPage() {
         </p>
       )}
       {parts.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

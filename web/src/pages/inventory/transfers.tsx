@@ -216,7 +216,7 @@ export function TransfersPage() {
         </p>
       )}
       {transfers.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>

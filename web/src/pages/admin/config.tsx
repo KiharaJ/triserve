@@ -286,7 +286,7 @@ function ConfigCrudTable({ spec }: { spec: TableSpec }) {
         </p>
       )}
       {rows.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>
