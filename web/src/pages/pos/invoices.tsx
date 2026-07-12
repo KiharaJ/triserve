@@ -74,6 +74,30 @@ function statusBadge(status: InvoiceStatus) {
   }
 }
 
+const TYPE_STYLES: Record<InvoiceType, { label: string; cls: string }> = {
+  REPAIR_OW: {
+    label: 'Repair',
+    cls: 'bg-sky-500/15 text-sky-700 ring-sky-500/25 dark:text-sky-400',
+  },
+  PARTS_SALE: {
+    label: 'Parts',
+    cls: 'bg-violet-500/15 text-violet-700 ring-violet-500/25 dark:text-violet-400',
+  },
+  PRODUCT_SALE: {
+    label: 'Product',
+    cls: 'bg-emerald-500/15 text-emerald-700 ring-emerald-500/25 dark:text-emerald-400',
+  },
+  ACCESSORY: {
+    label: 'Accessory',
+    cls: 'bg-amber-500/15 text-amber-700 ring-amber-500/25 dark:text-amber-400',
+  },
+}
+
+function typeBadge(type: InvoiceType) {
+  const t = TYPE_STYLES[type]
+  return <Badge className={`border-transparent ${t.cls}`}>{t.label}</Badge>
+}
+
 interface DraftLine {
   line_type: 'PART' | 'SERVICE' | 'CUSTOM'
   part_id: string
@@ -309,9 +333,7 @@ export function InvoicesPage() {
                     {inv.invoice_no}
                   </TableCell>
                   <TableCell>{inv.customer_name ?? 'Walk-in'}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {inv.type}
-                  </TableCell>
+                  <TableCell>{typeBadge(inv.type)}</TableCell>
                   <TableCell className="text-right">
                     {formatMoney(inv.total, inv.currency)}
                   </TableCell>
