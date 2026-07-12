@@ -217,17 +217,24 @@ afterAll(async () => {
   await raw.attachment.deleteMany({
     where: { companyId: { in: [companyId, companyBId] } },
   });
+  // Scope deletes to THIS suite's fixtures — a bare companyId filter would wipe
+  // the real company's jobs/customers/devices (e.g. imported data).
   await raw.job.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: { OR: [{ companyId: companyBId }, { id: { in: createdJobIds } }] },
   });
-  await raw.jobCounter.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
-  });
+  await raw.jobCounter.deleteMany({ where: { companyId: companyBId } });
   await raw.device.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [
+        { companyId: companyBId },
+        { customerId: { in: createdCustomerIds } },
+      ],
+    },
   });
   await raw.customer.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [{ companyId: companyBId }, { id: { in: createdCustomerIds } }],
+    },
   });
   await raw.user.deleteMany({
     where: { email: { in: Object.values(EMAILS) } },
@@ -544,17 +551,25 @@ describe('seed stays pristine', () => {
       }),
     ).toBe(5);
 
-    const jobCount = await raw.job.count();
+    // Scoped to this suite's fixtures so pre-existing real data (e.g. imports)
+    // doesn't skew the counts; all are cleaned in afterAll.
+    const jobCount = await raw.job.count({
+      where: { id: { in: createdJobIds } },
+    });
     expect(jobCount).toBe(createdJobIds.length);
     expect(jobCount).toBeGreaterThan(0);
 
-    const customerCount = await raw.customer.count();
+    const customerCount = await raw.customer.count({
+      where: { id: { in: createdCustomerIds } },
+    });
     expect(customerCount).toBe(createdCustomerIds.length);
 
     // Every attachment row created above was either explicitly DELETEd via
     // the API (the DELETE-flow test) or is still tracked in
     // createdAttachmentIds — the remaining count must match exactly.
-    const attachmentCount = await raw.attachment.count();
+    const attachmentCount = await raw.attachment.count({
+      where: { id: { in: createdAttachmentIds } },
+    });
     expect(attachmentCount).toBe(createdAttachmentIds.length);
     expect(attachmentCount).toBeGreaterThan(0);
   });

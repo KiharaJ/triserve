@@ -163,14 +163,28 @@ afterAll(async () => {
     },
   });
   await raw.session.deleteMany({ where: { userId: { in: actorIds } } });
+  // Scope deletes to THIS suite's fixtures — a bare companyId filter would wipe
+  // the real company's customers/devices/models (e.g. imported data).
   await raw.device.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [
+        { companyId: companyBId },
+        { customer: { name: { startsWith: TEST_PREFIX } } },
+      ],
+    },
   });
   await raw.customer.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [{ companyId: companyBId }, { name: { startsWith: TEST_PREFIX } }],
+    },
   });
   await raw.deviceModel.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [
+        { companyId: companyBId },
+        { modelCode: { startsWith: TEST_PREFIX } },
+      ],
+    },
   });
   await raw.user.deleteMany({
     where: { email: { in: [ADMIN_EMAIL, ADVISOR_EMAIL, ADMIN_B_EMAIL] } },
@@ -534,9 +548,20 @@ describe('seed stays pristine', () => {
     });
     expect(seededAdmin?.active).toBe(true);
 
-    // Nothing but this suite's (soon-purged) fixtures in the new tables.
-    expect(await raw.customer.count()).toBe(3); // A×2 + B×1, deleted in afterAll
-    expect(await raw.device.count()).toBe(1);
-    expect(await raw.deviceModel.count()).toBe(1);
+    // This suite's fixtures exist exactly (scoped by the test prefix so
+    // pre-existing real data, e.g. imports, doesn't skew it); purged in afterAll.
+    expect(
+      await raw.customer.count({ where: { name: { startsWith: TEST_PREFIX } } }),
+    ).toBe(3); // A×2 + B×1
+    expect(
+      await raw.device.count({
+        where: { customer: { name: { startsWith: TEST_PREFIX } } },
+      }),
+    ).toBe(1);
+    expect(
+      await raw.deviceModel.count({
+        where: { modelCode: { startsWith: TEST_PREFIX } },
+      }),
+    ).toBe(1);
   });
 });

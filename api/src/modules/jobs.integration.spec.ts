@@ -190,17 +190,25 @@ afterAll(async () => {
     where: { companyId: { in: [companyId, companyBId] } },
   });
   await raw.session.deleteMany({ where: { userId: { in: actorIds } } });
+  // Scope destructive deletes to THIS suite's fixtures. A bare companyId filter
+  // would wipe the REAL company's jobs/customers/devices (e.g. imported data),
+  // not just the test's. companyBId is a throwaway test company (wipe fully).
   await raw.job.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: { OR: [{ companyId: companyBId }, { id: { in: createdJobIds } }] },
   });
-  await raw.jobCounter.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
-  });
+  await raw.jobCounter.deleteMany({ where: { companyId: companyBId } });
   await raw.device.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [
+        { companyId: companyBId },
+        { customer: { name: { startsWith: TEST_PREFIX } } },
+      ],
+    },
   });
   await raw.customer.deleteMany({
-    where: { companyId: { in: [companyId, companyBId] } },
+    where: {
+      OR: [{ companyId: companyBId }, { name: { startsWith: TEST_PREFIX } }],
+    },
   });
   await raw.user.deleteMany({
     where: { email: { in: Object.values(EMAILS) } },
@@ -601,8 +609,11 @@ describe('seed stays pristine', () => {
     expect(await raw.workflowTransition.count({ where: { companyId } })).toBe(
       16,
     );
-    // All jobs currently in the DB belong to this suite (cleaned in afterAll).
-    const jobCount = await raw.job.count();
+    // This suite's jobs exist exactly (scoped to fixtures so pre-existing real
+    // data, e.g. imports, doesn't skew the count); cleaned in afterAll.
+    const jobCount = await raw.job.count({
+      where: { id: { in: createdJobIds } },
+    });
     expect(jobCount).toBe(createdJobIds.length);
     expect(jobCount).toBeGreaterThan(0);
   });
