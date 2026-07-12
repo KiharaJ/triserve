@@ -105,8 +105,14 @@ function findCol(idx: Map<string, number>, needles: string[]): number {
 }
 
 /** Parse "DD.MM.YYYY" / "DD.MM.YY" / Date → Date (midnight), or null. */
+/** A received/sale date can't be in the future — reject beyond tomorrow so a
+ * garbled source string (e.g. "28.04.29") doesn't land in 2029 AND poison the
+ * following carry-forward rows; those rows fall back to the last valid date. */
+const MAX_DATE = Date.now() + 86_400_000;
 function parseDate(v: unknown): Date | null {
-  if (v instanceof Date && !isNaN(v.getTime())) return v;
+  if (v instanceof Date && !isNaN(v.getTime())) {
+    return v.getTime() > MAX_DATE ? null : v;
+  }
   const s = str(v);
   const m = s.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})$/);
   if (!m) return null;
@@ -115,7 +121,8 @@ function parseDate(v: unknown): Date | null {
   let y = Number(m[3]);
   if (y < 100) y += 2000;
   if (d < 1 || d > 31 || mo < 1 || mo > 12 || y < 2020 || y > 2035) return null;
-  return new Date(Date.UTC(y, mo - 1, d));
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getTime() > MAX_DATE ? null : dt;
 }
 /** Month/year from a Dar sheet name like "CASH JULAY 26" → Date(1st) or null. */
 const MONTHS: Record<string, number> = {
