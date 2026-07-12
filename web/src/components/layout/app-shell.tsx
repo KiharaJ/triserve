@@ -132,6 +132,13 @@ const NAV_SECTIONS: NavSection[] = [
         end: false,
         permission: 'invoice.read',
       },
+      {
+        to: '/warranty-claims',
+        label: 'Warranty claims',
+        icon: ShieldCheck,
+        end: false,
+        permission: 'warranty.claim.read',
+      },
     ],
   },
   {

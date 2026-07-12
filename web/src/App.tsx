@@ -24,6 +24,7 @@ import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
 import { InvoicesPage } from '@/pages/pos/invoices'
 import { SecurityPage } from '@/pages/security'
+import { WarrantyClaimsPage } from '@/pages/warranty/claims'
 
 /** Everything behind here requires a session; anonymous users go to /login. */
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -78,6 +79,7 @@ function App() {
           <Route path="movements" element={<MovementsPage />} />
         </Route>
         <Route path="invoices" element={<InvoicesPage />} />
+        <Route path="warranty-claims" element={<WarrantyClaimsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
         <Route path="security" element={<SecurityPage />} />

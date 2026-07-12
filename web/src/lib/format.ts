@@ -36,9 +36,16 @@ export function formatDate(iso: string | Date | null | undefined): string {
 }
 
 /**
- * Minor units (senti, BIGINT-safe string/number/bigint) → "TZS 150,000".
- * TZS is displayed as whole numbers; the senti remainder is dropped for
- * display (amounts are integral senti and TZS has no circulating cents).
+ * Currencies displayed as WHOLE numbers (no circulating minor unit). TZS has no
+ * cents in practice; everything else (USD, EUR…) shows 2 decimal places.
+ */
+const ZERO_DECIMAL_CURRENCIES = new Set(['TZS'])
+
+/**
+ * Minor units (BIGINT-safe string/number/bigint) → display string, e.g.
+ * "TZS 150,000" or "USD 57.68". TZS is whole (the senti remainder is dropped);
+ * USD and other currencies keep 2 decimals (cents), so IW claim values aren't
+ * rounded off.
  */
 export function formatMoney(
   minor: string | number | bigint | null | undefined,
@@ -52,11 +59,44 @@ export function formatMoney(
     return '—'
   }
   const negative = value < 0n
-  const major = (negative ? -value : value) / 100n
-  const grouped = major
-    .toString()
-    .replace(/\B(?=(\d{3})+(?!\d))/g, ',')
-  return `${negative ? '-' : ''}${currency} ${grouped}`
+  const abs = negative ? -value : value
+  const whole = abs / 100n
+  const grouped = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  const sign = negative ? '-' : ''
+  if (ZERO_DECIMAL_CURRENCIES.has(currency)) {
+    return `${sign}${currency} ${grouped}`
+  }
+  const cents = (abs % 100n).toString().padStart(2, '0')
+  return `${sign}${currency} ${grouped}.${cents}`
+}
+
+/**
+ * Whole-dollar/decimal input ("57" or "57.68") → USD minor-unit (cent) string
+ * ("5700" / "5768"). Returns null for blank; throws on bad input. Unlike
+ * {@link majorToMinor} (TZS, whole units) this accepts up to 2 decimals.
+ */
+export function decimalToMinor(input: string): string | null {
+  const trimmed = input.trim().replace(/,/g, '')
+  if (trimmed === '') return null
+  const m = trimmed.match(/^(\d+)(?:\.(\d{1,2}))?$/)
+  if (!m) {
+    throw new Error('Enter an amount, e.g. 57.68')
+  }
+  const cents = (m[2] ?? '').padEnd(2, '0')
+  return (BigInt(m[1]) * 100n + BigInt(cents || '0')).toString()
+}
+
+/** USD cent string → decimal major string ("5768" → "57.68") for inputs. */
+export function minorToDecimal(minor: string | null | undefined): string {
+  if (!minor) return ''
+  try {
+    const v = BigInt(minor)
+    const neg = v < 0n
+    const abs = neg ? -v : v
+    return `${neg ? '-' : ''}${abs / 100n}.${(abs % 100n).toString().padStart(2, '0')}`
+  } catch {
+    return ''
+  }
 }
 
 /**

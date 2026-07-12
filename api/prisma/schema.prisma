@@ -170,6 +170,8 @@ model Company {
   invoices       Invoice[]
   // Task 3.2 (§4.6): payments taken.
   payments       Payment[]
+  // Task 4.1 (§4.7): warranty claims to Samsung.
+  warrantyClaims WarrantyClaim[]
 
   @@map("companies")
 }
@@ -217,6 +219,8 @@ model Branch {
   invoices       Invoice[]
   // Task 3.2 (§4.6): payments taken at this branch.
   payments       Payment[]
+  // Task 4.1 (§4.7): warranty claims filed at this branch.
+  warrantyClaims WarrantyClaim[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -326,9 +330,12 @@ model User {
   updatedPartUnits PartUnit[] @relation("PartUnitUpdatedBy")
 
   // Task 3.1 (§4.6): who sold an invoice.
-  soldInvoices     Invoice[] @relation("InvoiceSoldBy")
+  soldInvoices          Invoice[]       @relation("InvoiceSoldBy")
   // Task 3.2 (§4.6): who took a payment.
-  receivedPayments Payment[] @relation("PaymentReceivedBy")
+  receivedPayments      Payment[]       @relation("PaymentReceivedBy")
+  // Task 4.1 (§4.7): warranty claims created/updated by this user.
+  createdWarrantyClaims WarrantyClaim[] @relation("WarrantyClaimCreatedBy")
+  updatedWarrantyClaims WarrantyClaim[] @relation("WarrantyClaimUpdatedBy")
 
   @@map("users")
 }
@@ -915,9 +922,11 @@ model Job {
   updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
 
   // Task 2.2 (§4.5): parts reserved/consumed on this job.
-  parts    JobPart[]
+  parts          JobPart[]
   // Task 3.1 (§4.6): invoices for this repair.
-  invoices Invoice[]
+  invoices       Invoice[]
+  // Task 4.1 (§4.7): warranty (IW) claims for this repair.
+  warrantyClaims WarrantyClaim[]
 
   @@unique([companyId, jobNo])
   @@index([companyId, branchId, stateId])
@@ -1820,4 +1829,74 @@ model Payment {
   @@index([companyId, branchId, paidAt])
   @@index([companyId, method, paidAt])
   @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Warranty claims (Phase 4, §4.7 / E13) — the In-Warranty (IW) side: Samsung
+// reimburses labour + parts, valued in USD and tracked by a Samsung claim
+// number. A job resolves IW → one or more warranty_claims (USD); OW → invoices
+// (TZS). Money is BIGINT minor units (USD cents). Task 4.1 lands the schema +
+// core CRUD; the submit/reconcile lifecycle and AR–Samsung postings (§4.9:
+// Dr AR–Samsung / Cr Warranty Revenue on approval; Dr Bank / Cr AR–Samsung on
+// reimbursement) switch on in Task 4.2.
+// ---------------------------------------------------------------------------
+
+/// Samsung warranty labour-rate codes seen in the sales reports (§4.5 note):
+/// First/Later/Subsequent Electronic-repair Module — drive the IW labour rate.
+enum LabourCode {
+  FEM
+  LEM
+  SEM
+}
+
+/// Lifecycle of a warranty claim (§4.7). CANCELLED is an approval-gated
+/// withdrawal (permission `warranty.claim.cancel`), distinct from Samsung's
+/// REJECTED.
+enum WarrantyClaimStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+}
+
+model WarrantyClaim {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+
+  /// Samsung claim number (e.g. `691010338615`) — unknown until submitted, so
+  /// nullable; unique per company once set (MySQL allows multiple NULLs).
+  claimNo    String?     @map("claim_no") @db.VarChar(100)
+  labourCode LabourCode? @map("labour_code")
+
+  /// BIGINT USD minor units (cents). `reimbursedAmountUsd` is the reconciled
+  /// value Samsung actually paid (may differ from the claim), set on PAID.
+  claimAmountUsd      BigInt  @map("claim_amount_usd") @db.BigInt
+  reimbursedAmountUsd BigInt? @map("reimbursed_amount_usd") @db.BigInt
+
+  status      WarrantyClaimStatus @default(DRAFT)
+  submittedAt DateTime?           @map("submitted_at") @db.DateTime(3)
+  paidAt      DateTime?           @map("paid_at") @db.DateTime(3)
+  notes       String?             @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company @relation(fields: [companyId], references: [id])
+  branch    Branch  @relation(fields: [branchId], references: [id])
+  job       Job     @relation(fields: [jobId], references: [id])
+  createdBy User?   @relation("WarrantyClaimCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?   @relation("WarrantyClaimUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, claimNo])
+  @@index([companyId, status])
+  @@index([companyId, branchId, status])
+  @@index([jobId])
+  @@map("warranty_claims")
 }

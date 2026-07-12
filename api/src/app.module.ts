@@ -20,6 +20,7 @@ import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { ModelsModule } from './modules/models/models.module';
 import { UsersModule } from './modules/users/users.module';
+import { WarrantyModule } from './modules/warranty/warranty.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
 import { PrismaModule } from './prisma/prisma.module';
 
@@ -50,6 +51,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SuppliersModule,
     ProcurementModule,
     PosModule,
+    WarrantyModule,
     DashboardModule,
   ],
 })

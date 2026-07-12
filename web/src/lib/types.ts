@@ -674,6 +674,36 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Warranty claims (Phase 4, §4.7) -----------------------------------------
+
+export type LabourCode = 'FEM' | 'LEM' | 'SEM'
+export type WarrantyClaimStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'PAID'
+  | 'CANCELLED'
+
+export interface WarrantyClaimWire {
+  id: string
+  branch_id: string
+  branch_code: string
+  job_id: string
+  job_no: string
+  claim_no: string | null
+  labour_code: LabourCode | null
+  currency: 'USD'
+  claim_amount_usd: string
+  reimbursed_amount_usd: string | null
+  status: WarrantyClaimStatus
+  submitted_at: string | null
+  paid_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
 // --- Dashboard summary (§8) — server-side analytics roll-up ------------------
 
 export interface MoneyByCurrency {

@@ -107,6 +107,9 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.InvoiceCounter,
   // Task 3.2 (§4.6): payments are company- AND branch-scoped (branch = invoice).
   Prisma.ModelName.Payment,
+  // Task 4.1 (§4.7): warranty claims are company- AND branch-scoped (branch_id
+  // = the filing branch, like jobs/invoices).
+  Prisma.ModelName.WarrantyClaim,
 ]);
 
 /**
@@ -156,6 +159,8 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Invoice,
   // Task 3.2 (§4.6): a payment belongs to its invoice's branch.
   Prisma.ModelName.Payment,
+  // Task 4.1 (§4.7): a warranty claim belongs to the branch that filed it.
+  Prisma.ModelName.WarrantyClaim,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for
