@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod'
+import { BarChart3, ShieldCheck, Wrench } from 'lucide-react'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
@@ -6,13 +7,6 @@ import { toast } from 'sonner'
 import { z } from 'zod'
 import { FormField } from '@/components/shared/form-field'
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -83,17 +77,69 @@ export function LoginPage() {
   })
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-lg">TriServe</CardTitle>
-          <CardDescription>
+    <div className="flex min-h-screen bg-background">
+      {/* Brand showcase panel */}
+      <div className="relative hidden w-1/2 flex-col justify-between overflow-hidden bg-gradient-to-br from-[#182a9c] via-[#101d78] to-[#0a1250] p-12 text-white lg:flex">
+        <div className="pointer-events-none absolute -right-16 -top-16 size-72 rounded-full bg-sky-400/20 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-20 -left-10 size-72 rounded-full bg-blue-500/20 blur-3xl" />
+        <div className="relative flex items-center gap-3">
+          <span className="flex size-11 items-center justify-center rounded-xl bg-white text-[#101d78] shadow-lg ring-1 ring-white/40">
+            <Wrench className="size-6" />
+          </span>
+          <div className="flex flex-col leading-none">
+            <span className="text-2xl font-bold tracking-tight">TriServe</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-200/80">
+              Service Centre
+            </span>
+          </div>
+        </div>
+        <div className="relative flex flex-col gap-6">
+          <h2 className="max-w-md text-3xl font-bold leading-tight">
+            Run your whole repair operation from one place.
+          </h2>
+          <ul className="flex flex-col gap-4 text-sm text-sky-100/90">
+            <li className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
+                <Wrench className="size-4 text-sky-300" />
+              </span>
+              Jobs, POS &amp; inventory across every branch
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
+                <BarChart3 className="size-4 text-sky-300" />
+              </span>
+              Live dashboards, warranty claims &amp; a real ledger
+            </li>
+            <li className="flex items-center gap-3">
+              <span className="flex size-9 items-center justify-center rounded-lg bg-white/10 ring-1 ring-white/15">
+                <ShieldCheck className="size-4 text-sky-300" />
+              </span>
+              Role-based access with full audit trail
+            </li>
+          </ul>
+        </div>
+        <p className="relative text-xs text-sky-200/60">
+          Samsung Authorized Service Centre
+        </p>
+      </div>
+
+      {/* Form panel */}
+      <div className="flex w-full flex-col items-center justify-center p-6 lg:w-1/2">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center gap-3 lg:hidden">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-md">
+              <Wrench className="size-5" />
+            </span>
+            <span className="text-xl font-bold tracking-tight">TriServe</span>
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight">
+            {mfaToken ? 'Two-factor verification' : 'Welcome back'}
+          </h1>
+          <p className="mb-6 mt-1 text-sm text-muted-foreground">
             {mfaToken
               ? 'Enter the 6-digit code from your authenticator app'
               : 'Sign in to your service centre'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+          </p>
           {mfaToken === null ? (
             <form onSubmit={(e) => void submitCredentials(e)} className="flex flex-col gap-4">
               <FormField
@@ -157,8 +203,8 @@ export function LoginPage() {
               </Button>
             </form>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }

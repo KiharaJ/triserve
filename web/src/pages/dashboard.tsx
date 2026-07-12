@@ -58,18 +58,20 @@ function StatCard({
   to?: string
   tone?: 'default' | 'positive' | 'warning'
 }) {
-  const toneCls =
+  const chipCls =
     tone === 'positive'
-      ? 'text-emerald-600 dark:text-emerald-400'
+      ? 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400'
       : tone === 'warning'
-        ? 'text-amber-600 dark:text-amber-400'
-        : 'text-muted-foreground'
+        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+        : 'bg-primary/10 text-primary'
   const body = (
-    <Card className="h-full gap-2 transition-colors hover:border-ring/60">
-      <CardContent className="flex flex-col gap-1.5">
+    <Card className="h-full gap-2 transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md">
+      <CardContent className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">{label}</span>
-          <span className={toneCls}>{icon}</span>
+          <span className={`flex size-8 items-center justify-center rounded-lg ${chipCls}`}>
+            {icon}
+          </span>
         </div>
         <div className="text-2xl font-semibold tabular-nums">{value}</div>
         {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
@@ -205,8 +207,9 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold">Welcome back, {firstName}</h1>
+      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-primary/5 to-transparent p-5">
+        <div className="pointer-events-none absolute -right-8 -top-10 size-40 rounded-full bg-primary/10 blur-2xl" />
+        <h1 className="text-xl font-semibold">Welcome back, {firstName}</h1>
         <p className="text-sm text-muted-foreground">
           Operations across all branches, updated live.
         </p>
