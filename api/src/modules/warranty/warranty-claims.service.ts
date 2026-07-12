@@ -12,10 +12,13 @@ import {
 import type { PaginatedResponse } from '@triserve/shared';
 import { assertBranchAccess } from '../../common/authz/branch-access';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PostingService } from '../accounting/posting.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import type {
   CreateWarrantyClaimDto,
+  ReconcileWarrantyClaimDto,
+  SubmitWarrantyClaimDto,
   UpdateWarrantyClaimDto,
   WarrantyClaimListQueryDto,
 } from './dto/warranty-claim.dto';
@@ -63,6 +66,7 @@ export class WarrantyClaimsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly posting: PostingService,
   ) {}
 
   // ------------------------------------------------------------------ queries
@@ -186,6 +190,124 @@ export class WarrantyClaimsService {
       claim_amount_usd: updated.claimAmountUsd.toString(),
     });
     return toWire(updated);
+  }
+
+  /** POST /warranty-claims/{id}/submit — DRAFT → SUBMITTED (needs claim_no). */
+  async submit(
+    id: string,
+    dto: SubmitWarrantyClaimDto,
+    user: AuthUser,
+  ): Promise<WarrantyClaimWire> {
+    const claim = await this.load(id);
+    if (claim.status !== 'DRAFT') {
+      throw new ConflictException('Only a DRAFT claim can be submitted');
+    }
+    const claimNo = dto.claim_no ?? claim.claimNo;
+    if (!claimNo) {
+      throw new BadRequestException(
+        'A Samsung claim number is required to submit',
+      );
+    }
+    if (dto.claim_no && dto.claim_no !== claim.claimNo) {
+      await this.assertClaimNoFree(claim.companyId, dto.claim_no, claim.id);
+    }
+
+    const updated = await this.prisma.warrantyClaim.update({
+      where: { id: claim.id },
+      data: {
+        status: 'SUBMITTED',
+        claimNo,
+        ...(dto.labour_code !== undefined ? { labourCode: dto.labour_code } : {}),
+        submittedAt: new Date(),
+        updatedById: user.userId,
+      },
+      include: FULL_INCLUDE,
+    });
+
+    await this.recordAudit(updated, 'UPDATE', user, {
+      status: 'SUBMITTED',
+      claim_no: claimNo,
+    });
+    return toWire(updated);
+  }
+
+  /**
+   * POST /warranty-claims/{id}/reconcile — record Samsung's decision and post
+   * the ledger side-effect in the SAME transaction:
+   *   - APPROVED (from SUBMITTED): Dr AR–Samsung / Cr Warranty Revenue;
+   *   - REJECTED (from SUBMITTED): no posting;
+   *   - PAID (from APPROVED): Dr Bank / Cr AR–Samsung for the reimbursed amount.
+   */
+  async reconcile(
+    id: string,
+    dto: ReconcileWarrantyClaimDto,
+    user: AuthUser,
+  ): Promise<WarrantyClaimWire> {
+    const claim = await this.load(id);
+    const { outcome } = dto;
+
+    const legal =
+      ((outcome === 'APPROVED' || outcome === 'REJECTED') &&
+        claim.status === 'SUBMITTED') ||
+      (outcome === 'PAID' && claim.status === 'APPROVED');
+    if (!legal) {
+      throw new ConflictException(
+        `Cannot reconcile a ${claim.status} claim to ${outcome}`,
+      );
+    }
+
+    const reimbursed =
+      outcome === 'PAID'
+        ? dto.reimbursed_amount_usd
+          ? BigInt(dto.reimbursed_amount_usd)
+          : claim.claimAmountUsd
+        : null;
+    if (reimbursed !== null && reimbursed <= 0n) {
+      throw new BadRequestException(
+        'reimbursed_amount_usd must be greater than zero',
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.warrantyClaim.update({
+        where: { id: claim.id },
+        data: {
+          status: outcome,
+          ...(outcome === 'PAID'
+            ? { reimbursedAmountUsd: reimbursed, paidAt: new Date() }
+            : {}),
+          ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
+          updatedById: user.userId,
+        },
+      });
+
+      const base = {
+        companyId: claim.companyId,
+        branchId: claim.branchId,
+        postedById: user.userId,
+        claimNo: claim.claimNo ?? claim.id,
+        claimId: claim.id,
+      };
+      if (outcome === 'APPROVED') {
+        await this.posting.postWarrantyApproval(
+          { ...base, amountUsd: claim.claimAmountUsd },
+          tx,
+        );
+      } else if (outcome === 'PAID' && reimbursed !== null) {
+        await this.posting.postWarrantyReimbursement(
+          { ...base, amountUsd: reimbursed },
+          tx,
+        );
+      }
+    });
+
+    await this.recordAudit(claim, 'UPDATE', user, {
+      status: outcome,
+      ...(reimbursed !== null
+        ? { reimbursed_amount_usd: reimbursed.toString() }
+        : {}),
+    });
+    return this.get(id, user);
   }
 
   // ------------------------------------------------------------------ helpers

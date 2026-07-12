@@ -17,6 +17,8 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import {
   CreateWarrantyClaimDto,
+  ReconcileWarrantyClaimDto,
+  SubmitWarrantyClaimDto,
   UpdateWarrantyClaimDto,
   WarrantyClaimListQueryDto,
 } from './dto/warranty-claim.dto';
@@ -76,5 +78,25 @@ export class WarrantyClaimsController {
     @CurrentUser() user: AuthUser,
   ): Promise<WarrantyClaimWire> {
     return this.claims.update(id, dto, user);
+  }
+
+  @Post(':id/submit')
+  @RequirePermissions('warranty.claim.submit')
+  submit(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: SubmitWarrantyClaimDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<WarrantyClaimWire> {
+    return this.claims.submit(id, dto, user);
+  }
+
+  @Post(':id/reconcile')
+  @RequirePermissions('warranty.claim.reconcile')
+  reconcile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReconcileWarrantyClaimDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<WarrantyClaimWire> {
+    return this.claims.reconcile(id, dto, user);
   }
 }

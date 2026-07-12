@@ -23,6 +23,18 @@ const CASH_CODE = '1000';
 const BANK_CODE = '1010';
 const REVENUE_CODE = '4000'; // Repair/sales revenue (default; per-type later)
 const VAT_CODE = '2100';
+const AR_SAMSUNG_CODE = '1200'; // receivable from Samsung for approved IW claims
+const WARRANTY_REVENUE_CODE = '4010';
+
+/** What a warranty claim needs to post its AR–Samsung entries (USD). */
+export interface PostWarrantyInput {
+  companyId: string;
+  branchId: string;
+  postedById: string;
+  claimNo: string;
+  amountUsd: bigint;
+  claimId: string;
+}
 
 /**
  * Automatic accounting posting (Task 3.3, DESIGN.md §4.9 / E1). Switches on the
@@ -96,6 +108,76 @@ export class PostingService {
         sourceId: input.paymentId,
         memo: `Payment for ${input.invoiceNo} (${input.method})`,
         lines,
+      },
+      tx,
+    );
+  }
+
+  /**
+   * Post an APPROVED warranty claim: Dr AR–Samsung (1200) / Cr Warranty Revenue
+   * (4010) for the claim value (USD). Recognises the receivable + revenue the
+   * moment Samsung approves. Single-currency (USD), balances without fx.
+   */
+  async postWarrantyApproval(
+    input: PostWarrantyInput,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const accounts = await this.resolveAccounts(input.companyId, [
+      AR_SAMSUNG_CODE,
+      WARRANTY_REVENUE_CODE,
+    ]);
+    const arId = accounts.get(AR_SAMSUNG_CODE);
+    const revenueId = accounts.get(WARRANTY_REVENUE_CODE);
+    if (!arId || !revenueId) return; // books not set up — skip, don't fail
+
+    await this.journal.post(
+      {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        postedById: input.postedById,
+        entryDate: today(),
+        sourceType: 'WARRANTY',
+        sourceId: input.claimId,
+        memo: `Warranty claim ${input.claimNo} approved`,
+        lines: [
+          { accountId: arId, debit: input.amountUsd, currency: 'USD' },
+          { accountId: revenueId, credit: input.amountUsd, currency: 'USD' },
+        ],
+      },
+      tx,
+    );
+  }
+
+  /**
+   * Post a warranty REIMBURSEMENT: Dr Bank (1010) / Cr AR–Samsung (1200) for the
+   * amount Samsung actually paid (USD) — clears (part of) the receivable. Any
+   * short-pay remains in AR–Samsung for later write-off.
+   */
+  async postWarrantyReimbursement(
+    input: PostWarrantyInput,
+    tx: Prisma.TransactionClient,
+  ): Promise<void> {
+    const accounts = await this.resolveAccounts(input.companyId, [
+      BANK_CODE,
+      AR_SAMSUNG_CODE,
+    ]);
+    const bankId = accounts.get(BANK_CODE);
+    const arId = accounts.get(AR_SAMSUNG_CODE);
+    if (!bankId || !arId) return; // books not set up — skip, don't fail
+
+    await this.journal.post(
+      {
+        companyId: input.companyId,
+        branchId: input.branchId,
+        postedById: input.postedById,
+        entryDate: today(),
+        sourceType: 'WARRANTY',
+        sourceId: input.claimId,
+        memo: `Warranty claim ${input.claimNo} reimbursed`,
+        lines: [
+          { accountId: bankId, debit: input.amountUsd, currency: 'USD' },
+          { accountId: arId, credit: input.amountUsd, currency: 'USD' },
+        ],
       },
       tx,
     );

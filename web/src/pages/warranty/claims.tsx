@@ -79,6 +79,8 @@ export function WarrantyClaimsPage() {
   const [notes, setNotes] = useState('')
 
   const canCreate = can('warranty.claim.create')
+  const canSubmit = can('warranty.claim.submit')
+  const canReconcile = can('warranty.claim.reconcile')
 
   // Recent jobs to attach a claim to. Not filtered to IW: a job's warranty
   // status can be corrected here, and legacy/imported jobs are UNKNOWN.
@@ -162,6 +164,64 @@ export function WarrantyClaimsPage() {
       toast.error(e instanceof Error ? e.message : apiErrorMessage(e)),
   })
 
+  const submitClaim = useMutation({
+    mutationFn: async (c: WarrantyClaimWire) => {
+      const claimNo =
+        c.claim_no ??
+        window.prompt('Enter the Samsung claim number to submit')?.trim()
+      if (!claimNo) throw new Error('cancelled')
+      return (
+        await api.post<WarrantyClaimWire>(`/warranty-claims/${c.id}/submit`, {
+          claim_no: claimNo,
+        })
+      ).data
+    },
+    onSuccess: async () => {
+      toast.success('Claim submitted to Samsung')
+      await invalidate()
+    },
+    onError: (e) => {
+      if (e instanceof Error && e.message === 'cancelled') return
+      toast.error(apiErrorMessage(e))
+    },
+  })
+
+  const reconcileClaim = useMutation({
+    mutationFn: async (args: {
+      c: WarrantyClaimWire
+      outcome: 'APPROVED' | 'REJECTED' | 'PAID'
+    }) => {
+      const body: Record<string, unknown> = { outcome: args.outcome }
+      if (args.outcome === 'PAID') {
+        const input = window.prompt(
+          'Amount Samsung reimbursed (USD)',
+          minorToDecimal(args.c.claim_amount_usd),
+        )
+        if (input === null) throw new Error('cancelled')
+        const minor = decimalToMinor(input)
+        if (minor) body.reimbursed_amount_usd = minor
+      }
+      return (
+        await api.post<WarrantyClaimWire>(
+          `/warranty-claims/${args.c.id}/reconcile`,
+          body,
+        )
+      ).data
+    },
+    onSuccess: async (_d, args) => {
+      toast.success(
+        args.outcome === 'PAID'
+          ? 'Reimbursement recorded'
+          : `Claim ${args.outcome.toLowerCase()}`,
+      )
+      await invalidate()
+    },
+    onError: (e) => {
+      if (e instanceof Error && e.message === 'cancelled') return
+      toast.error(apiErrorMessage(e))
+    },
+  })
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -228,11 +288,54 @@ export function WarrantyClaimsPage() {
                     {formatDate(c.created_at)}
                   </TableCell>
                   <TableCell className="text-right">
-                    {canCreate && c.status === 'DRAFT' && (
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
-                        Edit
-                      </Button>
-                    )}
+                    <div className="flex justify-end gap-1">
+                      {canCreate && c.status === 'DRAFT' && (
+                        <Button variant="ghost" size="sm" onClick={() => openEdit(c)}>
+                          Edit
+                        </Button>
+                      )}
+                      {canSubmit && c.status === 'DRAFT' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => submitClaim.mutate(c)}
+                        >
+                          Submit
+                        </Button>
+                      )}
+                      {canReconcile && c.status === 'SUBMITTED' && (
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              reconcileClaim.mutate({ c, outcome: 'APPROVED' })
+                            }
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() =>
+                              reconcileClaim.mutate({ c, outcome: 'REJECTED' })
+                            }
+                          >
+                            Reject
+                          </Button>
+                        </>
+                      )}
+                      {canReconcile && c.status === 'APPROVED' && (
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            reconcileClaim.mutate({ c, outcome: 'PAID' })
+                          }
+                        >
+                          Mark paid
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

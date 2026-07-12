@@ -47,6 +47,7 @@ let deviceId: string;
 
 const ids: Record<string, string> = {};
 const tokens: Record<string, string> = {};
+const acct: Record<string, string> = {}; // chart code → account id
 const createdClaimIds: string[] = [];
 
 async function login(email: string): Promise<string> {
@@ -64,7 +65,10 @@ interface ClaimBody {
   claim_no: string | null;
   currency: string;
   claim_amount_usd: string;
+  reimbursed_amount_usd: string | null;
   status: string;
+  submitted_at: string | null;
+  paid_at: string | null;
   labour_code: string | null;
 }
 
@@ -83,6 +87,53 @@ async function createClaim(
   return claim;
 }
 
+async function submit(
+  token: string,
+  id: string,
+  body: Record<string, unknown>,
+  expectStatus = 201,
+): Promise<ClaimBody> {
+  const res = await request(app.getHttpServer())
+    .post(`/api/v1/warranty-claims/${id}/submit`)
+    .set('Authorization', `Bearer ${token}`)
+    .send(body)
+    .expect(expectStatus);
+  return res.body as ClaimBody;
+}
+
+async function reconcile(
+  token: string,
+  id: string,
+  body: Record<string, unknown>,
+  expectStatus = 201,
+): Promise<ClaimBody> {
+  const res = await request(app.getHttpServer())
+    .post(`/api/v1/warranty-claims/${id}/reconcile`)
+    .set('Authorization', `Bearer ${token}`)
+    .send(body)
+    .expect(expectStatus);
+  return res.body as ClaimBody;
+}
+
+/** The posted WARRANTY journal entries (with lines) for a claim. */
+function entriesFor(claimId: string) {
+  return raw.journalEntry.findMany({
+    where: { sourceType: 'WARRANTY', sourceId: claimId },
+    include: { lines: true },
+  });
+}
+
+/** Create a claim and drive it to SUBMITTED. */
+async function submittedClaim(amountUsd: string): Promise<string> {
+  const claim = await createClaim(tokens.clerkDar, {
+    job_id: jobDar,
+    claim_amount_usd: amountUsd,
+    labour_code: 'LEM',
+  });
+  await submit(tokens.clerkDar, claim.id, { claim_no: `SN-${claim.id.slice(0, 8)}` });
+  return claim.id;
+}
+
 beforeAll(async () => {
   const seeded = await raw.company.findFirstOrThrow({
     where: { name: 'Samsung ASC Group' },
@@ -94,6 +145,12 @@ beforeAll(async () => {
   branchKrk = (
     await raw.branch.findFirstOrThrow({ where: { companyId, code: 'KRK' } })
   ).id;
+
+  for (const a of await raw.chartOfAccount.findMany({
+    where: { companyId, code: { in: ['1010', '1200', '4010'] } },
+  })) {
+    acct[a.code] = a.id;
+  }
 
   const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
   const mk = (
@@ -172,6 +229,15 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const testUserIds = Object.values(ids);
+  // Reconcile (Task 4.2) posts journal entries (posted_by = a test clerk) —
+  // remove them before the users they reference.
+  const entries = await raw.journalEntry.findMany({
+    where: { sourceType: 'WARRANTY', sourceId: { in: createdClaimIds } },
+    select: { id: true },
+  });
+  const entryIds = entries.map((e) => e.id);
+  await raw.journalLine.deleteMany({ where: { entryId: { in: entryIds } } });
+  await raw.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
   await raw.warrantyClaim.deleteMany({ where: { id: { in: createdClaimIds } } });
   await raw.auditLog.deleteMany({
     where: { entityType: 'WarrantyClaim', entityId: { in: createdClaimIds } },
@@ -286,5 +352,94 @@ describe('Authorization + scoping', () => {
     });
     expect(audit).not.toBeNull();
     expect(audit!.actorUserId).toBe(ids.clerkDar);
+  });
+});
+
+describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
+  it('submits a DRAFT with a claim number → SUBMITTED', async () => {
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '8607',
+      labour_code: 'FEM',
+    });
+    const submitted = await submit(tokens.clerkDar, claim.id, {
+      claim_no: '691010338615-A',
+    });
+    expect(submitted.status).toBe('SUBMITTED');
+    expect(submitted.claim_no).toBe('691010338615-A');
+    expect(submitted.submitted_at).not.toBeNull();
+  });
+
+  it('refuses to submit a DRAFT with no claim number (400)', async () => {
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '1000',
+    });
+    await submit(tokens.clerkDar, claim.id, {}, 400);
+  });
+
+  it('APPROVED posts Dr AR–Samsung / Cr Warranty Revenue (USD, balanced)', async () => {
+    const id = await submittedClaim('10000'); // $100.00
+    const approved = await reconcile(tokens.clerkDar, id, { outcome: 'APPROVED' });
+    expect(approved.status).toBe('APPROVED');
+
+    const entries = await entriesFor(id);
+    expect(entries).toHaveLength(1);
+    const lines = entries[0].lines;
+    expect(lines).toHaveLength(2);
+    const byAccount = new Map(lines.map((l) => [l.accountId, l]));
+    expect(byAccount.get(acct['1200'])!.debit).toBe(10_000n); // Dr AR–Samsung
+    expect(byAccount.get(acct['4010'])!.credit).toBe(10_000n); // Cr Warranty Rev
+    const debit = lines.reduce((s, l) => s + l.debit, 0n);
+    const credit = lines.reduce((s, l) => s + l.credit, 0n);
+    expect(debit).toBe(credit);
+  });
+
+  it('PAID posts Dr Bank / Cr AR–Samsung and records the reimbursement', async () => {
+    const id = await submittedClaim('10000');
+    await reconcile(tokens.clerkDar, id, { outcome: 'APPROVED' });
+    const paid = await reconcile(tokens.clerkDar, id, {
+      outcome: 'PAID',
+      reimbursed_amount_usd: '9500', // Samsung short-pays $95
+    });
+    expect(paid.status).toBe('PAID');
+    expect(paid.reimbursed_amount_usd).toBe('9500');
+    expect(paid.paid_at).not.toBeNull();
+
+    const entries = await entriesFor(id);
+    expect(entries).toHaveLength(2); // approval + reimbursement
+    const reimb = entries.find((e) => /reimbursed/i.test(e.memo ?? ''));
+    const byAccount = new Map(reimb!.lines.map((l) => [l.accountId, l]));
+    expect(byAccount.get(acct['1010'])!.debit).toBe(9_500n); // Dr Bank
+    expect(byAccount.get(acct['1200'])!.credit).toBe(9_500n); // Cr AR–Samsung
+  });
+
+  it('REJECTED posts nothing', async () => {
+    const id = await submittedClaim('5000');
+    const rejected = await reconcile(tokens.clerkDar, id, { outcome: 'REJECTED' });
+    expect(rejected.status).toBe('REJECTED');
+    expect(await entriesFor(id)).toHaveLength(0);
+  });
+
+  it('rejects illegal transitions (409)', async () => {
+    // PAID straight from SUBMITTED (must be APPROVED first).
+    const id = await submittedClaim('5000');
+    await reconcile(tokens.clerkDar, id, { outcome: 'PAID' }, 409);
+    // reconcile a DRAFT.
+    const draft = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '5000',
+    });
+    await reconcile(tokens.clerkDar, draft.id, { outcome: 'APPROVED' }, 409);
+  });
+
+  it('submit/reconcile need their permissions — a SERVICE_ADVISOR is 403', async () => {
+    const id = await submittedClaim('5000');
+    await reconcile(tokens.advisorDar, id, { outcome: 'APPROVED' }, 403);
+    const draft = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '5000',
+    });
+    await submit(tokens.advisorDar, draft.id, { claim_no: 'X-1' }, 403);
   });
 });

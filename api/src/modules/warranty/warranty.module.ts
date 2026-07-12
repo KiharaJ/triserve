@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccountingModule } from '../accounting/accounting.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { WarrantyClaimsController } from './warranty-claims.controller';
@@ -7,11 +8,11 @@ import { WarrantyClaimsService } from './warranty-claims.service';
 /**
  * WarrantyModule (Phase 4, §4.7 / E13) — the In-Warranty claim side. Task 4.1
  * lands claims CRUD; Task 4.2 adds the submit/reconcile lifecycle + AR–Samsung
- * postings (will import AccountingModule then). Depends on AuditModule for the
- * semantic lifecycle rows.
+ * postings (via AccountingModule's PostingService). Depends on AuditModule for
+ * the semantic lifecycle rows.
  */
 @Module({
-  imports: [AuthModule, AuditModule],
+  imports: [AuthModule, AuditModule, AccountingModule],
   controllers: [WarrantyClaimsController],
   providers: [WarrantyClaimsService],
   exports: [WarrantyClaimsService],

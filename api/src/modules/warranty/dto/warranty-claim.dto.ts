@@ -1,6 +1,7 @@
 import { LabourCode } from '@prisma/client';
 import {
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   IsUUID,
@@ -67,6 +68,45 @@ export class UpdateWarrantyClaimDto {
   @IsString()
   @MaxLength(2000)
   notes?: string | null;
+}
+
+/**
+ * POST /warranty-claims/{id}/submit — DRAFT → SUBMITTED. A Samsung claim number
+ * is required to submit (provided here if not already set); labour_code may be
+ * finalised at the same time.
+ */
+export class SubmitWarrantyClaimDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  claim_no?: string;
+
+  @IsOptional()
+  @IsEnum(LabourCode)
+  labour_code?: LabourCode;
+}
+
+/**
+ * POST /warranty-claims/{id}/reconcile — record Samsung's decision:
+ *   - APPROVED (from SUBMITTED) → posts Dr AR–Samsung / Cr Warranty Revenue;
+ *   - REJECTED (from SUBMITTED);
+ *   - PAID (from APPROVED) → sets reimbursed_amount_usd (defaults to the claim)
+ *     and posts Dr Bank / Cr AR–Samsung.
+ */
+export class ReconcileWarrantyClaimDto {
+  @IsIn(['APPROVED', 'REJECTED', 'PAID'])
+  outcome!: 'APPROVED' | 'REJECTED' | 'PAID';
+
+  @IsOptional()
+  @Matches(MINOR_UNITS, {
+    message: 'reimbursed_amount_usd must be minor units (cents, digits only)',
+  })
+  reimbursed_amount_usd?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }
 
 /** GET /warranty-claims?status=&labour_code=&branch_id=&job_id=&q=&page= */
