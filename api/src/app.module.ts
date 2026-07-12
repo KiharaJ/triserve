@@ -11,6 +11,7 @@ import { BranchesModule } from './modules/branches/branches.module';
 import { CompaniesModule } from './modules/companies/companies.module';
 import { ConfigTablesModule } from './modules/config-tables/config-tables.module';
 import { CustomersModule } from './modules/customers/customers.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { JobsModule } from './modules/jobs/jobs.module';
@@ -49,6 +50,7 @@ import { PrismaModule } from './prisma/prisma.module';
     SuppliersModule,
     ProcurementModule,
     PosModule,
+    DashboardModule,
   ],
 })
 export class AppModule implements NestModule {

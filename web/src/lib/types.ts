@@ -673,3 +673,49 @@ export interface JobPartWire {
   reserved_at: string
   consumed_at: string | null
 }
+
+// --- Dashboard summary (§8) — server-side analytics roll-up ------------------
+
+export interface MoneyByCurrency {
+  currency: string
+  amount: string // minor units
+  count: number
+}
+export interface MonthlyPoint {
+  month: string // 'YYYY-MM'
+  currency: string
+  amount: string
+}
+export interface NamedTotal {
+  key: string
+  label: string
+  currency: string
+  amount: string
+  count: number
+}
+export interface DashboardStageCount {
+  code: string
+  label: string
+  count: number
+  is_terminal: boolean
+}
+export interface DashboardSummaryWire {
+  generated_at: string
+  scope: { branch_id: string | null }
+  revenue_all_time: MoneyByCurrency[]
+  revenue_this_month: MoneyByCurrency[]
+  monthly: MonthlyPoint[]
+  by_method: NamedTotal[]
+  by_branch: NamedTotal[]
+  jobs_by_state: DashboardStageCount[]
+  jobs_active: number
+  jobs_total: number
+  counts: {
+    customers: number
+    devices: number
+    parts: number
+    stock_on_hand: number
+    low_stock: number
+    open_invoices: number
+  }
+}
