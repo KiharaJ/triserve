@@ -1,4 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  ClipboardCheck,
+  Plus,
+  Search,
+  Settings2,
+  SlidersHorizontal,
+} from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import type { PaginatedResponse } from '@triserve/shared'
@@ -201,15 +208,18 @@ export function StockPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Input
-          placeholder="Search part number or description…"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value)
-            setPage(1)
-          }}
-          className="max-w-xs"
-        />
+        <div className="relative max-w-xs flex-1">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search part number or description…"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value)
+              setPage(1)
+            }}
+            className="pl-8"
+          />
+        </div>
         <Select
           value={branchFilter}
           onChange={(e) => {
@@ -232,12 +242,17 @@ export function StockPage() {
             setLowOnly((v) => !v)
             setPage(1)
           }}
+          className={
+            lowOnly ? '' : 'border-amber-300 text-amber-700 hover:bg-amber-50 dark:border-amber-500/40 dark:text-amber-400 dark:hover:bg-amber-500/10'
+          }
         >
           Low stock only
         </Button>
         <div className="flex-1" />
         {canAdjust && (
-          <Button onClick={() => openDialog('add', null)}>Add stock</Button>
+          <Button onClick={() => openDialog('add', null)} className="gap-1.5">
+            <Plus className="size-4" /> Add stock
+          </Button>
         )}
       </div>
 
@@ -250,7 +265,7 @@ export function StockPage() {
         </p>
       )}
       {stock.data && (
-        <div className="rounded-xl border">
+        <div className="overflow-hidden rounded-xl border bg-card shadow-sm">
           <Table>
             <TableHeader>
               <TableRow>
@@ -261,7 +276,7 @@ export function StockPage() {
                 <TableHead className="text-right">Damaged</TableHead>
                 <TableHead className="text-right">Available</TableHead>
                 <TableHead className="text-right">Reorder</TableHead>
-                {(canAdjust || canCount) && <TableHead className="w-52" />}
+                {(canAdjust || canCount) && <TableHead className="w-40 text-right pr-4">Actions</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -269,81 +284,137 @@ export function StockPage() {
                 <TableRow>
                   <TableCell
                     colSpan={8}
-                    className="text-center text-muted-foreground"
+                    className="py-10 text-center text-muted-foreground"
                   >
                     No stock rows
                   </TableCell>
                 </TableRow>
               )}
-              {stock.data.data.map((i) => (
-                <TableRow key={i.id}>
-                  <TableCell>
-                    <div className="flex flex-col">
-                      <span className="font-mono text-sm">
-                        {i.part.part_number}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {i.part.description}
-                      </span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-sm">
-                    {i.bin_location ?? '—'}
-                  </TableCell>
-                  <TableCell className="text-right">{i.qty_on_hand}</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {i.qty_reserved}
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {i.qty_damaged}
-                  </TableCell>
-                  <TableCell className="text-right font-semibold">
-                    <span className="inline-flex items-center gap-2">
-                      {i.qty_available}
-                      {i.low_stock && <Badge variant="warning">Low</Badge>}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {i.reorder_level}
-                  </TableCell>
-                  {(canAdjust || canCount) && (
+              {stock.data.data.map((i) => {
+                const out = i.qty_available <= 0
+                return (
+                  <TableRow key={i.id}>
                     <TableCell>
-                      <div className="flex gap-1">
-                        {canAdjust && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openDialog('adjust', i)}
-                          >
-                            Adjust
-                          </Button>
-                        )}
-                        {canCount && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openDialog('count', i)}
-                          >
-                            Count
-                          </Button>
-                        )}
-                        {canAdjust && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openDialog('settings', i)}
-                          >
-                            Settings
-                          </Button>
-                        )}
+                      <div className="flex items-center gap-3">
+                        <span
+                          className={
+                            'flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold ' +
+                            (out
+                              ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                              : i.low_stock
+                                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                                : 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400')
+                          }
+                        >
+                          {i.part.part_number.slice(0, 2).toUpperCase()}
+                        </span>
+                        <div className="flex min-w-0 flex-col">
+                          <span className="font-mono text-sm font-medium">
+                            {i.part.part_number}
+                          </span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {i.part.description}
+                          </span>
+                        </div>
                       </div>
                     </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                    <TableCell>
+                      {i.bin_location ? (
+                        <Badge variant="outline" className="font-mono">
+                          {i.bin_location}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right font-medium tabular-nums">
+                      {i.qty_on_hand}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {i.qty_reserved || '—'}
+                    </TableCell>
+                    <TableCell
+                      className={
+                        'text-right tabular-nums ' +
+                        (i.qty_damaged > 0
+                          ? 'font-medium text-rose-600 dark:text-rose-400'
+                          : 'text-muted-foreground')
+                      }
+                    >
+                      {i.qty_damaged || '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <span className="inline-flex items-center justify-end gap-2">
+                        <span
+                          className={
+                            'tabular-nums font-semibold ' +
+                            (out
+                              ? 'text-rose-600 dark:text-rose-400'
+                              : i.low_stock
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : '')
+                          }
+                        >
+                          {i.qty_available}
+                        </span>
+                        {out ? (
+                          <Badge variant="destructive">Out</Badge>
+                        ) : i.low_stock ? (
+                          <Badge variant="warning">Low</Badge>
+                        ) : null}
+                      </span>
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                      {i.reorder_level}
+                    </TableCell>
+                    {(canAdjust || canCount) && (
+                      <TableCell className="pr-4">
+                        <div className="flex justify-end gap-1.5">
+                          {canAdjust && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              title="Adjust stock"
+                              aria-label="Adjust stock"
+                              className="size-8 border-blue-200 text-blue-600 hover:bg-blue-50 hover:text-blue-700 dark:border-blue-500/40 dark:text-blue-400 dark:hover:bg-blue-500/10"
+                              onClick={() => openDialog('adjust', i)}
+                            >
+                              <SlidersHorizontal className="size-4" />
+                            </Button>
+                          )}
+                          {canCount && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              title="Stock count"
+                              aria-label="Stock count"
+                              className="size-8 border-amber-200 text-amber-600 hover:bg-amber-50 hover:text-amber-700 dark:border-amber-500/40 dark:text-amber-400 dark:hover:bg-amber-500/10"
+                              onClick={() => openDialog('count', i)}
+                            >
+                              <ClipboardCheck className="size-4" />
+                            </Button>
+                          )}
+                          {canAdjust && (
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              title="Stock settings"
+                              aria-label="Stock settings"
+                              className="size-8 border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-700 dark:border-slate-500/40 dark:text-slate-300 dark:hover:bg-slate-500/10"
+                              onClick={() => openDialog('settings', i)}
+                            >
+                              <Settings2 className="size-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                )
+              })}
             </TableBody>
           </Table>
-          <div className="px-3 pb-3">
+          <div className="border-t px-4 py-3">
             <Pager
               page={stock.data.page}
               pageSize={stock.data.page_size}
