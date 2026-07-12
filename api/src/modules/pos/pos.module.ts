@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccountingModule } from '../accounting/accounting.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
@@ -13,7 +14,7 @@ import { PaymentsService } from './payments.service';
  * + payment rows). Accounting posting (Task 3.3) will build on these services.
  */
 @Module({
-  imports: [AuthModule, ApprovalsModule, AuditModule],
+  imports: [AuthModule, ApprovalsModule, AuditModule, AccountingModule],
   controllers: [InvoicesController, PaymentsController],
   providers: [InvoicesService, PaymentsService],
   exports: [InvoicesService, PaymentsService],

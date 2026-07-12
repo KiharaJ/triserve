@@ -234,7 +234,10 @@ export class JournalService {
    * bad lines, mixed currencies; (400) unknown/inactive accounts or foreign
    * branches. Nothing is written on rejection.
    */
-  async post(input: PostJournalEntryInput): Promise<JournalEntryWire> {
+  async post(
+    input: PostJournalEntryInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<JournalEntryWire> {
     const user = getCurrentUser();
     const companyId = user?.companyId ?? input.companyId;
     const postedById = input.postedById ?? user?.userId;
@@ -276,11 +279,45 @@ export class JournalService {
       }
     }
 
-    // ONE nested create = ONE transaction for entry + lines (+ audit row,
-    // via the audit extension which wraps this create).
+    const entryId = input.id ?? randomUUID();
+
+    // AUTOMATIC-POSTING PATH (Task 3.3): when a caller transaction is passed
+    // (payment/GRN/… posting inside its own txn), write entry + lines via raw
+    // SQL on that txn. This bypasses the audit Prisma extension — which would
+    // otherwise open its OWN nested transaction for the audited JournalEntry
+    // create and escape the caller's txn (a documented limitation). Auto-posted
+    // entries are immutable and source-linked (source_type/source_id), so the
+    // entry itself IS the record; no separate audit row is needed. Validation
+    // above (balance, accounts, branch) is identical to the manual path.
+    if (tx) {
+      await tx.$executeRaw`
+        INSERT INTO journal_entries
+          (id, company_id, branch_id, entry_date, source_type, source_id, memo,
+           posted_by, created_at, updated_at)
+        VALUES
+          (${entryId}, ${companyId}, ${input.branchId ?? null}, ${entryDate},
+           ${input.sourceType}, ${input.sourceId ?? null}, ${input.memo ?? null},
+           ${postedById}, NOW(3), NOW(3))`;
+      for (const l of lines) {
+        await tx.$executeRaw`
+          INSERT INTO journal_lines
+            (id, entry_id, account_id, debit, credit, currency, created_at, updated_at)
+          VALUES
+            (${randomUUID()}, ${entryId}, ${l.accountId}, ${l.debit}, ${l.credit},
+             ${l.currency}, NOW(3), NOW(3))`;
+      }
+      const posted = await tx.journalEntry.findUniqueOrThrow({
+        where: { id: entryId },
+        include: { lines: true },
+      });
+      return toWire(posted);
+    }
+
+    // MANUAL PATH: ONE nested create = ONE transaction for entry + lines (+
+    // audit row, via the audit extension which wraps this create).
     const entry = await this.prisma.journalEntry.create({
       data: {
-        id: input.id ?? randomUUID(),
+        id: entryId,
         companyId,
         branchId: input.branchId ?? null,
         entryDate,

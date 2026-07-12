@@ -8,6 +8,7 @@ import {
 import { Prisma, type Payment, type PaymentMethodType } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PostingService } from '../accounting/posting.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import type { PaymentListQueryDto, RecordPaymentDto } from './dto/payment.dto';
@@ -53,6 +54,7 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly posting: PostingService,
   ) {}
 
   /** POST /invoices/{invoiceId}/payments. */
@@ -112,6 +114,23 @@ export class PaymentsService {
         where: { id: invoice.id },
         data: { status: newStatus, updatedById: user.userId },
       });
+      // Task 3.3: post the double-entry (Dr Cash|Bank / Cr Revenue [+ VAT]) in
+      // the SAME transaction — the payment and its ledger entry are atomic.
+      await this.posting.postPayment(
+        {
+          companyId: invoice.companyId,
+          branchId: invoice.branchId,
+          postedById: user.userId,
+          invoiceNo: invoice.invoiceNo,
+          invoiceTotal: invoice.total,
+          invoiceTax: invoice.tax,
+          currency: invoice.currency,
+          method: dto.method,
+          amount,
+          paymentId: created.id,
+        },
+        tx,
+      );
       return created;
     });
 
