@@ -1,7 +1,9 @@
 import { useQuery } from '@tanstack/react-query'
 import type { PaginatedResponse } from '@triserve/shared'
 import {
+  ArrowDownRight,
   ArrowRight,
+  ArrowUpRight,
   Banknote,
   Boxes,
   CircleDollarSign,
@@ -42,7 +44,33 @@ const METHOD_LABELS: Record<string, string> = {
   BANK: 'Bank / System',
 }
 
-/** One headline KPI tile. */
+type Tone = 'default' | 'positive' | 'warning' | 'violet'
+
+const TONES: Record<Tone, { chip: string; grad: string }> = {
+  default: {
+    chip: 'bg-primary/10 text-primary',
+    grad: 'from-primary/[0.08]',
+  },
+  positive: {
+    chip: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+    grad: 'from-emerald-500/[0.1]',
+  },
+  warning: {
+    chip: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+    grad: 'from-amber-500/[0.1]',
+  },
+  violet: {
+    chip: 'bg-violet-500/15 text-violet-600 dark:text-violet-400',
+    grad: 'from-violet-500/[0.1]',
+  },
+}
+
+interface Trend {
+  dir: 'up' | 'down' | 'flat'
+  label: string
+}
+
+/** One headline KPI tile with a tinted gradient + optional trend chip. */
 function StatCard({
   label,
   value,
@@ -50,35 +78,95 @@ function StatCard({
   icon,
   to,
   tone = 'default',
+  trend,
 }: {
   label: string
   value: ReactNode
   sub?: ReactNode
   icon: ReactNode
   to?: string
-  tone?: 'default' | 'positive' | 'warning'
+  tone?: Tone
+  trend?: Trend
 }) {
-  const chipCls =
-    tone === 'positive'
-      ? 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400'
-      : tone === 'warning'
-        ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-        : 'bg-primary/10 text-primary'
+  const t = TONES[tone]
   const body = (
-    <Card className="h-full gap-2 transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md">
+    <Card
+      className={`h-full gap-2 bg-gradient-to-br ${t.grad} to-card to-60% transition-all hover:-translate-y-0.5 hover:border-ring/50 hover:shadow-md`}
+    >
       <CardContent className="flex flex-col gap-2">
         <div className="flex items-center justify-between">
           <span className="text-sm text-muted-foreground">{label}</span>
-          <span className={`flex size-8 items-center justify-center rounded-lg ${chipCls}`}>
+          <span className={`flex size-8 items-center justify-center rounded-lg ${t.chip}`}>
             {icon}
           </span>
         </div>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+        <div className="flex items-center gap-2">
+          <span className="text-2xl font-semibold tabular-nums">{value}</span>
+          {trend && (
+            <span
+              className={
+                'flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-semibold ' +
+                (trend.dir === 'up'
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  : trend.dir === 'down'
+                    ? 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                    : 'bg-muted text-muted-foreground')
+              }
+            >
+              {trend.dir === 'up' ? (
+                <ArrowUpRight className="size-3" />
+              ) : trend.dir === 'down' ? (
+                <ArrowDownRight className="size-3" />
+              ) : null}
+              {trend.label}
+            </span>
+          )}
+        </div>
         {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   )
   return to ? <Link to={to} className="block">{body}</Link> : body
+}
+
+/** Inline SVG donut for a set of weighted slices. */
+function Donut({
+  slices,
+  size = 132,
+}: {
+  slices: { label: string; value: number; color: string }[]
+  size?: number
+}) {
+  const total = slices.reduce((s, x) => s + x.value, 0) || 1
+  const r = size / 2 - 10
+  const c = 2 * Math.PI * r
+  let offset = 0
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        {slices.map((s, i) => {
+          const frac = s.value / total
+          const dash = frac * c
+          const el = (
+            <circle
+              key={i}
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={14}
+              strokeDasharray={`${dash} ${c - dash}`}
+              strokeDashoffset={-offset}
+              strokeLinecap="butt"
+            />
+          )
+          offset += dash
+          return el
+        })}
+      </g>
+    </svg>
+  )
 }
 
 function SectionCard({
@@ -109,17 +197,19 @@ function moneyList(rows: MoneyByCurrency[]): string {
   return rows.map((r) => formatMoney(r.amount, r.currency)).join('  ·  ')
 }
 
-/** A labelled proportional bar. */
+/** A labelled proportional bar. `barColor` (a raw CSS color) overrides accent. */
 function BarRow({
   label,
   pct,
   trailing,
   accent = 'bg-primary',
+  barColor,
 }: {
   label: ReactNode
   pct: number
   trailing?: ReactNode
   accent?: string
+  barColor?: string
 }) {
   return (
     <div className="flex flex-col gap-1">
@@ -129,8 +219,11 @@ function BarRow({
       </div>
       <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
         <div
-          className={`h-full rounded-full ${accent}`}
-          style={{ width: `${Math.max(2, Math.min(100, pct))}%` }}
+          className={`h-full rounded-full ${barColor ? '' : accent}`}
+          style={{
+            width: `${Math.max(2, Math.min(100, pct))}%`,
+            ...(barColor ? { background: barColor } : {}),
+          }}
         />
       </div>
     </div>
@@ -200,6 +293,30 @@ export function DashboardPage() {
   }, [d])
   const maxBranchTzs = branchRows.reduce((m, b) => (b.tzs > m ? b.tzs : m), 1n)
 
+  // Month-over-month TZS takings trend for the headline card.
+  const monthTrend = useMemo<Trend | undefined>(() => {
+    if (trend.length < 2) return undefined
+    const cur = trend[trend.length - 1].tzs
+    const prev = trend[trend.length - 2].tzs
+    if (prev === 0n) return undefined
+    const pct = Number(((cur - prev) * 100n) / prev)
+    return {
+      dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat',
+      label: `${pct > 0 ? '+' : ''}${pct}%`,
+    }
+  }, [trend])
+
+  const BRANCH_COLORS = [
+    '#2563eb', '#0891b2', '#059669', '#7c3aed', '#db2777', '#f59e0b',
+  ]
+  const branchDonut = branchRows
+    .filter((b) => b.tzs > 0n)
+    .map((b, i) => ({
+      label: b.label,
+      value: Number(b.tzs / 100n),
+      color: BRANCH_COLORS[i % BRANCH_COLORS.length],
+    }))
+
   const methodMax = (d?.by_method ?? []).reduce(
     (m, r) => (BigInt(r.amount) > m ? BigInt(r.amount) : m),
     1n,
@@ -228,9 +345,10 @@ export function DashboardPage() {
               {d ? moneyList(d.revenue_this_month) : '…'}
             </span>
           }
-          sub="Cash + system, by currency"
+          sub="vs last month (cash)"
           icon={<Banknote className="size-4" />}
           tone="positive"
+          trend={monthTrend}
           to={can('invoice.read') ? '/invoices' : undefined}
         />
         <StatCard
@@ -245,6 +363,7 @@ export function DashboardPage() {
           value={d?.jobs_active ?? '…'}
           sub={d ? `${d.counts.customers.toLocaleString()} customers on file` : undefined}
           icon={<Wrench className="size-4" />}
+          tone="violet"
           to={can('job.read') ? '/jobs' : undefined}
         />
         <StatCard
@@ -315,30 +434,49 @@ export function DashboardPage() {
 
       {/* Branch revenue + job pipeline */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <SectionCard title="Revenue by branch" className="lg:col-span-2">
+        <SectionCard title="Revenue by branch · cash share" className="lg:col-span-2">
           {!d ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : branchRows.length === 0 ? (
             <p className="text-sm text-muted-foreground">No branch revenue yet.</p>
           ) : (
-            <div className="space-y-3">
-              {branchRows.map((b) => (
-                <BarRow
-                  key={b.label}
-                  label={
-                    <span className="flex items-center gap-2">
-                      {b.label}
-                      {b.usd > 0n && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {formatMoney(b.usd.toString(), 'USD')}
-                        </Badge>
-                      )}
-                    </span>
-                  }
-                  pct={Number((b.tzs * 100n) / maxBranchTzs)}
-                  trailing={formatMoney(b.tzs.toString())}
-                />
-              ))}
+            <div className="flex flex-col items-center gap-5 sm:flex-row sm:items-center">
+              {branchDonut.length > 0 && (
+                <Donut slices={branchDonut} />
+              )}
+              <div className="flex-1 space-y-3 self-stretch">
+                {branchRows.map((b, i) => (
+                  <BarRow
+                    key={b.label}
+                    label={
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="size-2.5 shrink-0 rounded-full bg-muted-foreground"
+                          style={
+                            b.tzs > 0n
+                              ? { background: BRANCH_COLORS[i % BRANCH_COLORS.length] }
+                              : undefined
+                          }
+                        />
+                        {b.label}
+                        {b.usd > 0n && (
+                          <Badge variant="outline" className="text-[10px]">
+                            {formatMoney(b.usd.toString(), 'USD')}
+                          </Badge>
+                        )}
+                      </span>
+                    }
+                    pct={Number((b.tzs * 100n) / maxBranchTzs)}
+                    trailing={formatMoney(b.tzs.toString())}
+                    accent="bg-transparent"
+                    barColor={
+                      b.tzs > 0n
+                        ? BRANCH_COLORS[i % BRANCH_COLORS.length]
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
             </div>
           )}
         </SectionCard>
