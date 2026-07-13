@@ -151,27 +151,28 @@ model Company {
   workflowTransitions WorkflowTransition[]
 
   // Task 2.1 (§4.4): parts catalogue + per-branch stock + movement ledger.
-  parts          Part[]
-  inventory      Inventory[]
-  stockMovements StockMovement[]
+  parts                 Part[]
+  inventory             Inventory[]
+  stockMovements        StockMovement[]
   // Task 2.2 (§4.5): parts committed to jobs.
-  jobParts       JobPart[]
+  jobParts              JobPart[]
   // Task 2.3 (§4.4): inter-branch transfers.
-  stockTransfers StockTransfer[]
+  stockTransfers        StockTransfer[]
   // Task 2.5 (§4.4b): the vendors we buy spares from.
-  suppliers      Supplier[]
+  suppliers             Supplier[]
   // Task 2.6 (§4.4b): orders sent to suppliers.
-  purchaseOrders PurchaseOrder[]
+  purchaseOrders        PurchaseOrder[]
   // Task 2.7 (§4.4b): deliveries received against orders.
-  grns           GoodsReceivedNote[]
+  grns                  GoodsReceivedNote[]
   // Task 2.4 (§4.4/E11): serial/batch tracked units.
-  partUnits      PartUnit[]
+  partUnits             PartUnit[]
   // Task 3.1 (§4.6): POS invoices.
-  invoices       Invoice[]
+  invoices              Invoice[]
   // Task 3.2 (§4.6): payments taken.
-  payments       Payment[]
+  payments              Payment[]
   // Task 4.1 (§4.7): warranty claims to Samsung.
-  warrantyClaims WarrantyClaim[]
+  warrantyClaims        WarrantyClaim[]
+  warrantyRegistrations WarrantyRegistration[]
 
   @@map("companies")
 }
@@ -204,23 +205,24 @@ model Branch {
   attachments        Attachment[]
 
   // Task 2.1 (§4.4): per-branch stock rows + the branch's movement ledger.
-  inventory      Inventory[]
-  stockMovements StockMovement[]
+  inventory             Inventory[]
+  stockMovements        StockMovement[]
   // Task 2.3 (§4.4): transfers dispatched from / received at this branch.
-  transfersOut   StockTransfer[]     @relation("TransferFromBranch")
-  transfersIn    StockTransfer[]     @relation("TransferToBranch")
+  transfersOut          StockTransfer[]        @relation("TransferFromBranch")
+  transfersIn           StockTransfer[]        @relation("TransferToBranch")
   // Task 2.6 (§4.4b): POs destined for this branch.
-  purchaseOrders PurchaseOrder[]
+  purchaseOrders        PurchaseOrder[]
   // Task 2.7 (§4.4b): deliveries landed at this branch.
-  grns           GoodsReceivedNote[]
+  grns                  GoodsReceivedNote[]
   // Task 2.4 (§4.4/E11): serial units currently located at this branch.
-  partUnits      PartUnit[]
+  partUnits             PartUnit[]
   // Task 3.1 (§4.6): invoices sold at this branch.
-  invoices       Invoice[]
+  invoices              Invoice[]
   // Task 3.2 (§4.6): payments taken at this branch.
-  payments       Payment[]
+  payments              Payment[]
   // Task 4.1 (§4.7): warranty claims filed at this branch.
-  warrantyClaims WarrantyClaim[]
+  warrantyClaims        WarrantyClaim[]
+  warrantyRegistrations WarrantyRegistration[]
 
   @@unique([companyId, code])
   @@map("branches")
@@ -330,12 +332,14 @@ model User {
   updatedPartUnits PartUnit[] @relation("PartUnitUpdatedBy")
 
   // Task 3.1 (§4.6): who sold an invoice.
-  soldInvoices          Invoice[]       @relation("InvoiceSoldBy")
+  soldInvoices                 Invoice[]              @relation("InvoiceSoldBy")
   // Task 3.2 (§4.6): who took a payment.
-  receivedPayments      Payment[]       @relation("PaymentReceivedBy")
+  receivedPayments             Payment[]              @relation("PaymentReceivedBy")
   // Task 4.1 (§4.7): warranty claims created/updated by this user.
-  createdWarrantyClaims WarrantyClaim[] @relation("WarrantyClaimCreatedBy")
-  updatedWarrantyClaims WarrantyClaim[] @relation("WarrantyClaimUpdatedBy")
+  createdWarrantyClaims        WarrantyClaim[]        @relation("WarrantyClaimCreatedBy")
+  updatedWarrantyClaims        WarrantyClaim[]        @relation("WarrantyClaimUpdatedBy")
+  createdWarrantyRegistrations WarrantyRegistration[] @relation("WarrantyRegCreatedBy")
+  updatedWarrantyRegistrations WarrantyRegistration[] @relation("WarrantyRegUpdatedBy")
 
   @@map("users")
 }
@@ -622,11 +626,12 @@ model Customer {
   createdBy   User?     @relation("CustomerCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("CustomerUpdatedBy", fields: [updatedById], references: [id])
 
-  company         Company   @relation(fields: [companyId], references: [id])
-  preferredBranch Branch?   @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
-  devices         Device[]
-  jobs            Job[]
-  invoices        Invoice[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  preferredBranch       Branch?                @relation("CustomerPreferredBranch", fields: [preferredBranchId], references: [id])
+  devices               Device[]
+  jobs                  Job[]
+  invoices              Invoice[]
+  warrantyRegistrations WarrantyRegistration[]
 
   @@index([companyId, phone])
   @@index([companyId, phoneNormalized])
@@ -662,10 +667,11 @@ model Device {
   createdBy   User?     @relation("DeviceCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("DeviceUpdatedBy", fields: [updatedById], references: [id])
 
-  company     Company      @relation(fields: [companyId], references: [id])
-  customer    Customer     @relation(fields: [customerId], references: [id])
-  deviceModel DeviceModel? @relation(fields: [modelId], references: [id])
-  jobs        Job[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  customer              Customer               @relation(fields: [customerId], references: [id])
+  deviceModel           DeviceModel?           @relation(fields: [modelId], references: [id])
+  jobs                  Job[]
+  warrantyRegistrations WarrantyRegistration[]
 
   @@index([companyId, imeiSerial])
   @@index([customerId])
@@ -1726,13 +1732,14 @@ model Invoice {
   createdById String?   @map("created_by") @db.Char(36)
   updatedById String?   @map("updated_by") @db.Char(36)
 
-  company  Company       @relation(fields: [companyId], references: [id])
-  branch   Branch        @relation(fields: [branchId], references: [id])
-  customer Customer?     @relation(fields: [customerId], references: [id])
-  job      Job?          @relation(fields: [jobId], references: [id])
-  soldBy   User          @relation("InvoiceSoldBy", fields: [soldById], references: [id])
-  lines    InvoiceLine[]
-  payments Payment[]
+  company               Company                @relation(fields: [companyId], references: [id])
+  branch                Branch                 @relation(fields: [branchId], references: [id])
+  customer              Customer?              @relation(fields: [customerId], references: [id])
+  job                   Job?                   @relation(fields: [jobId], references: [id])
+  soldBy                User                   @relation("InvoiceSoldBy", fields: [soldById], references: [id])
+  lines                 InvoiceLine[]
+  payments              Payment[]
+  warrantyRegistrations WarrantyRegistration[]
 
   @@unique([companyId, invoiceNo])
   @@index([companyId, status])
@@ -1899,4 +1906,70 @@ model WarrantyClaim {
   @@index([companyId, branchId, status])
   @@index([jobId])
   @@map("warranty_claims")
+}
+
+// ---------------------------------------------------------------------------
+// Warranty registrations (Phase 6 / retail): a warranty the shop issues when
+// it SELLS an electronic product (any brand — phones, TVs, fridges…). Distinct
+// from warranty_claims (the IW claim TO Samsung, USD): this is coverage the
+// customer holds ON a product they bought, so a later repair Job can tell
+// whether it's under warranty (store-honoured, manufacturer, or Samsung) or
+// out of warranty (customer pays). Linked to the sale invoice + device when
+// known; keyed on serial for point-of-repair lookup.
+// ---------------------------------------------------------------------------
+
+/// Who honours the warranty on a sold product.
+enum WarrantyKind {
+  STORE // the service centre covers it
+  MANUFACTURER // the product's manufacturer (any brand)
+  SAMSUNG // Samsung warranty (may become an IW claim)
+}
+
+enum WarrantyRegistrationStatus {
+  ACTIVE
+  EXPIRED
+  VOID
+}
+
+model WarrantyRegistration {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+
+  customerId String? @map("customer_id") @db.Char(36)
+  deviceId   String? @map("device_id") @db.Char(36)
+  invoiceId  String? @map("invoice_id") @db.Char(36)
+
+  productName String  @map("product_name") @db.VarChar(255)
+  brand       String  @default("") @db.VarChar(100)
+  serialNo    String? @map("serial_no") @db.VarChar(100)
+
+  kind       WarrantyKind
+  startDate  DateTime     @map("start_date") @db.Date
+  expiryDate DateTime     @map("expiry_date") @db.Date
+  months     Int?
+  terms      String?      @db.Text
+
+  status WarrantyRegistrationStatus @default(ACTIVE)
+  notes  String?                    @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company   @relation(fields: [companyId], references: [id])
+  branch    Branch    @relation(fields: [branchId], references: [id])
+  customer  Customer? @relation(fields: [customerId], references: [id])
+  device    Device?   @relation(fields: [deviceId], references: [id])
+  invoice   Invoice?  @relation(fields: [invoiceId], references: [id])
+  createdBy User?     @relation("WarrantyRegCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?     @relation("WarrantyRegUpdatedBy", fields: [updatedById], references: [id])
+
+  @@index([companyId, serialNo])
+  @@index([companyId, status])
+  @@index([companyId, expiryDate])
+  @@index([customerId])
+  @@map("warranty_registrations")
 }

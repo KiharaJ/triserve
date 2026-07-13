@@ -674,6 +674,34 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Warranty registrations (retail) -----------------------------------------
+
+export type WarrantyKind = 'STORE' | 'MANUFACTURER' | 'SAMSUNG'
+export type WarrantyRegistrationStatus = 'ACTIVE' | 'EXPIRED' | 'VOID'
+
+export interface WarrantyRegistrationWire {
+  id: string
+  branch_id: string
+  branch_code: string
+  customer_id: string | null
+  customer_name: string | null
+  device_id: string | null
+  invoice_id: string | null
+  invoice_no: string | null
+  product_name: string
+  brand: string
+  serial_no: string | null
+  kind: WarrantyKind
+  start_date: string
+  expiry_date: string
+  months: number | null
+  terms: string | null
+  status: WarrantyRegistrationStatus
+  is_expired: boolean
+  notes: string | null
+  created_at: string
+}
+
 // --- Financial reports (Phase 5 / E1) ----------------------------------------
 
 export interface TrialBalanceRow {

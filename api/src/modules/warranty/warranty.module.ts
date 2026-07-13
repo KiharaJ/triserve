@@ -5,6 +5,8 @@ import { AuthModule } from '../auth/auth.module';
 import { GspnBridgeService } from './gspn-bridge.service';
 import { WarrantyClaimsController } from './warranty-claims.controller';
 import { WarrantyClaimsService } from './warranty-claims.service';
+import { WarrantyRegistrationsController } from './warranty-registrations.controller';
+import { WarrantyRegistrationsService } from './warranty-registrations.service';
 
 /**
  * WarrantyModule (Phase 4, §4.7 / E13) — the In-Warranty claim side. Task 4.1
@@ -14,8 +16,8 @@ import { WarrantyClaimsService } from './warranty-claims.service';
  */
 @Module({
   imports: [AuthModule, AuditModule, AccountingModule],
-  controllers: [WarrantyClaimsController],
-  providers: [WarrantyClaimsService, GspnBridgeService],
+  controllers: [WarrantyClaimsController, WarrantyRegistrationsController],
+  providers: [WarrantyClaimsService, GspnBridgeService, WarrantyRegistrationsService],
   exports: [WarrantyClaimsService],
 })
 export class WarrantyModule {}

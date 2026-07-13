@@ -110,6 +110,8 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 4.1 (§4.7): warranty claims are company- AND branch-scoped (branch_id
   // = the filing branch, like jobs/invoices).
   Prisma.ModelName.WarrantyClaim,
+  // Retail: warranty registrations belong to the selling branch.
+  Prisma.ModelName.WarrantyRegistration,
 ]);
 
 /**
@@ -161,6 +163,8 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Payment,
   // Task 4.1 (§4.7): a warranty claim belongs to the branch that filed it.
   Prisma.ModelName.WarrantyClaim,
+  // Retail: a warranty registration belongs to the selling branch.
+  Prisma.ModelName.WarrantyRegistration,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for
