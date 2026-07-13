@@ -16,6 +16,7 @@ import {
   ScanBarcode,
   ScrollText,
   ShieldCheck,
+  ShoppingBag,
   Smartphone,
   ShoppingCart,
   SlidersHorizontal,
@@ -99,6 +100,7 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/inventory', label: 'Stock', icon: Boxes, end: true, permission: 'inventory.read', color: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
       { to: '/inventory/parts', label: 'Parts catalogue', icon: Package, end: false, permission: 'part.read', color: 'bg-teal-500/15 text-teal-600 dark:text-teal-400' },
+      { to: '/inventory/products', label: 'Products (retail)', icon: ShoppingBag, end: false, permission: 'part.read', color: 'bg-violet-500/15 text-violet-600 dark:text-violet-400' },
       { to: '/inventory/suppliers', label: 'Suppliers', icon: Factory, end: false, permission: 'supplier.read', color: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400' },
       { to: '/inventory/purchase-orders', label: 'Purchase orders', icon: ShoppingCart, end: false, permission: 'po.read', color: 'bg-violet-500/15 text-violet-600 dark:text-violet-400' },
       { to: '/inventory/reorder', label: 'Reorder', icon: RefreshCw, end: false, permission: 'po.read', color: 'bg-orange-500/15 text-orange-600 dark:text-orange-400' },

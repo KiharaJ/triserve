@@ -14,6 +14,7 @@ import { DevicesListPage } from '@/pages/devices/list'
 import { DashboardPage } from '@/pages/dashboard'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
+import { ProductsPage } from '@/pages/inventory/products'
 import { PurchaseOrdersPage } from '@/pages/inventory/purchase-orders'
 import { ReorderPage } from '@/pages/inventory/reorder'
 import { SerialUnitsPage } from '@/pages/inventory/serial-units'
@@ -78,6 +79,7 @@ function App() {
         <Route path="inventory">
           <Route index element={<StockPage />} />
           <Route path="parts" element={<PartsPage />} />
+          <Route path="products" element={<ProductsPage />} />
           <Route path="suppliers" element={<SuppliersPage />} />
           <Route path="purchase-orders" element={<PurchaseOrdersPage />} />
           <Route path="reorder" element={<ReorderPage />} />

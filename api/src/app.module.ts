@@ -16,6 +16,7 @@ import { DevicesModule } from './modules/devices/devices.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { PosModule } from './modules/pos/pos.module';
+import { ProductsModule } from './modules/products/products.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { ModelsModule } from './modules/models/models.module';
@@ -52,6 +53,7 @@ import { PrismaModule } from './prisma/prisma.module';
     ProcurementModule,
     PosModule,
     WarrantyModule,
+    ProductsModule,
     DashboardModule,
   ],
 })

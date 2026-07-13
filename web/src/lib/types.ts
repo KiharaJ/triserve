@@ -676,6 +676,26 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Products (retail catalogue) ---------------------------------------------
+
+export interface ProductWire {
+  id: string
+  sku: string
+  name: string
+  brand: string
+  device_type: string | null
+  category: DeviceCategory
+  sell_price_tzs: string | null
+  cost_usd: string | null
+  stock_qty: number
+  default_warranty_months: number | null
+  default_warranty_kind: WarrantyKind | null
+  is_serialized: boolean
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
 // --- Operations / BI report (Phase 5 / E15 + E5) -----------------------------
 
 export interface OperationsReportWire {

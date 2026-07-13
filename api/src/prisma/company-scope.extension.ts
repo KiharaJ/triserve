@@ -112,6 +112,8 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.WarrantyClaim,
   // Retail: warranty registrations belong to the selling branch.
   Prisma.ModelName.WarrantyRegistration,
+  // Retail catalogue: products are company-level master data (like parts).
+  Prisma.ModelName.Product,
 ]);
 
 /**
