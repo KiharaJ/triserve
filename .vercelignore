@@ -1,0 +1,15 @@
+# Keep the NestJS backend out of the Vercel deployment.
+# Vercel auto-compiles any .ts under a root-level api/ directory as Serverless
+# Functions (which OOMs and is not what we deploy — the API runs on Render).
+# Excluding the api source stops that; api/package.json stays so the npm
+# workspace install still resolves. The web build only needs @triserve/shared.
+api/src
+api/test
+api/scripts
+api/prisma
+api/dist
+api/coverage
+api/nest-cli.json
+api/tsconfig.json
+api/tsconfig.build.json
+api/eslint.config.mjs
