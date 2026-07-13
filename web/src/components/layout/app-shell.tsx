@@ -16,6 +16,7 @@ import {
   ScanBarcode,
   ScrollText,
   ShieldCheck,
+  Smartphone,
   ShoppingCart,
   SlidersHorizontal,
   Truck,
@@ -75,6 +76,13 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/operations', label: 'Operations', icon: Activity, end: false, permission: 'job.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: false, permission: 'approval.decide', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
       { to: '/audit', label: 'Audit log', icon: ScrollText, end: false, permission: 'audit.read', color: 'bg-slate-500/15 text-slate-600 dark:text-slate-300' },
+    ],
+  },
+  {
+    heading: 'CRM',
+    items: [
+      { to: '/customers', label: 'Customers', icon: Users, end: true, permission: 'customer.read', color: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
+      { to: '/devices', label: 'Devices', icon: Smartphone, end: false, permission: 'device.read', color: 'bg-teal-500/15 text-teal-600 dark:text-teal-400' },
     ],
   },
   {

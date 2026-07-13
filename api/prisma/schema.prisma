@@ -653,6 +653,10 @@ model Device {
   model      String?        @db.VarChar(150)
   modelId    String?        @map("model_id") @db.Char(36)
   category   DeviceCategory
+  /// Flexible retail TYPE label (any brand/product): "Mobile", "Watch", "TV",
+  /// "Laptop", "AC", "Two-Wheeler"… `category` stays the Samsung-repair grouping
+  /// (HHP/CE/AC/REF/OTHER); device_type is the free display type for the register.
+  deviceType String?        @map("device_type") @db.VarChar(50)
   /// IMEI or serial number; nullable (some CE/AC units lack one). Stored
   /// cleaned (scientific-notation legacy values expanded, separators
   /// stripped, uppercased) — see normalizeImeiSerial().

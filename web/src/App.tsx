@@ -9,6 +9,8 @@ import { UsersPage } from '@/pages/admin/users'
 import { ApprovalsPage } from '@/pages/approvals'
 import { AuditPage } from '@/pages/audit'
 import { CustomerDetailPage } from '@/pages/customers/detail'
+import { CustomersListPage } from '@/pages/customers/list'
+import { DevicesListPage } from '@/pages/devices/list'
 import { DashboardPage } from '@/pages/dashboard'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
@@ -70,7 +72,9 @@ function App() {
           <Route path="new" element={<JobIntakePage />} />
           <Route path=":id" element={<JobDetailPage />} />
         </Route>
+        <Route path="customers" element={<CustomersListPage />} />
         <Route path="customers/:id" element={<CustomerDetailPage />} />
+        <Route path="devices" element={<DevicesListPage />} />
         <Route path="inventory">
           <Route index element={<StockPage />} />
           <Route path="parts" element={<PartsPage />} />

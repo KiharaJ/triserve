@@ -23,6 +23,15 @@ export class DeviceListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsUUID()
   customer_id?: string;
+
+  @IsOptional()
+  @IsEnum(DeviceCategory)
+  category?: DeviceCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  type?: string;
 }
 
 /** POST /devices */
@@ -47,8 +56,16 @@ export class CreateDeviceDto {
   @IsUUID()
   model_id?: string;
 
+  /** Samsung-repair grouping; optional for retail devices (defaults OTHER). */
+  @IsOptional()
   @IsEnum(DeviceCategory)
-  category!: DeviceCategory;
+  category?: DeviceCategory;
+
+  /** Flexible retail type: Mobile, Watch, TV, Laptop, AC, Two-Wheeler… */
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  device_type?: string;
 
   @IsOptional()
   @IsString()
@@ -85,6 +102,11 @@ export class UpdateDeviceDto {
   @IsOptional()
   @IsEnum(DeviceCategory)
   category?: DeviceCategory;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  device_type?: string;
 
   @IsOptional()
   @IsString()

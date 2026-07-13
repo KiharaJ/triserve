@@ -199,10 +199,12 @@ export interface CustomerWire {
 export interface DeviceWire {
   id: string
   customer_id: string
+  customer_name: string | null
   brand: string
   model: string | null
   model_id: string | null
   category: DeviceCategory
+  device_type: string | null
   imei_serial: string | null
   color: string | null
   created_at: string
