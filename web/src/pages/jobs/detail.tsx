@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ShieldCheck } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link, useParams } from 'react-router-dom'
@@ -24,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { formatDateTime, formatMoney } from '@/lib/format'
+import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
 import type {
   AttachmentWire,
   AuditLogEntry,
@@ -32,11 +33,17 @@ import type {
   JobPartWire,
   PartWire,
   UserWire,
+  WarrantyRegistrationWire,
   WarrantyStatus,
 } from '@/lib/types'
 import { useJobTransition } from '@/pages/jobs/use-job-transition'
 
 const WARRANTY_STATUSES: WarrantyStatus[] = ['IW', 'OW', 'GOODWILL', 'UNKNOWN']
+const WARRANTY_KIND_LABEL: Record<string, string> = {
+  STORE: 'store',
+  MANUFACTURER: 'manufacturer',
+  SAMSUNG: 'Samsung',
+}
 
 const detailsSchema = z.object({
   fault_reported: z.string().max(5000).optional(),
@@ -587,6 +594,23 @@ export function JobDetailPage() {
     enabled: Boolean(id),
   })
 
+  const serial = jobQuery.data?.device.imei_serial ?? ''
+  const warranty = useQuery({
+    queryKey: ['warranty-lookup', serial],
+    enabled: can('customer.read') && serial.length >= 4,
+    queryFn: async () =>
+      (
+        await api.get<WarrantyRegistrationWire | ''>(
+          '/warranty-registrations/lookup',
+          { params: { serial } },
+        )
+      ).data,
+  })
+  const coverage =
+    warranty.data && typeof warranty.data === 'object' && 'id' in warranty.data
+      ? (warranty.data as WarrantyRegistrationWire)
+      : null
+
   const transition = useJobTransition()
 
   if (jobQuery.isPending) return <p className="text-sm text-muted-foreground">Loading job…</p>
@@ -614,7 +638,37 @@ export function JobDetailPage() {
             <Badge>{job.state_label}</Badge>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="flex flex-col gap-3">
+          {coverage && (
+            <div
+              className={
+                'flex items-center gap-3 rounded-lg border p-3 text-sm ' +
+                (coverage.is_expired
+                  ? 'border-amber-500/30 bg-amber-500/10'
+                  : 'border-emerald-500/30 bg-emerald-500/10')
+              }
+            >
+              <ShieldCheck
+                className={
+                  'size-5 shrink-0 ' +
+                  (coverage.is_expired
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400')
+                }
+              />
+              <span>
+                {coverage.is_expired
+                  ? `Warranty expired ${formatDate(coverage.expiry_date)}`
+                  : `Under ${WARRANTY_KIND_LABEL[coverage.kind]} warranty · covered until ${formatDate(coverage.expiry_date)}`}
+                <span className="text-muted-foreground">
+                  {' '}· {coverage.product_name}
+                </span>
+              </span>
+              <Button asChild variant="ghost" size="xs" className="ml-auto">
+                <Link to="/warranties">View</Link>
+              </Button>
+            </div>
+          )}
           {job.allowed_next_transitions.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Next:</span>
