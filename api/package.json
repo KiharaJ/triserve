@@ -12,6 +12,7 @@
     "dev": "nest start --watch",
     "start:dev": "nest start --watch",
     "postinstall": "prisma generate",
+    "prebuild": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
