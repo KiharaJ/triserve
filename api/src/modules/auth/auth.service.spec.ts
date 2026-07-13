@@ -44,14 +44,14 @@ function makePrismaMock(
     },
     session: {
       create: jest.fn(({ data }: { data: Session }) => {
-        const row: Session = {
+        const defaults = {
           createdAt: new Date(),
           lastUsedAt: new Date(),
           revokedAt: null,
           userAgent: null,
           ip: null,
-          ...data,
         };
+        const row: Session = { ...defaults, ...data };
         sessions.set(row.id, row);
         return Promise.resolve(row);
       }),

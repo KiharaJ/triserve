@@ -46,6 +46,7 @@ async function login(email: string): Promise<string> {
 
 interface RegBody {
   id: string;
+  product_name: string;
   serial_no: string | null;
   expiry_date: string;
   status: string;
