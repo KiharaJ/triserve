@@ -34,6 +34,7 @@ import type {
   InvoiceWire,
   PartWire,
   PaymentMethodType,
+  ProductWire,
 } from '@/lib/types'
 
 const PAYMENT_METHODS: PaymentMethodType[] = [
@@ -99,8 +100,10 @@ function typeBadge(type: InvoiceType) {
 }
 
 interface DraftLine {
-  line_type: 'PART' | 'SERVICE' | 'CUSTOM'
+  line_type: 'PART' | 'PRODUCT' | 'SERVICE' | 'CUSTOM'
   part_id: string
+  /** For PRODUCT lines: the catalogue product picked (drives price + warranty). */
+  product_id: string
   description: string
   qty: string
   unit_price: string
@@ -109,6 +112,7 @@ interface DraftLine {
 const EMPTY_LINE: DraftLine = {
   line_type: 'CUSTOM',
   part_id: '',
+  product_id: '',
   description: '',
   qty: '1',
   unit_price: '',
@@ -164,6 +168,17 @@ export function InvoicesPage() {
       ).data.data,
   })
 
+  const products = useQuery({
+    queryKey: ['products', 'options'],
+    enabled: canCreate,
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<ProductWire>>('/products', {
+          params: { page_size: 100, active: true },
+        })
+      ).data.data,
+  })
+
   const invoices = useQuery({
     queryKey: ['invoices', page, statusFilter],
     queryFn: async () =>
@@ -191,8 +206,8 @@ export function InvoicesPage() {
   }
 
   const create = useMutation({
-    mutationFn: async () =>
-      (
+    mutationFn: async () => {
+      const invoice = (
         await api.post<InvoiceWire>('/invoices', {
           type,
           branch_id: branchId || undefined,
@@ -208,9 +223,35 @@ export function InvoicesPage() {
               unit_price: majorToMinor(l.unit_price) ?? '0',
             })),
         })
-      ).data,
-    onSuccess: async () => {
-      toast.success('Invoice created')
+      ).data
+
+      // Auto-register warranties for sold products that carry a default one.
+      const today = new Date().toISOString().slice(0, 10)
+      let registered = 0
+      for (const l of lines) {
+        if (l.line_type !== 'PRODUCT' || !l.product_id) continue
+        const p = products.data?.find((x) => x.id === l.product_id)
+        if (!p?.default_warranty_months) continue
+        await api.post('/warranty-registrations', {
+          product_name: p.name,
+          brand: p.brand || undefined,
+          kind: p.default_warranty_kind ?? 'STORE',
+          start_date: today,
+          months: p.default_warranty_months,
+          branch_id: invoice.branch_id,
+          invoice_id: invoice.id,
+          customer_id: invoice.customer_id ?? undefined,
+        })
+        registered++
+      }
+      return { invoice, registered }
+    },
+    onSuccess: async ({ registered }) => {
+      toast.success(
+        registered > 0
+          ? `Invoice created · ${registered} warranty${registered === 1 ? '' : 's'} registered`
+          : 'Invoice created',
+      )
       setDialogOpen(false)
       await invalidate()
     },
@@ -457,6 +498,7 @@ export function InvoicesPage() {
                   >
                     <option value="CUSTOM">Custom</option>
                     <option value="PART">Part</option>
+                    <option value="PRODUCT">Product</option>
                     <option value="SERVICE">Service</option>
                   </Select>
                   {line.line_type === 'PART' ? (
@@ -484,6 +526,41 @@ export function InvoicesPage() {
                       {parts.data?.map((p) => (
                         <option key={p.id} value={p.id}>
                           {p.part_number} — {p.description}
+                        </option>
+                      ))}
+                    </Select>
+                  ) : line.line_type === 'PRODUCT' ? (
+                    <Select
+                      value={line.product_id}
+                      onChange={(e) =>
+                        setLines((ls) =>
+                          ls.map((l, j) => {
+                            if (j !== i) return l
+                            const p = products.data?.find(
+                              (x) => x.id === e.target.value,
+                            )
+                            return {
+                              ...l,
+                              product_id: e.target.value,
+                              description: p ? p.name : l.description,
+                              unit_price: p?.sell_price_tzs
+                                ? minorToMajor(p.sell_price_tzs)
+                                : l.unit_price,
+                            }
+                          }),
+                        )
+                      }
+                      className="min-w-40 flex-1"
+                      aria-label="Product"
+                    >
+                      <option value="">— product —</option>
+                      {products.data?.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {p.brand ? ` · ${p.brand}` : ''}
+                          {p.default_warranty_months
+                            ? ` (${p.default_warranty_months}mo warranty)`
+                            : ''}
                         </option>
                       ))}
                     </Select>
