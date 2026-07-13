@@ -1,4 +1,5 @@
 import {
+  Activity,
   ArrowLeftRight,
   BadgeCheck,
   BarChart3,
@@ -71,8 +72,18 @@ const NAV_SECTIONS: NavSection[] = [
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, color: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' },
       { to: '/jobs', label: 'Jobs', icon: Wrench, end: false, permission: 'job.read', color: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
+      { to: '/operations', label: 'Operations', icon: Activity, end: false, permission: 'job.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: false, permission: 'approval.decide', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
       { to: '/audit', label: 'Audit log', icon: ScrollText, end: false, permission: 'audit.read', color: 'bg-slate-500/15 text-slate-600 dark:text-slate-300' },
+    ],
+  },
+  {
+    heading: 'Sales',
+    items: [
+      { to: '/invoices', label: 'Invoices', icon: Receipt, end: false, permission: 'invoice.read', color: 'bg-green-500/15 text-green-600 dark:text-green-400' },
+      { to: '/warranty-claims', label: 'Warranty claims', icon: ShieldCheck, end: false, permission: 'warranty.claim.read', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
+      { to: '/warranties', label: 'Warranties sold', icon: BadgeCheck, end: false, permission: 'customer.read', color: 'bg-teal-500/15 text-teal-600 dark:text-teal-400' },
+      { to: '/reports', label: 'Reports', icon: BarChart3, end: false, permission: 'accounting.read', color: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' },
     ],
   },
   {
@@ -86,15 +97,6 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/inventory/transfers', label: 'Transfers', icon: ArrowLeftRight, end: false, permission: 'inventory.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/inventory/serial-units', label: 'Serial units', icon: ScanBarcode, end: false, permission: 'inventory.read', color: 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400' },
       { to: '/inventory/movements', label: 'Movements', icon: Truck, end: false, permission: 'inventory.read', color: 'bg-lime-500/15 text-lime-600 dark:text-lime-500' },
-    ],
-  },
-  {
-    heading: 'Sales',
-    items: [
-      { to: '/invoices', label: 'Invoices', icon: Receipt, end: false, permission: 'invoice.read', color: 'bg-green-500/15 text-green-600 dark:text-green-400' },
-      { to: '/warranty-claims', label: 'Warranty claims', icon: ShieldCheck, end: false, permission: 'warranty.claim.read', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
-      { to: '/warranties', label: 'Warranties sold', icon: BadgeCheck, end: false, permission: 'customer.read', color: 'bg-teal-500/15 text-teal-600 dark:text-teal-400' },
-      { to: '/reports', label: 'Reports', icon: BarChart3, end: false, permission: 'accounting.read', color: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' },
     ],
   },
   {

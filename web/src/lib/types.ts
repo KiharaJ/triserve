@@ -674,6 +674,31 @@ export interface JobPartWire {
   consumed_at: string | null
 }
 
+// --- Operations / BI report (Phase 5 / E15 + E5) -----------------------------
+
+export interface OperationsReportWire {
+  from: string | null
+  to: string | null
+  totals: {
+    total_jobs: number
+    active_jobs: number
+    avg_turnaround_hours: number | null
+  }
+  intake_by_month: { month: string; count: number }[]
+  by_state: { code: string; label: string; is_terminal: boolean; count: number }[]
+  by_branch: { code: string; name: string; count: number }[]
+  top_models: { model: string; count: number }[]
+  technicians: {
+    engineer_id: string
+    name: string
+    initials: string | null
+    assigned: number
+    completed: number
+    active: number
+    avg_turnaround_hours: number | null
+  }[]
+}
+
 // --- Warranty registrations (retail) -----------------------------------------
 
 export type WarrantyKind = 'STORE' | 'MANUFACTURER' | 'SAMSUNG'
