@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { ShieldCheck } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { Link } from 'react-router-dom'
@@ -17,7 +18,7 @@ import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { formatDateTime } from '@/lib/format'
+import { formatDate, formatDateTime } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import type {
   BranchWire,
@@ -28,11 +29,17 @@ import type {
   ModelWire,
   PreferredLanguageCode,
   UserWire,
+  WarrantyRegistrationWire,
   WarrantyStatus,
 } from '@/lib/types'
 
 const CATEGORIES: DeviceCategory[] = ['HHP', 'CE', 'AC', 'REF', 'OTHER']
 const WARRANTY_STATUSES: WarrantyStatus[] = ['IW', 'OW', 'GOODWILL', 'UNKNOWN']
+const WARRANTY_KIND_LABEL: Record<string, string> = {
+  STORE: 'store',
+  MANUFACTURER: 'manufacturer',
+  SAMSUNG: 'Samsung',
+}
 
 const fieldsSchema = z.object({
   branch_id: z.string().optional(),
@@ -162,6 +169,26 @@ export function JobIntakePage() {
 
   const [createdJob, setCreatedJob] = useState<JobDetailWire | null>(null)
   const [attachmentWarnings, setAttachmentWarnings] = useState<string[]>([])
+
+  // Warranty coverage lookup: as the IMEI/serial is entered, check whether the
+  // unit has a registered warranty (store / manufacturer / Samsung).
+  const imeiValue = form.watch('imei_serial') ?? ''
+  const debouncedImei = useDebouncedValue(imeiValue.trim(), 400)
+  const warranty = useQuery({
+    queryKey: ['warranty-lookup', debouncedImei],
+    enabled: can('customer.read') && debouncedImei.length >= 4,
+    queryFn: async () =>
+      (
+        await api.get<WarrantyRegistrationWire | ''>(
+          '/warranty-registrations/lookup',
+          { params: { serial: debouncedImei } },
+        )
+      ).data,
+  })
+  const coverage =
+    warranty.data && typeof warranty.data === 'object' && 'id' in warranty.data
+      ? (warranty.data as WarrantyRegistrationWire)
+      : null
 
   const createJob = useMutation({
     mutationFn: async (body: Record<string, unknown>) =>
@@ -440,6 +467,53 @@ export function JobIntakePage() {
               />
             </div>
           </FormField>
+
+          {coverage && (
+            <div
+              className={
+                'flex items-start gap-3 rounded-lg border p-3 text-sm ' +
+                (coverage.is_expired
+                  ? 'border-amber-500/30 bg-amber-500/10'
+                  : 'border-emerald-500/30 bg-emerald-500/10')
+              }
+            >
+              <ShieldCheck
+                className={
+                  'mt-0.5 size-5 shrink-0 ' +
+                  (coverage.is_expired
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400')
+                }
+              />
+              <div className="flex flex-col gap-0.5">
+                <span className="font-medium">
+                  {coverage.is_expired
+                    ? `Warranty expired ${formatDate(coverage.expiry_date)}`
+                    : `Under ${WARRANTY_KIND_LABEL[coverage.kind]} warranty · covered until ${formatDate(coverage.expiry_date)}`}
+                </span>
+                <span className="text-muted-foreground">
+                  {coverage.product_name}
+                  {coverage.brand ? ` · ${coverage.brand}` : ''}
+                  {coverage.kind === 'SAMSUNG' && !coverage.is_expired
+                    ? ' — this may be an in-warranty (IW) claim.'
+                    : ''}
+                </span>
+              </div>
+              {!coverage.is_expired && coverage.kind === 'SAMSUNG' && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="ml-auto"
+                  onClick={() =>
+                    form.setValue('warranty_status', 'IW', { shouldValidate: true })
+                  }
+                >
+                  Set IW
+                </Button>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Model" htmlFor="model-search">
               {selectedModel ? (
