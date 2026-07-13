@@ -25,8 +25,9 @@ import {
   Wrench,
 } from 'lucide-react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { useEffect, useState } from 'react'
 import type { Permission } from '@triserve/shared'
-import { Moon, Sun } from 'lucide-react'
+import { Menu, Moon, Sun, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useAuth } from '@/lib/auth'
 import { useTheme } from '@/lib/theme'
@@ -143,6 +144,13 @@ function currentTitle(pathname: string): string {
 export function AppShell() {
   const { pathname } = useLocation()
   const { user, can, logout } = useAuth()
+  /** Mobile drawer state — the sidebar is a static column from `lg` up. */
+  const [navOpen, setNavOpen] = useState(false)
+
+  // Close the drawer whenever the route changes (tap a link → navigate → close).
+  useEffect(() => {
+    setNavOpen(false)
+  }, [pathname])
 
   const sections = NAV_SECTIONS.map((section) => ({
     ...section,
@@ -153,8 +161,23 @@ export function AppShell() {
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      {/* Sidebar */}
-      <aside className="flex w-60 shrink-0 flex-col border-r bg-card">
+      {/* Backdrop — only on mobile, only while the drawer is open */}
+      {navOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setNavOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Sidebar — fixed slide-in drawer below `lg`, static column from `lg` up */}
+      <aside
+        className={cn(
+          'fixed inset-y-0 left-0 z-50 flex w-[17rem] max-w-[85vw] shrink-0 flex-col border-r bg-card transition-transform duration-200 ease-out',
+          'lg:static lg:z-auto lg:w-60 lg:max-w-none lg:translate-x-0',
+          navOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full',
+        )}
+      >
         <div className="flex h-16 items-center gap-3 px-5">
           <span className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-blue-600 text-white shadow-md shadow-blue-600/25">
             <Wrench className="size-5" />
@@ -165,6 +188,15 @@ export function AppShell() {
               Service Centre
             </span>
           </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-8 lg:hidden"
+            onClick={() => setNavOpen(false)}
+            aria-label="Close menu"
+          >
+            <X className="size-5" />
+          </Button>
         </div>
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-3">
           {sections.map((section, idx) => (
@@ -243,9 +275,20 @@ export function AppShell() {
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Topbar */}
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b bg-background/80 px-6 backdrop-blur">
-          <h1 className="text-base font-semibold">{currentTitle(pathname)}</h1>
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-10 flex h-14 items-center justify-between gap-2 border-b bg-background/80 px-4 backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              variant="outline"
+              size="icon"
+              className="size-9 lg:hidden"
+              onClick={() => setNavOpen(true)}
+              aria-label="Open menu"
+            >
+              <Menu className="size-4" />
+            </Button>
+            <h1 className="truncate text-base font-semibold">{currentTitle(pathname)}</h1>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
             <span className="hidden items-center gap-2 text-sm text-muted-foreground md:flex">
               <span className="size-1.5 rounded-full bg-emerald-500" />
               Samsung Authorized Service Centre
@@ -253,7 +296,7 @@ export function AppShell() {
             <ThemeToggle />
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto bg-muted/30 p-6">
+        <main className="flex-1 overflow-y-auto bg-muted/30 p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

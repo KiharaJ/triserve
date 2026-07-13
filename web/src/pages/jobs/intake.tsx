@@ -411,7 +411,7 @@ export function JobIntakePage() {
                     No match — create a new customer below.
                   </p>
                 )}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <FormField label="New customer name" htmlFor="new-customer-name">
                   <Input
                     id="new-customer-name"
@@ -514,7 +514,7 @@ export function JobIntakePage() {
               )}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <FormField label="Model" htmlFor="model-search">
               {selectedModel ? (
                 <div className="flex items-center justify-between rounded-md border px-2.5 py-1">
@@ -586,7 +586,7 @@ export function JobIntakePage() {
               {...form.register('fault_reported')}
             />
           </FormField>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {faultCodes.data && (
               <FormField label="Fault code (optional)" htmlFor="fault_code_id">
                 <Select id="fault_code_id" {...form.register('fault_code_id')}>
@@ -609,7 +609,7 @@ export function JobIntakePage() {
               </Select>
             </FormField>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {can('user.read') ? (
               <FormField label="Assign engineer (optional)" htmlFor="assigned_engineer_id">
                 <Select id="assigned_engineer_id" {...form.register('assigned_engineer_id')}>

@@ -132,7 +132,7 @@ function DetailsTab({ job }: { job: JobDetailWire }) {
       <FormField label="Fault reported" htmlFor="d-fault_reported">
         <Textarea id="d-fault_reported" rows={3} disabled={!canEdit} {...form.register('fault_reported')} />
       </FormField>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <FormField label="Warranty status" htmlFor="d-warranty_status">
           <Select id="d-warranty_status" disabled={!canEdit} {...form.register('warranty_status')}>
             {WARRANTY_STATUSES.map((s) => (
