@@ -11,6 +11,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // "native" for local dev; the extra targets cover managed-host build images
+  // (Render/Railway/Fly run Debian/Ubuntu with OpenSSL 3.x or 1.1.x).
+  binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
 }
 
 datasource db {

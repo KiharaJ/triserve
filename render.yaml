@@ -1,0 +1,43 @@
+# Render blueprint for the TriServe API (NestJS + Prisma).
+# The MySQL database is hosted separately (185.229.224.9) — set DATABASE_URL
+# below to point at it. Deploy: Render Dashboard → New → Blueprint → this repo.
+services:
+  - type: web
+    name: triserve-api
+    runtime: node
+    plan: starter # or "free" for testing (spins down when idle)
+    region: frankfurt # pick the region closest to the DB
+    branch: main
+    # Monorepo: build from the repo root so npm workspaces resolve.
+    buildCommand: >-
+      npm install &&
+      npm run build -w @triserve/shared &&
+      npx prisma generate --schema=api/prisma/schema.prisma &&
+      npm run build -w @triserve/api
+    # Apply any pending migrations, then start the built server.
+    startCommand: >-
+      npx prisma migrate deploy --schema=api/prisma/schema.prisma &&
+      node api/dist/main.js
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # --- set these in the Render dashboard (marked sync:false = secret) ---
+      - key: DATABASE_URL
+        sync: false # mysql://claude:Claude%401@185.229.224.9:3306/triserve
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      - key: STORAGE_URL_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL
+        value: 15m
+      - key: JWT_REFRESH_TTL
+        value: 7d
+      - key: STORAGE_DRIVER
+        value: local # note: Render disks are ephemeral — use s3 for durable attachments
+      # Set to your Vercel URL once the web app is deployed, e.g.
+      # https://triserve.vercel.app  (comma-separate multiple origins)
+      - key: CORS_ORIGIN
+        sync: false
