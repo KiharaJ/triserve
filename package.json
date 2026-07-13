@@ -13,6 +13,7 @@
     "dev:api": "npm run dev -w @triserve/api",
     "dev:web": "npm run dev -w @triserve/web",
     "build": "npm run build -w @triserve/shared && npm run build -w @triserve/api && npm run build -w @triserve/web",
+    "build:web": "npm run build -w @triserve/shared && npm run build -w @triserve/web",
     "lint": "npm run lint -w @triserve/api && npm run lint -w @triserve/web",
     "prisma:migrate": "npm run prisma:migrate -w @triserve/api",
     "prisma:studio": "npm run prisma:studio -w @triserve/api"
