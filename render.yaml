@@ -9,14 +9,16 @@ services:
     region: frankfurt # pick the region closest to the DB
     branch: main
     # Monorepo: build from the repo root so npm workspaces resolve.
+    # Invoke prisma through the api workspace's own scripts so its .bin is on
+    # PATH (npx prisma from the repo root doesn't resolve the hoisted binary).
     buildCommand: >-
-      npm install &&
+      npm install --include=dev &&
       npm run build -w @triserve/shared &&
-      npx prisma generate --schema=api/prisma/schema.prisma &&
+      npm run prisma:generate -w @triserve/api &&
       npm run build -w @triserve/api
     # Apply any pending migrations, then start the built server.
     startCommand: >-
-      npx prisma migrate deploy --schema=api/prisma/schema.prisma &&
+      npm run prisma:deploy -w @triserve/api &&
       node api/dist/main.js
     healthCheckPath: /api/v1/health
     envVars:
