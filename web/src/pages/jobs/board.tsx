@@ -10,7 +10,24 @@ import {
   type DragStartEvent,
 } from '@dnd-kit/core'
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Search } from 'lucide-react'
+import {
+  Ban,
+  CheckCircle2,
+  CircleDot,
+  ClipboardCheck,
+  Inbox,
+  PackageCheck,
+  PackageSearch,
+  Pin,
+  Plus,
+  RotateCcw,
+  Search,
+  Stethoscope,
+  Truck,
+  UserCheck,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { PaginatedResponse } from '@triserve/shared'
@@ -20,6 +37,7 @@ import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { cn } from '@/lib/utils'
 import { useByIds } from '@/lib/use-by-ids'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import { useJobTransition } from '@/pages/jobs/use-job-transition'
@@ -48,6 +66,47 @@ function warrantyBadge(status: WarrantyStatus) {
     default:
       return <Badge variant="outline">Unknown</Badge>
   }
+}
+
+/** Per-stage identity: an icon + a colour palette. Keyed by the default
+ * lifecycle codes; unknown/custom states fall back to a rotating palette
+ * (by column position) and a neutral dot icon, so a reconfigured workflow
+ * still renders sensibly. */
+const STATE_ICON: Record<string, LucideIcon> = {
+  RECEIVED: Inbox,
+  DIAGNOSING: Stethoscope,
+  AWAITING_CUSTOMER_APPROVAL: UserCheck,
+  AWAITING_PARTS: PackageSearch,
+  IN_REPAIR: Wrench,
+  READY_FOR_COLLECTION: PackageCheck,
+  QC: ClipboardCheck,
+  COMPLETED: CheckCircle2,
+  DELIVERED: Truck,
+  RETURNED_UNREPAIRED: RotateCcw,
+  CANCELLED: Ban,
+}
+
+interface Palette {
+  chip: string
+  topBar: string
+  ring: string
+}
+
+const PALETTES: Palette[] = [
+  { chip: 'bg-blue-500/15 text-blue-600 dark:text-blue-400', topBar: 'border-t-blue-500', ring: 'ring-blue-500/50' },
+  { chip: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', topBar: 'border-t-amber-500', ring: 'ring-amber-500/50' },
+  { chip: 'bg-violet-500/15 text-violet-600 dark:text-violet-400', topBar: 'border-t-violet-500', ring: 'ring-violet-500/50' },
+  { chip: 'bg-orange-500/15 text-orange-600 dark:text-orange-400', topBar: 'border-t-orange-500', ring: 'ring-orange-500/50' },
+  { chip: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400', topBar: 'border-t-emerald-500', ring: 'ring-emerald-500/50' },
+  { chip: 'bg-teal-500/15 text-teal-600 dark:text-teal-400', topBar: 'border-t-teal-500', ring: 'ring-teal-500/50' },
+  { chip: 'bg-sky-500/15 text-sky-600 dark:text-sky-400', topBar: 'border-t-sky-500', ring: 'ring-sky-500/50' },
+  { chip: 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400', topBar: 'border-t-fuchsia-500', ring: 'ring-fuchsia-500/50' },
+]
+
+const TERMINAL_PALETTE: Palette = {
+  chip: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
+  topBar: 'border-t-slate-400',
+  ring: 'ring-slate-400/50',
 }
 
 interface CardProps {
@@ -111,7 +170,10 @@ function DraggableCard(props: CardProps) {
 function Column({
   code,
   label,
+  icon: Icon,
+  palette,
   isTerminal,
+  pinned,
   jobs,
   customers,
   devices,
@@ -119,24 +181,61 @@ function Column({
 }: {
   code: string
   label: string
+  icon: LucideIcon
+  palette: Palette
   isTerminal: boolean
+  pinned: boolean
   jobs: JobWire[]
   customers: Map<string, CustomerWire>
   devices: Map<string, DeviceWire>
   engineers: Map<string, UserWire>
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: code })
+
+  // Empty, non-pinned columns collapse to a slim rail so the populated stages
+  // get the space — but they expand while a card is dragged over them so they
+  // stay an easy drop target.
+  const collapsed = jobs.length === 0 && !pinned && !isOver
+
+  if (collapsed) {
+    return (
+      <div
+        ref={setNodeRef}
+        className="flex w-12 shrink-0 flex-col items-center gap-2 rounded-xl border border-dashed bg-muted/20 py-3"
+        title={`${label} — no jobs`}
+      >
+        <span className={cn('flex size-8 items-center justify-center rounded-lg', palette.chip)}>
+          <Icon className="size-4" />
+        </span>
+        <span className="rotate-180 text-xs font-medium text-muted-foreground [writing-mode:vertical-rl]">
+          {label}
+        </span>
+        <span className="rounded-full bg-muted px-1.5 text-[10px] font-semibold text-muted-foreground">
+          0
+        </span>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={setNodeRef}
-      className={
-        'flex w-72 shrink-0 flex-col gap-2 rounded-xl border bg-muted/30 p-2' +
-        (isOver ? ' ring-2 ring-ring' : '') +
-        (isTerminal ? ' opacity-80' : '')
-      }
+      className={cn(
+        'flex w-72 shrink-0 flex-col gap-2 rounded-xl border border-t-[3px] bg-muted/30 p-2 transition-shadow',
+        palette.topBar,
+        isOver && cn('ring-2', palette.ring),
+        pinned && 'sticky left-0 z-20 bg-card shadow-[6px_0_16px_-8px_rgba(0,0,0,0.35)]',
+        isTerminal && 'opacity-95',
+      )}
     >
-      <div className="flex items-center justify-between px-1 pt-1">
-        <span className="text-sm font-semibold">{label}</span>
+      <div className="flex items-center justify-between gap-2 px-1 pt-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className={cn('flex size-7 shrink-0 items-center justify-center rounded-lg', palette.chip)}>
+            <Icon className="size-4" />
+          </span>
+          <span className="truncate text-sm font-semibold">{label}</span>
+          {pinned && <Pin className="size-3 shrink-0 fill-current text-muted-foreground" />}
+        </span>
         <Badge variant={isTerminal ? 'secondary' : 'outline'}>{jobs.length}</Badge>
       </div>
       <div className="flex min-h-16 flex-col gap-2 overflow-y-auto pb-1">
@@ -150,7 +249,9 @@ function Column({
           />
         ))}
         {jobs.length === 0 && (
-          <p className="px-1 py-2 text-xs text-muted-foreground">No jobs</p>
+          <p className="rounded-lg border border-dashed px-2 py-6 text-center text-xs text-muted-foreground">
+            Drop a job here
+          </p>
         )}
       </div>
     </div>
@@ -254,6 +355,23 @@ export function JobsBoardPage() {
 
   const activeJob = activeJobId ? jobs.find((j) => j.id === activeJobId) : undefined
 
+  // Columns in lifecycle order, each decorated with an icon + a distinct
+  // palette. The initial state is pinned to the left; terminal states share a
+  // neutral palette and don't consume a colour slot.
+  const orderedStates = useMemo(() => {
+    const states = (graph.data?.states ?? [])
+      .filter((s) => s.active)
+      .sort((a, b) => a.sort_order - b.sort_order)
+    const pinnedCode = states.find((s) => s.is_initial)?.code ?? states[0]?.code
+    let idx = 0
+    return states.map((s) => ({
+      ...s,
+      icon: STATE_ICON[s.code] ?? CircleDot,
+      palette: s.is_terminal ? TERMINAL_PALETTE : PALETTES[idx++ % PALETTES.length],
+      pinned: s.code === pinnedCode,
+    }))
+  }, [graph.data])
+
   return (
     <div className="flex h-full flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -337,20 +455,21 @@ export function JobsBoardPage() {
           onDragCancel={() => setActiveJobId(null)}
         >
           <div className="flex flex-1 gap-3 overflow-x-auto pb-2">
-            {graph.data.states
-              .filter((s) => s.active)
-              .map((state) => (
-                <Column
-                  key={state.code}
-                  code={state.code}
-                  label={state.label}
-                  isTerminal={state.is_terminal}
-                  jobs={jobs.filter((j) => j.state_code === state.code)}
-                  customers={customers}
-                  devices={devices}
-                  engineers={engineers}
-                />
-              ))}
+            {orderedStates.map((state) => (
+              <Column
+                key={state.code}
+                code={state.code}
+                label={state.label}
+                icon={state.icon}
+                palette={state.palette}
+                isTerminal={state.is_terminal}
+                pinned={state.pinned}
+                jobs={jobs.filter((j) => j.state_code === state.code)}
+                customers={customers}
+                devices={devices}
+                engineers={engineers}
+              />
+            ))}
           </div>
           <DragOverlay>
             {activeJob && (
