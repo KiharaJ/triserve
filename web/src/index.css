@@ -139,10 +139,13 @@
     visibility: hidden;
   }
   .job-ticket,
-  .job-ticket * {
+  .job-ticket *,
+  .receipt-print,
+  .receipt-print * {
     visibility: visible;
   }
-  .job-ticket {
+  .job-ticket,
+  .receipt-print {
     position: absolute;
     top: 0;
     left: 0;

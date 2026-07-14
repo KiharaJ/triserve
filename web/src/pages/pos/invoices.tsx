@@ -24,11 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Printer } from 'lucide-react'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatMoney, majorToMinor, minorToMajor } from '@/lib/format'
+import { Receipt } from '@/components/pos/receipt'
 import type {
   BranchWire,
+  CompanyWire,
   InvoiceStatus,
   InvoiceType,
   InvoiceWire,
@@ -145,6 +148,24 @@ export function InvoicesPage() {
   const [payMethod, setPayMethod] = useState<PaymentMethodType>('CASH')
   const [payAmount, setPayAmount] = useState('')
   const [payRef, setPayRef] = useState('')
+
+  // Receipt preview/print state (fetched only when a receipt is opened).
+  const [receiptTarget, setReceiptTarget] = useState<InvoiceWire | null>(null)
+  const company = useQuery({
+    queryKey: ['company'],
+    enabled: !!receiptTarget,
+    queryFn: async () => (await api.get<CompanyWire>('/company')).data,
+  })
+  const receiptBranches = useQuery({
+    queryKey: ['branches', 'receipt'],
+    enabled: !!receiptTarget,
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<BranchWire>>('/branches', {
+          params: { page_size: 100 },
+        })
+      ).data.data,
+  })
 
   const branches = useQuery({
     queryKey: ['branches', 'all'],
@@ -354,7 +375,7 @@ export function InvoicesPage() {
                 <TableHead className="text-right">Balance</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                {(canVoid || canPay) && <TableHead className="w-28" />}
+                <TableHead className="w-40" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -389,35 +410,43 @@ export function InvoicesPage() {
                   <TableCell className="text-sm text-muted-foreground">
                     {formatDate(inv.created_at)}
                   </TableCell>
-                  {(canVoid || canPay) && (
-                    <TableCell>
-                      <div className="flex gap-1">
-                        {canPay &&
-                          (inv.status === 'DRAFT' ||
-                            inv.status === 'PARTIAL') && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openPay(inv)}
-                            >
-                              Pay
-                            </Button>
-                          )}
-                        {canVoid &&
-                          (inv.status === 'DRAFT' ||
-                            inv.status === 'PARTIAL') && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              disabled={voidInvoice.isPending}
-                              onClick={() => voidInvoice.mutate(inv.id)}
-                            >
-                              Void
-                            </Button>
-                          )}
-                      </div>
-                    </TableCell>
-                  )}
+                  <TableCell>
+                    <div className="flex justify-end gap-1">
+                      {canPay &&
+                        (inv.status === 'DRAFT' ||
+                          inv.status === 'PARTIAL') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openPay(inv)}
+                          >
+                            Pay
+                          </Button>
+                        )}
+                      {canVoid &&
+                        (inv.status === 'DRAFT' ||
+                          inv.status === 'PARTIAL') && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            disabled={voidInvoice.isPending}
+                            onClick={() => voidInvoice.mutate(inv.id)}
+                          >
+                            Void
+                          </Button>
+                        )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setReceiptTarget(inv)}
+                        title="View / print receipt"
+                      >
+                        <Printer className="size-4" />
+                        Receipt
+                      </Button>
+                    </div>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -737,6 +766,44 @@ export function InvoicesPage() {
               onClick={() => recordPayment.mutate()}
             >
               {recordPayment.isPending ? 'Saving…' : 'Record payment'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={receiptTarget !== null}
+        onOpenChange={(o) => !o && setReceiptTarget(null)}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Receipt — {receiptTarget?.invoice_no}</DialogTitle>
+            <DialogDescription>
+              Preview below. Print sends only the receipt to your printer.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto rounded-lg border bg-white p-3">
+            {receiptTarget && (
+              <Receipt
+                invoice={receiptTarget}
+                company={company.data}
+                branch={receiptBranches.data?.find(
+                  (b) => b.id === receiptTarget.branch_id,
+                )}
+              />
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setReceiptTarget(null)}
+            >
+              Close
+            </Button>
+            <Button className="gap-1.5" onClick={() => window.print()}>
+              <Printer className="size-4" />
+              Print
             </Button>
           </DialogFooter>
         </DialogContent>
