@@ -490,7 +490,25 @@ export function InvoicesPage() {
                       {inv.invoice_no}
                     </button>
                   </TableCell>
-                  <TableCell>{inv.customer_name ?? 'Walk-in'}</TableCell>
+                  <TableCell>
+                    {inv.customer_name ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="font-medium">{inv.customer_name}</span>
+                        <span>
+                          <Badge
+                            variant={inv.customer_is_dealer ? 'secondary' : 'outline'}
+                            className="text-[10px]"
+                          >
+                            {inv.customer_is_dealer ? 'Dealer' : 'Retail'}
+                          </Badge>
+                        </span>
+                      </div>
+                    ) : (
+                      <Badge variant="outline" className="text-muted-foreground">
+                        Walk-in
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>{typeBadge(inv.type)}</TableCell>
                   <TableCell className="text-right">
                     {formatMoney(inv.total, inv.currency)}

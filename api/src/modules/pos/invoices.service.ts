@@ -43,6 +43,8 @@ export interface InvoiceWire {
   branch_code: string;
   customer_id: string | null;
   customer_name: string | null;
+  /** true = dealer/trade, false = retail; null = no customer (walk-in). */
+  customer_is_dealer: boolean | null;
   job_id: string | null;
   job_no: string | null;
   type: InvoiceType;
@@ -438,6 +440,7 @@ function toWire(inv: InvoiceFull): InvoiceWire {
     branch_code: inv.branch.code,
     customer_id: inv.customerId,
     customer_name: inv.customer?.name ?? null,
+    customer_is_dealer: inv.customer?.isDealer ?? null,
     job_id: inv.jobId,
     job_no: inv.job?.jobNo ?? null,
     type: inv.type,

@@ -641,6 +641,7 @@ export interface InvoiceWire {
   branch_code: string
   customer_id: string | null
   customer_name: string | null
+  customer_is_dealer: boolean | null
   job_id: string | null
   job_no: string | null
   type: InvoiceType

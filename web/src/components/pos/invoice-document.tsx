@@ -109,6 +109,11 @@ export function InvoiceDocument({
           <div className="text-[15px] font-semibold">
             {invoice.customer_name ?? 'Walk-in customer'}
           </div>
+          {invoice.customer_name && (
+            <div className="text-black/60">
+              {invoice.customer_is_dealer ? 'Dealer / trade account' : 'Retail customer'}
+            </div>
+          )}
         </div>
         <div className="text-right text-black/70">
           {invoice.job_no && (
