@@ -31,6 +31,7 @@ import { useDebouncedValue } from '@/lib/use-debounced-value'
 import { formatDate, formatMoney, majorToMinor, minorToMajor } from '@/lib/format'
 import { Receipt } from '@/components/pos/receipt'
 import { InvoiceDocument } from '@/components/pos/invoice-document'
+import { JobPicker } from '@/components/shared/job-picker'
 import { SearchPicker } from '@/components/shared/search-picker'
 import { Textarea } from '@/components/ui/textarea'
 import type {
@@ -40,10 +41,10 @@ import type {
   InvoiceStatus,
   InvoiceType,
   InvoiceWire,
-  JobWire,
   PartWire,
   PaymentMethodType,
   ProductWire,
+  TaxRateWire,
 } from '@/lib/types'
 
 const PAYMENT_METHODS: PaymentMethodType[] = [
@@ -148,7 +149,7 @@ export function InvoicesPage() {
   const [type, setType] = useState<InvoiceType>('PARTS_SALE')
   const [branchId, setBranchId] = useState('')
   const [discount, setDiscount] = useState('')
-  const [tax, setTax] = useState('')
+  const [taxRateId, setTaxRateId] = useState('')
   const [notes, setNotes] = useState('')
   const [customerId, setCustomerId] = useState('')
   const [customerLabel, setCustomerLabel] = useState<string | null>(null)
@@ -222,6 +223,15 @@ export function InvoicesPage() {
       ).data.data,
   })
 
+  // VAT / tax rates are a configurable setting (Configuration → Tax rates).
+  const taxRates = useQuery({
+    queryKey: ['tax-rates', 'active'],
+    enabled: canCreate,
+    queryFn: async () =>
+      (await api.get<PaginatedResponse<TaxRateWire>>('/tax-rates/active')).data
+        .data,
+  })
+
   const invoices = useQuery({
     queryKey: ['invoices', page, statusFilter, typeFilter, branchFilter, search],
     queryFn: async () =>
@@ -246,7 +256,7 @@ export function InvoicesPage() {
     setType('PARTS_SALE')
     setBranchId('')
     setDiscount('')
-    setTax('')
+    setTaxRateId('')
     setNotes('')
     setCustomerId('')
     setCustomerLabel(null)
@@ -266,7 +276,7 @@ export function InvoicesPage() {
           job_id: jobId || undefined,
           notes: notes.trim() || undefined,
           discount: majorToMinor(discount) ?? undefined,
-          tax: majorToMinor(tax) ?? undefined,
+          tax: totals.tax > 0 ? majorToMinor(String(totals.tax)) : undefined,
           lines: lines
             .filter((l) => l.description && Number(l.qty) > 0 && l.unit_price)
             .map((l) => ({
@@ -386,16 +396,20 @@ export function InvoicesPage() {
     (l) => l.description && Number(l.qty) > 0 && l.unit_price,
   )
 
-  // Live totals preview for the draft (whole-shilling arithmetic).
+  // Live totals preview for the draft (whole-shilling arithmetic). VAT is
+  // derived from the selected tax rate: tax = (subtotal − discount) × percent.
   const totals = useMemo(() => {
     const subtotal = validLines.reduce(
       (s, l) => s + Number(l.qty) * Number(l.unit_price),
       0,
     )
     const disc = Number(discount) || 0
-    const t = Number(tax) || 0
-    return { subtotal, discount: disc, tax: t, total: subtotal - disc + t }
-  }, [validLines, discount, tax])
+    const rate = taxRates.data?.find((r) => r.id === taxRateId)
+    const percent = rate ? Number(rate.percent) : 0
+    const taxable = Math.max(0, subtotal - disc)
+    const tax = Math.round((taxable * percent) / 100)
+    return { subtotal, discount: disc, tax, percent, total: subtotal - disc + tax }
+  }, [validLines, discount, taxRateId, taxRates.data])
 
   const fmtTsh = (n: number) => `TSh ${Math.round(n).toLocaleString()}`
 
@@ -648,29 +662,10 @@ export function InvoicesPage() {
               <FormField
                 label="Job card"
                 htmlFor="inv-job"
-                hint="Invoice a repair — links the job & its customer"
+                hint="Invoice a repair — filter by engineer, then pick the job"
               >
-                <SearchPicker<JobWire>
-                  placeholder="Search job # / IMEI / phone…"
-                  queryKey="invoice-job-search"
+                <JobPicker
                   selectedLabel={jobLabel}
-                  queryFn={async (q) =>
-                    (
-                      await api.get<PaginatedResponse<JobWire>>('/jobs', {
-                        params: { q, page_size: 8 },
-                      })
-                    ).data.data
-                  }
-                  getKey={(j) => j.id}
-                  renderItem={(j) => (
-                    <>
-                      <span className="font-mono font-medium">{j.job_no}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {j.state_label}
-                        {j.fault_reported ? ` · ${j.fault_reported}` : ''}
-                      </span>
-                    </>
-                  )}
                   onSelect={(j) => {
                     setJobId(j.id)
                     setJobLabel(j.job_no)
@@ -903,13 +898,23 @@ export function InvoicesPage() {
                   onChange={(e) => setDiscount(e.target.value)}
                 />
               </FormField>
-              <FormField label="Tax / VAT (TSh)" htmlFor="inv-tax">
-                <Input
-                  id="inv-tax"
-                  inputMode="numeric"
-                  value={tax}
-                  onChange={(e) => setTax(e.target.value)}
-                />
+              <FormField
+                label="VAT"
+                htmlFor="inv-vat"
+                hint="Auto-calculated from the selected rate"
+              >
+                <Select
+                  id="inv-vat"
+                  value={taxRateId}
+                  onChange={(e) => setTaxRateId(e.target.value)}
+                >
+                  <option value="">No VAT</option>
+                  {taxRates.data?.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.label} ({r.percent}%)
+                    </option>
+                  ))}
+                </Select>
               </FormField>
             </div>
 
@@ -926,7 +931,7 @@ export function InvoicesPage() {
               )}
               {totals.tax > 0 && (
                 <div className="flex justify-between text-muted-foreground">
-                  <span>VAT</span>
+                  <span>VAT ({totals.percent}%)</span>
                   <span>{fmtTsh(totals.tax)}</span>
                 </div>
               )}

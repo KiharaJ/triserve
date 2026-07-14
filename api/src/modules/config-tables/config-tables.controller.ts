@@ -198,6 +198,21 @@ export class TaxRatesController {
     return this.config.listTaxRates(query, user);
   }
 
+  /**
+   * Active tax rates for the POS (invoice VAT picker) — readable by anyone who
+   * can raise an invoice, without the broader config.read grant.
+   */
+  @Get('active')
+  @RequirePermissions('invoice.create')
+  active(
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResponse<TaxRateWire>> {
+    return this.config.listTaxRates(
+      { active: true, page_size: 100 } as ConfigListQueryDto,
+      user,
+    );
+  }
+
   @Post()
   @RequirePermissions('config.manage')
   create(

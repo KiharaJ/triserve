@@ -10,6 +10,12 @@ interface SearchPickerProps<T> {
   /** react-query cache namespace for the search results. */
   queryKey: string
   minChars?: number
+  /** Extra values appended to the query key so results refetch when an
+   * external filter (e.g. an engineer) changes. */
+  deps?: unknown[]
+  /** Run the query (and open the dropdown) even with an empty input — used to
+   * browse a pre-filtered list, e.g. all of one engineer's jobs. */
+  allowEmpty?: boolean
   queryFn: (q: string) => Promise<T[]>
   getKey: (item: T) => string
   renderItem: (item: T) => ReactNode
@@ -30,6 +36,8 @@ export function SearchPicker<T>({
   placeholder,
   queryKey,
   minChars = 2,
+  deps,
+  allowEmpty,
   queryFn,
   getKey,
   renderItem,
@@ -42,9 +50,11 @@ export function SearchPicker<T>({
   const [open, setOpen] = useState(false)
   const debounced = useDebouncedValue(q, 300)
 
+  const canQuery =
+    open && (debounced.trim().length >= minChars || Boolean(allowEmpty))
   const results = useQuery({
-    queryKey: [queryKey, debounced],
-    enabled: open && debounced.trim().length >= minChars,
+    queryKey: [queryKey, debounced, ...(deps ?? [])],
+    enabled: canQuery,
     queryFn: () => queryFn(debounced.trim()),
   })
 
@@ -79,7 +89,7 @@ export function SearchPicker<T>({
         }}
         onFocus={() => setOpen(true)}
       />
-      {open && debounced.trim().length >= minChars && (
+      {canQuery && (
         <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
           {results.isPending && (
             <p className="px-2 py-1.5 text-sm text-muted-foreground">Searching…</p>

@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 import type { PaginatedResponse } from '@triserve/shared'
 import { FormField } from '@/components/shared/form-field'
+import { JobPicker } from '@/components/shared/job-picker'
 import { Pager } from '@/components/shared/pager'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -29,7 +30,6 @@ import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { decimalToMinor, formatDate, formatMoney, minorToDecimal } from '@/lib/format'
 import type {
-  JobWire,
   LabourCode,
   WarrantyClaimStatus,
   WarrantyClaimWire,
@@ -74,6 +74,7 @@ export function WarrantyClaimsPage() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [jobId, setJobId] = useState('')
+  const [jobLabel, setJobLabel] = useState<string | null>(null)
   const [amount, setAmount] = useState('')
   const [labourCode, setLabourCode] = useState<'' | LabourCode>('')
   const [claimNo, setClaimNo] = useState('')
@@ -86,19 +87,6 @@ export function WarrantyClaimsPage() {
   const canSubmit = can('warranty.claim.submit')
   const canReconcile = can('warranty.claim.reconcile')
   const canRead = can('warranty.claim.read')
-
-  // Recent jobs to attach a claim to. Not filtered to IW: a job's warranty
-  // status can be corrected here, and legacy/imported jobs are UNKNOWN.
-  const jobs = useQuery({
-    queryKey: ['jobs', 'warranty-options'],
-    enabled: canCreate,
-    queryFn: async () =>
-      (
-        await api.get<PaginatedResponse<JobWire>>('/jobs', {
-          params: { page_size: 100 },
-        })
-      ).data.data,
-  })
 
   const claims = useQuery({
     queryKey: ['warranty-claims', page, statusFilter],
@@ -120,6 +108,7 @@ export function WarrantyClaimsPage() {
   function openCreate() {
     setEditId(null)
     setJobId('')
+    setJobLabel(null)
     setAmount('')
     setLabourCode('')
     setClaimNo('')
@@ -429,15 +418,20 @@ export function WarrantyClaimsPage() {
           </DialogHeader>
           <div className="flex flex-col gap-3">
             {!editId && (
-              <FormField label="Job (IW)">
-                <Select value={jobId} onChange={(e) => setJobId(e.target.value)}>
-                  <option value="">Select a job…</option>
-                  {(jobs.data ?? []).map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.job_no}
-                    </option>
-                  ))}
-                </Select>
+              <FormField label="Job" htmlFor="claim-job">
+                <JobPicker
+                  selectedLabel={jobLabel}
+                  onSelect={(j) => {
+                    setJobId(j.id)
+                    setJobLabel(
+                      `${j.job_no}${j.fault_reported ? ` · ${j.fault_reported}` : ''}`,
+                    )
+                  }}
+                  onClear={() => {
+                    setJobId('')
+                    setJobLabel(null)
+                  }}
+                />
               </FormField>
             )}
             <FormField label="Claim amount (USD)">
