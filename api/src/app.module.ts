@@ -20,6 +20,8 @@ import { ProductsModule } from './modules/products/products.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SuppliersModule } from './modules/suppliers/suppliers.module';
 import { ModelsModule } from './modules/models/models.module';
+import { PermissionResolverModule } from './modules/roles/permission-resolver.module';
+import { RolesModule } from './modules/roles/roles.module';
 import { UsersModule } from './modules/users/users.module';
 import { WarrantyModule } from './modules/warranty/warranty.module';
 import { WorkflowModule } from './modules/workflow/workflow.module';
@@ -33,11 +35,15 @@ import { PrismaModule } from './prisma/prisma.module';
       envFilePath: ['.env', '../.env'],
     }),
     PrismaModule,
+    // E17: global resolver of the effective role × permission matrix — must be
+    // available to the guard across every feature module.
+    PermissionResolverModule,
     HealthModule,
     AuthModule,
     CompaniesModule,
     BranchesModule,
     UsersModule,
+    RolesModule,
     ConfigTablesModule,
     AuditModule,
     ApprovalsModule,

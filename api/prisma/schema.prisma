@@ -10,7 +10,7 @@
 //   - Audit: created_by / updated_by nullable FK -> users
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // "native" for local dev; the extra targets cover managed-host build images
   // (Render/Railway/Fly run Debian/Ubuntu with OpenSSL 3.x or 1.1.x).
   binaryTargets = ["native", "debian-openssl-3.0.x", "debian-openssl-1.1.x"]
@@ -177,6 +177,8 @@ model Company {
   warrantyClaims        WarrantyClaim[]
   warrantyRegistrations WarrantyRegistration[]
   products              Product[]
+  // E17: per-company overrides of the default role × permission matrix.
+  rolePermissions       RolePermission[]
 
   @@map("companies")
 }
@@ -348,6 +350,36 @@ model User {
   updatedProducts              Product[]              @relation("ProductUpdatedBy")
 
   @@map("users")
+}
+
+/// Per-company override of the default role × permission matrix (E17).
+///
+/// The API ships a static default matrix in @triserve/shared
+/// (`ROLE_PERMISSIONS`). This table stores only the DELTA a company has
+/// applied on top of those defaults: one row per (role, permission) whose
+/// effective grant differs from the default. `granted = true` adds a
+/// permission the default withholds; `granted = false` revokes one the
+/// default grants. A role with no rows resolves to its plain default, and a
+/// permission added to the catalogue later is inherited until overridden.
+/// SUPER_ADMIN is never stored here — it always holds every permission.
+model RolePermission {
+  id         String   @id @default(uuid()) @db.Char(36)
+  companyId  String   @map("company_id") @db.Char(36)
+  role       UserRole
+  /// A @triserve/shared permission string, e.g. "invoice.void".
+  permission String   @db.VarChar(100)
+  granted    Boolean
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, role, permission])
+  @@index([companyId, role])
+  @@map("role_permissions")
 }
 
 // ---------------------------------------------------------------------------

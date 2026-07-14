@@ -137,8 +137,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const can = useCallback(
-    (permission: Permission): boolean =>
-      user !== null && roleHasPermission(user.role, permission),
+    (permission: Permission): boolean => {
+      if (!user) return false
+      // Prefer the server-resolved effective set (E17: role defaults + this
+      // company's overrides); fall back to the static matrix for sessions
+      // issued before the field existed. UX-only — the API re-checks.
+      if (user.permissions) return user.permissions.includes(permission)
+      return roleHasPermission(user.role, permission)
+    },
     [user],
   )
 

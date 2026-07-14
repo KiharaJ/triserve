@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { BranchesPage } from '@/pages/admin/branches'
 import { CompanyPage } from '@/pages/admin/company'
 import { ConfigPage } from '@/pages/admin/config'
+import { RolesPage } from '@/pages/admin/roles'
 import { UsersPage } from '@/pages/admin/users'
 import { ApprovalsPage } from '@/pages/approvals'
 import { AuditPage } from '@/pages/audit'
@@ -100,6 +101,7 @@ function App() {
           <Route path="company" element={<CompanyPage />} />
           <Route path="branches" element={<BranchesPage />} />
           <Route path="users" element={<UsersPage />} />
+          <Route path="roles" element={<RolesPage />} />
           <Route path="config" element={<ConfigPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

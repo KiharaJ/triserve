@@ -279,3 +279,190 @@ export function roleHasPermission(
   if (role === 'SUPER_ADMIN') return true;
   return ROLE_PERMISSIONS[role].includes(permission);
 }
+
+// ---------------------------------------------------------------------------
+// Editable per-company matrix (E17)
+//
+// Companies may tune each role's permissions away from the defaults above.
+// The API persists only the DELTA from the default (a set of
+// {role, permission, granted} overrides) and resolves the *effective* matrix
+// as `default XOR overrides`, so a permission added to the catalogue later is
+// automatically inherited by every role until a company explicitly overrides
+// it. SUPER_ADMIN is never editable — it always holds every permission, which
+// guarantees a company can never lock every admin out of its own tenant.
+// ---------------------------------------------------------------------------
+
+/** Every role a company MAY re-scope (all but the all-powerful SUPER_ADMIN). */
+export const EDITABLE_ROLES: readonly RoleName[] = USER_ROLES.filter(
+  (r) => r !== 'SUPER_ADMIN',
+);
+
+/** True when a company is allowed to edit this role's permission set. */
+export function isRoleEditable(role: RoleName): boolean {
+  return role !== 'SUPER_ADMIN';
+}
+
+/** One persisted deviation from the default matrix for a single company. */
+export interface PermissionOverride {
+  role: RoleName;
+  permission: Permission;
+  /** true = grant on top of the default, false = revoke from the default. */
+  granted: boolean;
+}
+
+/**
+ * Resolve a role's EFFECTIVE permission set from the static defaults plus a
+ * company's overrides. SUPER_ADMIN always resolves to every permission.
+ * Overrides for permissions no longer in the catalogue are ignored.
+ */
+export function resolveEffectivePermissions(
+  role: RoleName,
+  overrides: readonly PermissionOverride[],
+): Permission[] {
+  if (role === 'SUPER_ADMIN') return [...ALL_PERMISSIONS];
+
+  const effective = new Set<Permission>(ROLE_PERMISSIONS[role]);
+  const known = new Set<Permission>(ALL_PERMISSIONS);
+  for (const o of overrides) {
+    if (o.role !== role || !known.has(o.permission)) continue;
+    if (o.granted) effective.add(o.permission);
+    else effective.delete(o.permission);
+  }
+  // Preserve the catalogue order for a stable, groupable response.
+  return ALL_PERMISSIONS.filter((p) => effective.has(p));
+}
+
+/** Human-readable label for each permission domain (the PERMISSIONS keys). */
+export const PERMISSION_DOMAIN_LABELS: Record<
+  keyof typeof PERMISSIONS,
+  string
+> = {
+  jobs: 'Jobs & repairs',
+  parts: 'Parts catalogue',
+  inventory: 'Inventory & stock',
+  procurement: 'Procurement',
+  pos: 'Point of sale',
+  warranty: 'Warranty',
+  approvals: 'Approvals',
+  accounting: 'Accounting',
+  customers: 'Customers',
+  devices: 'Devices',
+  models: 'Device models',
+  users: 'Users & access',
+  reports: 'Reports',
+  config: 'Configuration',
+  audit: 'Audit',
+  attachments: 'Attachments',
+};
+
+/** Short human labels for every permission, for the matrix editor. */
+export const PERMISSION_LABELS: Record<Permission, string> = {
+  'job.create': 'Book jobs',
+  'job.read': 'View jobs',
+  'job.update': 'Edit jobs',
+  'job.assign': 'Assign engineers',
+  'job.transition': 'Move jobs (front desk)',
+  'job.transition.repair': 'Move jobs (bench/repair)',
+  'job.transition.dispatch': 'Move jobs (dispatch/handover)',
+  'job.reopen': 'Reopen closed jobs',
+  'part.read': 'View parts catalogue',
+  'part.manage': 'Manage parts catalogue',
+  'inventory.read': 'View stock levels',
+  'inventory.reserve': 'Reserve stock',
+  'inventory.consume': 'Consume stock',
+  'inventory.adjust': 'Adjust stock',
+  'inventory.transfer': 'Transfer stock',
+  'inventory.count': 'Stock counts',
+  'po.create': 'Raise purchase orders',
+  'po.read': 'View purchase orders',
+  'po.approve': 'Approve purchase orders',
+  'grn.receive': 'Receive deliveries (GRN)',
+  'supplier.read': 'View suppliers',
+  'supplier.manage': 'Manage suppliers',
+  'pos.sell': 'Sell at POS',
+  'invoice.create': 'Create invoices',
+  'invoice.read': 'View invoices',
+  'invoice.void': 'Void invoices',
+  'payment.capture': 'Capture payments',
+  'payment.refund': 'Refund payments',
+  'discount.apply': 'Apply discounts',
+  'warranty.claim.create': 'Create warranty claims',
+  'warranty.claim.read': 'View warranty claims',
+  'warranty.claim.submit': 'Submit warranty claims',
+  'warranty.claim.reconcile': 'Reconcile warranty claims',
+  'warranty.claim.cancel': 'Cancel warranty claims',
+  'approval.request': 'Request approvals',
+  'approval.decide': 'Decide approvals',
+  'accounting.read': 'View accounting',
+  'accounting.post': 'Post journal entries',
+  'accounting.close': 'Close accounting periods',
+  'customer.create': 'Create customers',
+  'customer.read': 'View customers',
+  'customer.update': 'Edit customers',
+  'device.create': 'Create devices',
+  'device.read': 'View devices',
+  'device.update': 'Edit devices',
+  'model.read': 'View device models',
+  'model.manage': 'Manage device models',
+  'user.read': 'View users & roles',
+  'user.manage': 'Manage users & roles',
+  'report.view.branch': 'Branch reports',
+  'report.view.group': 'Group reports',
+  'report.view.finance': 'Finance reports',
+  'config.read': 'View configuration',
+  'config.manage': 'Manage configuration',
+  'audit.read': 'View audit log',
+  'attachment.create': 'Upload attachments',
+  'attachment.read': 'View attachments',
+  'attachment.delete': 'Delete attachments',
+};
+
+/** Display name for each role. */
+export const ROLE_LABELS: Record<RoleName, string> = {
+  SUPER_ADMIN: 'Super Admin',
+  BRANCH_MANAGER: 'Branch Manager',
+  SERVICE_ADVISOR: 'Service Advisor',
+  TECHNICIAN: 'Technician',
+  STOREKEEPER: 'Storekeeper',
+  WARRANTY_CLERK: 'Warranty Clerk',
+  ACCOUNTANT: 'Accountant',
+};
+
+/** One-line description of each role, for the roles admin screen. */
+export const ROLE_DESCRIPTIONS: Record<RoleName, string> = {
+  SUPER_ADMIN: 'Full access to every area — cannot be restricted.',
+  BRANCH_MANAGER: 'Runs a branch: approvals, staff, stock and reporting.',
+  SERVICE_ADVISOR: 'Front desk: customers, intake, invoicing and handover.',
+  TECHNICIAN: 'Bench: works on and moves assigned repair jobs.',
+  STOREKEEPER: 'Parts and stock: catalogue, counts, transfers and receiving.',
+  WARRANTY_CLERK: 'Handles warranty claims end to end.',
+  ACCOUNTANT: 'Group-wide finance: ledger, posting and reports.',
+};
+
+// -- Wire contracts shared by the roles admin endpoint & UI ------------------
+
+/** One role's resolved permission state (GET /roles). */
+export interface RoleMatrixEntry {
+  role: RoleName;
+  label: string;
+  description: string;
+  editable: boolean;
+  /** Effective permissions after applying this company's overrides. */
+  effective: Permission[];
+  /** The static default permissions for this role. */
+  default: Permission[];
+  /** Permissions whose effective grant differs from the default. */
+  overridden: Permission[];
+  /** How many active users currently hold this role. */
+  user_count: number;
+}
+
+/** GET /roles response. */
+export interface RolesMatrixResponse {
+  roles: RoleMatrixEntry[];
+}
+
+/** PUT /roles/{role}/permissions body — the desired effective grant set. */
+export interface UpdateRolePermissionsBody {
+  permissions: Permission[];
+}

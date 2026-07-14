@@ -1,3 +1,4 @@
+import type { Permission } from '@triserve/shared';
 import type { UserRole, UserScope } from '@prisma/client';
 
 /**
@@ -55,6 +56,12 @@ export interface PublicUser {
   company_id: string;
   home_branch_id: string | null;
   totp_enabled: boolean;
+  /**
+   * The user's EFFECTIVE permissions for their company (E17) — the static
+   * role defaults with the company's overrides applied. The web app gates its
+   * UI on this list; the API re-checks server-side on every endpoint.
+   */
+  permissions: Permission[];
 }
 
 /**

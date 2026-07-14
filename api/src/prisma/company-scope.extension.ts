@@ -35,6 +35,9 @@ import { getCurrentUser } from '../common/context/request-context';
 export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.Company,
   Prisma.ModelName.User,
+  // E17: per-company role × permission overrides — scoped like every other
+  // company table (company_id force-injected on create, reads tenancy-filtered).
+  Prisma.ModelName.RolePermission,
   Prisma.ModelName.Branch,
   Prisma.ModelName.Currency,
   Prisma.ModelName.PaymentMethod,

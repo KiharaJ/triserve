@@ -1,8 +1,14 @@
 import { ForbiddenException, type ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { ALL_PERMISSIONS } from '@triserve/shared';
+import {
+  ALL_PERMISSIONS,
+  roleHasPermission,
+  type Permission,
+  type RoleName,
+} from '@triserve/shared';
 import { randomUUID } from 'node:crypto';
 import type { AuthUser } from '../../modules/auth/auth.types';
+import type { PermissionResolverService } from '../../modules/roles/permission-resolver.service';
 import { PermissionsGuard } from './permissions.guard';
 import { RequirePermissions } from './require-permissions.decorator';
 
@@ -47,17 +53,25 @@ function makeContext(
 }
 
 describe('PermissionsGuard', () => {
-  const guard = new PermissionsGuard(new Reflector());
+  // Resolver backed by the STATIC defaults — these tests assert the default
+  // matrix enforcement; per-company overrides are covered by the resolver's
+  // own tests. `has` mirrors what resolveEffectivePermissions yields for an
+  // override-free company.
+  const resolver = {
+    has: (_companyId: string, role: RoleName, permission: Permission) =>
+      Promise.resolve(roleHasPermission(role, permission)),
+  } as unknown as PermissionResolverService;
+  const guard = new PermissionsGuard(new Reflector(), resolver);
   const proto = DummyController.prototype;
 
-  it('denies TECHNICIAN user.manage (403 FORBIDDEN)', () => {
+  it('denies TECHNICIAN user.manage (403 FORBIDDEN)', async () => {
     const ctx = makeContext(
       proto.manageUsers,
       makeUser({ role: 'TECHNICIAN' }),
     );
     let caught: unknown;
     try {
-      guard.canActivate(ctx);
+      await guard.canActivate(ctx);
     } catch (e) {
       caught = e;
     }
@@ -66,60 +80,62 @@ describe('PermissionsGuard', () => {
     expect((caught as ForbiddenException).message).toContain('user.manage');
   });
 
-  it('allows TECHNICIAN job.transition (in their role map)', () => {
+  it('allows TECHNICIAN job.transition (in their role map)', async () => {
     const ctx = makeContext(
       proto.transitionJob,
       makeUser({ role: 'TECHNICIAN' }),
     );
-    expect(guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('allows SUPER_ADMIN everything', () => {
+  it('allows SUPER_ADMIN everything', async () => {
     const admin = makeUser({ role: 'SUPER_ADMIN', scope: 'group' });
-    expect(guard.canActivate(makeContext(proto.manageUsers, admin))).toBe(true);
-    expect(guard.canActivate(makeContext(proto.transitionJob, admin))).toBe(
-      true,
-    );
-    expect(guard.canActivate(makeContext(proto.approveAndAdjust, admin))).toBe(
-      true,
-    );
+    await expect(
+      guard.canActivate(makeContext(proto.manageUsers, admin)),
+    ).resolves.toBe(true);
+    await expect(
+      guard.canActivate(makeContext(proto.transitionJob, admin)),
+    ).resolves.toBe(true);
+    await expect(
+      guard.canActivate(makeContext(proto.approveAndAdjust, admin)),
+    ).resolves.toBe(true);
   });
 
-  it('ANDs multiple permissions — STOREKEEPER lacks po.approve', () => {
+  it('ANDs multiple permissions — STOREKEEPER lacks po.approve', async () => {
     // STOREKEEPER has inventory.adjust but NOT po.approve → still 403.
     const ctx = makeContext(
       proto.approveAndAdjust,
       makeUser({ role: 'STOREKEEPER' }),
     );
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
-    expect(() => guard.canActivate(ctx)).toThrow(/po\.approve/);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(ForbiddenException);
+    await expect(guard.canActivate(ctx)).rejects.toThrow(/po\.approve/);
   });
 
-  it('allows BRANCH_MANAGER po.approve + inventory.adjust', () => {
+  it('allows BRANCH_MANAGER po.approve + inventory.adjust', async () => {
     const ctx = makeContext(
       proto.approveAndAdjust,
       makeUser({ role: 'BRANCH_MANAGER' }),
     );
-    expect(guard.canActivate(ctx)).toBe(true);
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
   });
 
-  it('denies SERVICE_ADVISOR accounting-only actions via role map', () => {
+  it('denies SERVICE_ADVISOR accounting-only actions via role map', async () => {
     const advisor = makeUser({ role: 'SERVICE_ADVISOR' });
-    expect(() =>
+    await expect(
       guard.canActivate(makeContext(proto.manageUsers, advisor)),
-    ).toThrow(ForbiddenException);
+    ).rejects.toThrow(ForbiddenException);
   });
 
-  it('passes routes without @RequirePermissions metadata untouched', () => {
-    expect(guard.canActivate(makeContext(proto.noMetadata, undefined))).toBe(
-      true,
-    );
+  it('passes routes without @RequirePermissions metadata untouched', async () => {
+    await expect(
+      guard.canActivate(makeContext(proto.noMetadata, undefined)),
+    ).resolves.toBe(true);
   });
 
-  it('fails closed when metadata exists but no user was attached', () => {
-    expect(() =>
+  it('fails closed when metadata exists but no user was attached', async () => {
+    await expect(
       guard.canActivate(makeContext(proto.manageUsers, undefined)),
-    ).toThrow(ForbiddenException);
+    ).rejects.toThrow(ForbiddenException);
   });
 
   it('sanity: the permission vocabulary is non-empty and unique', () => {

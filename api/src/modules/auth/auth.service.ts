@@ -11,7 +11,9 @@ import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PaginatedResponse } from '@triserve/shared';
+import type { Permission } from '@triserve/shared';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import type {
   AccessTokenPayload,
   AuthTokensResponse,
@@ -38,6 +40,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly resolver: PermissionResolverService,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -161,7 +164,7 @@ export class AuthService {
       },
     });
 
-    return { ...tokens, user: this.toPublicUser(user) };
+    return { ...tokens, user: await this.toPublicUser(user) };
   }
 
   /** POST /auth/logout — revokes the current session's refresh token. */
@@ -359,7 +362,7 @@ export class AuthService {
       },
     });
 
-    return { ...tokens, user: this.toPublicUser(user) };
+    return { ...tokens, user: await this.toPublicUser(user) };
   }
 
   private async signTokens(
@@ -396,7 +399,11 @@ export class AuthService {
     return { access_token: accessToken, refresh_token: refreshToken };
   }
 
-  private toPublicUser(user: User): PublicUser {
+  private async toPublicUser(user: User): Promise<PublicUser> {
+    const permissions: Permission[] = await this.resolver.effectiveForRole(
+      user.companyId,
+      user.role,
+    );
     return {
       id: user.id,
       email: user.email,
@@ -406,6 +413,7 @@ export class AuthService {
       company_id: user.companyId,
       home_branch_id: user.homeBranchId,
       totp_enabled: user.totpEnabled,
+      permissions,
     };
   }
 }

@@ -6,6 +6,7 @@ import * as argon2 from 'argon2';
 import { authenticator } from 'otplib';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import { AuthService } from './auth.service';
 import type { AuthTokensResponse, MfaRequiredResponse } from './auth.types';
 
@@ -121,10 +122,17 @@ describe('AuthService', () => {
     const config = {
       get: (key: string, def?: string) => CONFIG[key] ?? def,
     } as unknown as ConfigService;
+    const resolver = {
+      effectiveForRole: jest.fn(async () => []),
+      has: jest.fn(async () => true),
+      listOverrides: jest.fn(async () => []),
+      invalidate: jest.fn(),
+    } as unknown as PermissionResolverService;
     service = new AuthService(
       prisma as unknown as PrismaService,
       new JwtService({}),
       config,
+      resolver,
     );
   });
 
