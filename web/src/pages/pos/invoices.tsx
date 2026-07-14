@@ -312,6 +312,22 @@ export function InvoicesPage() {
     onError: (e) => toast.error(apiErrorMessage(e)),
   })
 
+  // Create a customer inline from the invoice form and attach it.
+  const createCustomer = useMutation({
+    mutationFn: async (name: string) => {
+      const phone =
+        window.prompt(`Add customer "${name}"\n\nPhone number (optional):`)?.trim() ||
+        undefined
+      return (await api.post<CustomerWire>('/customers', { name, phone })).data
+    },
+    onSuccess: (c) => {
+      setCustomerId(c.id)
+      setCustomerLabel(`${c.name}${c.phone ? ` · ${c.phone}` : ''}`)
+      toast.success(`Customer ${c.name} added`)
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
   const voidInvoice = useMutation({
     mutationFn: async (id: string) => {
       const reason = window.prompt('Reason for voiding this invoice?')
@@ -703,6 +719,11 @@ export function InvoicesPage() {
                     setCustomerId('')
                     setCustomerLabel(null)
                   }}
+                  onCreateNew={
+                    can('customer.create')
+                      ? (q) => createCustomer.mutate(q)
+                      : undefined
+                  }
                 />
               </FormField>
             </div>

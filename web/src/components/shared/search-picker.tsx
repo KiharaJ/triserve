@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Search, X } from 'lucide-react'
+import { Plus, Search, X } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -17,6 +17,8 @@ interface SearchPickerProps<T> {
   selectedLabel?: string | null
   onSelect: (item: T) => void
   onClear: () => void
+  /** When set, adds an "Add ‹query›" row to create a new record inline. */
+  onCreateNew?: (query: string) => void
 }
 
 /**
@@ -34,6 +36,7 @@ export function SearchPicker<T>({
   selectedLabel,
   onSelect,
   onClear,
+  onCreateNew,
 }: SearchPickerProps<T>) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
@@ -81,7 +84,7 @@ export function SearchPicker<T>({
           {results.isPending && (
             <p className="px-2 py-1.5 text-sm text-muted-foreground">Searching…</p>
           )}
-          {results.data?.length === 0 && (
+          {!results.isPending && results.data?.length === 0 && !onCreateNew && (
             <p className="px-2 py-1.5 text-sm text-muted-foreground">No matches</p>
           )}
           {results.data?.map((item) => (
@@ -98,6 +101,20 @@ export function SearchPicker<T>({
               {renderItem(item)}
             </button>
           ))}
+          {onCreateNew && (
+            <button
+              type="button"
+              className="mt-0.5 flex w-full items-center gap-1.5 rounded-sm border-t px-2 py-1.5 text-left text-sm font-medium text-primary hover:bg-accent"
+              onClick={() => {
+                onCreateNew(debounced.trim())
+                setOpen(false)
+                setQ('')
+              }}
+            >
+              <Plus className="size-3.5 shrink-0" />
+              Add “{debounced.trim()}”
+            </button>
+          )}
         </div>
       )}
     </div>
