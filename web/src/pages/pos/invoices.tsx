@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { PaginatedResponse } from '@triserve/shared'
 import { FormField } from '@/components/shared/form-field'
@@ -24,17 +24,23 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Printer } from 'lucide-react'
+import { FileText, Plus, Printer, Search } from 'lucide-react'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { useDebouncedValue } from '@/lib/use-debounced-value'
 import { formatDate, formatMoney, majorToMinor, minorToMajor } from '@/lib/format'
 import { Receipt } from '@/components/pos/receipt'
+import { InvoiceDocument } from '@/components/pos/invoice-document'
+import { SearchPicker } from '@/components/shared/search-picker'
+import { Textarea } from '@/components/ui/textarea'
 import type {
   BranchWire,
   CompanyWire,
+  CustomerWire,
   InvoiceStatus,
   InvoiceType,
   InvoiceWire,
+  JobWire,
   PartWire,
   PaymentMethodType,
   ProductWire,
@@ -130,13 +136,28 @@ export function InvoicesPage() {
   const { can, user } = useAuth()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(1)
+  // List filters.
   const [statusFilter, setStatusFilter] = useState('')
+  const [typeFilter, setTypeFilter] = useState('')
+  const [branchFilter, setBranchFilter] = useState('')
+  const [searchInput, setSearchInput] = useState('')
+  const search = useDebouncedValue(searchInput.trim(), 350)
+
+  // New-invoice form.
   const [dialogOpen, setDialogOpen] = useState(false)
   const [type, setType] = useState<InvoiceType>('PARTS_SALE')
   const [branchId, setBranchId] = useState('')
   const [discount, setDiscount] = useState('')
   const [tax, setTax] = useState('')
+  const [notes, setNotes] = useState('')
+  const [customerId, setCustomerId] = useState('')
+  const [customerLabel, setCustomerLabel] = useState<string | null>(null)
+  const [jobId, setJobId] = useState('')
+  const [jobLabel, setJobLabel] = useState<string | null>(null)
   const [lines, setLines] = useState<DraftLine[]>([{ ...EMPTY_LINE }])
+
+  // Full-invoice document view.
+  const [viewTarget, setViewTarget] = useState<InvoiceWire | null>(null)
 
   const canCreate = can('invoice.create')
   const canVoid = can('invoice.void')
@@ -151,14 +172,15 @@ export function InvoicesPage() {
 
   // Receipt preview/print state (fetched only when a receipt is opened).
   const [receiptTarget, setReceiptTarget] = useState<InvoiceWire | null>(null)
+  const showDetail = !!receiptTarget || !!viewTarget
   const company = useQuery({
     queryKey: ['company'],
-    enabled: !!receiptTarget,
+    enabled: showDetail,
     queryFn: async () => (await api.get<CompanyWire>('/company')).data,
   })
-  const receiptBranches = useQuery({
-    queryKey: ['branches', 'receipt'],
-    enabled: !!receiptTarget,
+  const detailBranches = useQuery({
+    queryKey: ['branches', 'detail'],
+    enabled: showDetail,
     queryFn: async () =>
       (
         await api.get<PaginatedResponse<BranchWire>>('/branches', {
@@ -169,7 +191,7 @@ export function InvoicesPage() {
 
   const branches = useQuery({
     queryKey: ['branches', 'all'],
-    enabled: canCreate && isGroup,
+    enabled: isGroup,
     queryFn: async () =>
       (
         await api.get<PaginatedResponse<BranchWire>>('/branches', {
@@ -201,7 +223,7 @@ export function InvoicesPage() {
   })
 
   const invoices = useQuery({
-    queryKey: ['invoices', page, statusFilter],
+    queryKey: ['invoices', page, statusFilter, typeFilter, branchFilter, search],
     queryFn: async () =>
       (
         await api.get<PaginatedResponse<InvoiceWire>>('/invoices', {
@@ -209,6 +231,9 @@ export function InvoicesPage() {
             page,
             page_size: 20,
             ...(statusFilter ? { status: statusFilter } : {}),
+            ...(typeFilter ? { type: typeFilter } : {}),
+            ...(branchFilter ? { branch_id: branchFilter } : {}),
+            ...(search ? { q: search } : {}),
           },
         })
       ).data,
@@ -222,6 +247,11 @@ export function InvoicesPage() {
     setBranchId('')
     setDiscount('')
     setTax('')
+    setNotes('')
+    setCustomerId('')
+    setCustomerLabel(null)
+    setJobId('')
+    setJobLabel(null)
     setLines([{ ...EMPTY_LINE }])
     setDialogOpen(true)
   }
@@ -232,6 +262,9 @@ export function InvoicesPage() {
         await api.post<InvoiceWire>('/invoices', {
           type,
           branch_id: branchId || undefined,
+          customer_id: customerId || undefined,
+          job_id: jobId || undefined,
+          notes: notes.trim() || undefined,
           discount: majorToMinor(discount) ?? undefined,
           tax: majorToMinor(tax) ?? undefined,
           lines: lines
@@ -328,20 +361,45 @@ export function InvoicesPage() {
     onError: (e) => toast.error(apiErrorMessage(e)),
   })
 
+  // Reset to page 1 whenever a filter or the search term changes.
+  useEffect(() => {
+    setPage(1)
+  }, [statusFilter, typeFilter, branchFilter, search])
+
   const validLines = lines.filter(
     (l) => l.description && Number(l.qty) > 0 && l.unit_price,
   )
 
+  // Live totals preview for the draft (whole-shilling arithmetic).
+  const totals = useMemo(() => {
+    const subtotal = validLines.reduce(
+      (s, l) => s + Number(l.qty) * Number(l.unit_price),
+      0,
+    )
+    const disc = Number(discount) || 0
+    const t = Number(tax) || 0
+    return { subtotal, discount: disc, tax: t, total: subtotal - disc + t }
+  }, [validLines, discount, tax])
+
+  const fmtTsh = (n: number) => `TSh ${Math.round(n).toLocaleString()}`
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
+        <div className="relative min-w-48 flex-1 sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search invoice #…"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            className="pl-7"
+            aria-label="Search invoices"
+          />
+        </div>
         <Select
           value={statusFilter}
-          onChange={(e) => {
-            setStatusFilter(e.target.value)
-            setPage(1)
-          }}
-          className="w-40"
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-36"
           aria-label="Filter by status"
         >
           <option value="">All statuses</option>
@@ -351,8 +409,40 @@ export function InvoicesPage() {
             </option>
           ))}
         </Select>
+        <Select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value)}
+          className="w-36"
+          aria-label="Filter by type"
+        >
+          <option value="">All types</option>
+          {TYPES.map((t) => (
+            <option key={t} value={t}>
+              {TYPE_STYLES[t].label}
+            </option>
+          ))}
+        </Select>
+        {isGroup && branches.data && branches.data.length > 0 && (
+          <Select
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            className="w-36"
+            aria-label="Filter by branch"
+          >
+            <option value="">All branches</option>
+            {branches.data.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.code}
+              </option>
+            ))}
+          </Select>
+        )}
         <div className="flex-1" />
-        {canCreate && <Button onClick={openCreate}>New invoice</Button>}
+        {canCreate && (
+          <Button onClick={openCreate} className="gap-1.5">
+            <Plus className="size-4" /> New invoice
+          </Button>
+        )}
       </div>
 
       {invoices.isPending && (
@@ -375,7 +465,7 @@ export function InvoicesPage() {
                 <TableHead className="text-right">Balance</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead className="w-40" />
+                <TableHead className="w-56" />
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -392,7 +482,13 @@ export function InvoicesPage() {
               {invoices.data.data.map((inv) => (
                 <TableRow key={inv.id}>
                   <TableCell className="font-mono text-sm">
-                    {inv.invoice_no}
+                    <button
+                      type="button"
+                      className="font-medium text-primary hover:underline"
+                      onClick={() => setViewTarget(inv)}
+                    >
+                      {inv.invoice_no}
+                    </button>
                   </TableCell>
                   <TableCell>{inv.customer_name ?? 'Walk-in'}</TableCell>
                   <TableCell>{typeBadge(inv.type)}</TableCell>
@@ -439,6 +535,16 @@ export function InvoicesPage() {
                         variant="ghost"
                         size="sm"
                         className="gap-1.5"
+                        onClick={() => setViewTarget(inv)}
+                        title="View invoice"
+                      >
+                        <FileText className="size-4" />
+                        View
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="gap-1.5"
                         onClick={() => setReceiptTarget(inv)}
                         title="View / print receipt"
                       >
@@ -463,15 +569,15 @@ export function InvoicesPage() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>New invoice</DialogTitle>
             <DialogDescription>
-              Amounts are entered in whole shillings. Payments are recorded
-              after the invoice is created.
+              Attach a job card or a customer, add lines, then create. Amounts
+              are in whole shillings; payments are recorded afterwards.
             </DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-4">
+          <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
             <div className="grid gap-4 sm:grid-cols-2">
               <FormField label="Type" htmlFor="inv-type">
                 <Select
@@ -481,7 +587,7 @@ export function InvoicesPage() {
                 >
                   {TYPES.map((t) => (
                     <option key={t} value={t}>
-                      {t}
+                      {TYPE_STYLES[t].label}
                     </option>
                   ))}
                 </Select>
@@ -502,6 +608,85 @@ export function InvoicesPage() {
                   </Select>
                 </FormField>
               )}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FormField
+                label="Job card"
+                htmlFor="inv-job"
+                hint="Invoice a repair — links the job & its customer"
+              >
+                <SearchPicker<JobWire>
+                  placeholder="Search job # / IMEI / phone…"
+                  queryKey="invoice-job-search"
+                  selectedLabel={jobLabel}
+                  queryFn={async (q) =>
+                    (
+                      await api.get<PaginatedResponse<JobWire>>('/jobs', {
+                        params: { q, page_size: 8 },
+                      })
+                    ).data.data
+                  }
+                  getKey={(j) => j.id}
+                  renderItem={(j) => (
+                    <>
+                      <span className="font-mono font-medium">{j.job_no}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {j.state_label}
+                        {j.fault_reported ? ` · ${j.fault_reported}` : ''}
+                      </span>
+                    </>
+                  )}
+                  onSelect={(j) => {
+                    setJobId(j.id)
+                    setJobLabel(j.job_no)
+                    setType('REPAIR_OW')
+                    setCustomerId(j.customer_id)
+                    setCustomerLabel(`Linked to ${j.job_no}`)
+                  }}
+                  onClear={() => {
+                    setJobId('')
+                    setJobLabel(null)
+                  }}
+                />
+              </FormField>
+              <FormField
+                label="Customer"
+                htmlFor="inv-customer"
+                hint="Walk-in if left blank"
+              >
+                <SearchPicker<CustomerWire>
+                  placeholder="Search name / phone…"
+                  queryKey="invoice-customer-search"
+                  selectedLabel={customerLabel}
+                  queryFn={async (q) =>
+                    (
+                      await api.get<PaginatedResponse<CustomerWire>>('/customers', {
+                        params: { q, page_size: 8 },
+                      })
+                    ).data.data
+                  }
+                  getKey={(c) => c.id}
+                  renderItem={(c) => (
+                    <>
+                      <span className="font-medium">{c.name}</span>
+                      {c.phone && (
+                        <span className="text-xs text-muted-foreground">
+                          {c.phone}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  onSelect={(c) => {
+                    setCustomerId(c.id)
+                    setCustomerLabel(`${c.name}${c.phone ? ` · ${c.phone}` : ''}`)
+                  }}
+                  onClear={() => {
+                    setCustomerId('')
+                    setCustomerLabel(null)
+                  }}
+                />
+              </FormField>
             </div>
 
             <div className="flex flex-col gap-2">
@@ -660,8 +845,18 @@ export function InvoicesPage() {
               </div>
             </div>
 
+            <FormField label="Notes (optional)" htmlFor="inv-notes">
+              <Textarea
+                id="inv-notes"
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Note shown on the invoice…"
+              />
+            </FormField>
+
             <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Discount" htmlFor="inv-discount">
+              <FormField label="Discount (TSh)" htmlFor="inv-discount">
                 <Input
                   id="inv-discount"
                   inputMode="numeric"
@@ -669,7 +864,7 @@ export function InvoicesPage() {
                   onChange={(e) => setDiscount(e.target.value)}
                 />
               </FormField>
-              <FormField label="Tax" htmlFor="inv-tax">
+              <FormField label="Tax / VAT (TSh)" htmlFor="inv-tax">
                 <Input
                   id="inv-tax"
                   inputMode="numeric"
@@ -677,6 +872,29 @@ export function InvoicesPage() {
                   onChange={(e) => setTax(e.target.value)}
                 />
               </FormField>
+            </div>
+
+            <div className="ml-auto w-full max-w-xs space-y-1 rounded-lg border bg-muted/30 p-3 text-sm">
+              <div className="flex justify-between text-muted-foreground">
+                <span>Subtotal</span>
+                <span>{fmtTsh(totals.subtotal)}</span>
+              </div>
+              {totals.discount > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Discount</span>
+                  <span>- {fmtTsh(totals.discount)}</span>
+                </div>
+              )}
+              {totals.tax > 0 && (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>VAT</span>
+                  <span>{fmtTsh(totals.tax)}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t pt-1 text-base font-bold">
+                <span>Total</span>
+                <span>{fmtTsh(totals.total)}</span>
+              </div>
             </div>
           </div>
           <DialogFooter>
@@ -787,7 +1005,7 @@ export function InvoicesPage() {
               <Receipt
                 invoice={receiptTarget}
                 company={company.data}
-                branch={receiptBranches.data?.find(
+                branch={detailBranches.data?.find(
                   (b) => b.id === receiptTarget.branch_id,
                 )}
               />
@@ -805,6 +1023,61 @@ export function InvoicesPage() {
               <Printer className="size-4" />
               Print
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={viewTarget !== null}
+        onOpenChange={(o) => !o && setViewTarget(null)}
+      >
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Invoice {viewTarget?.invoice_no}</DialogTitle>
+            <DialogDescription>
+              Full invoice document — print or record a payment.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[70vh] overflow-y-auto rounded-lg border bg-white">
+            {viewTarget && (
+              <InvoiceDocument
+                invoice={viewTarget}
+                company={company.data}
+                branch={detailBranches.data?.find(
+                  (b) => b.id === viewTarget.branch_id,
+                )}
+              />
+            )}
+          </div>
+          <DialogFooter className="sm:justify-between">
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setViewTarget(null)}
+            >
+              Close
+            </Button>
+            <div className="flex gap-2">
+              {viewTarget &&
+                canPay &&
+                (viewTarget.status === 'DRAFT' ||
+                  viewTarget.status === 'PARTIAL') && (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const t = viewTarget
+                      setViewTarget(null)
+                      openPay(t)
+                    }}
+                  >
+                    Record payment
+                  </Button>
+                )}
+              <Button className="gap-1.5" onClick={() => window.print()}>
+                <Printer className="size-4" />
+                Print
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

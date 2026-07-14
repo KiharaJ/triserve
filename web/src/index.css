@@ -141,11 +141,14 @@
   .job-ticket,
   .job-ticket *,
   .receipt-print,
-  .receipt-print * {
+  .receipt-print *,
+  .invoice-print,
+  .invoice-print * {
     visibility: visible;
   }
   .job-ticket,
-  .receipt-print {
+  .receipt-print,
+  .invoice-print {
     position: absolute;
     top: 0;
     left: 0;
