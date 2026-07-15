@@ -181,6 +181,18 @@ export type DeviceCategory = 'HHP' | 'CE' | 'AC' | 'REF' | 'OTHER'
 export type WarrantyStatus = 'IW' | 'OW' | 'GOODWILL' | 'UNKNOWN'
 export type PreferredLanguageCode = 'EN' | 'SW'
 
+export type CustomerType = 'INDIVIDUAL' | 'BUSINESS' | 'DEALER'
+
+/** Selectable customer types with display labels (Individual/Business/Dealer). */
+export const CUSTOMER_TYPES: { value: CustomerType; label: string }[] = [
+  { value: 'INDIVIDUAL', label: 'Individual' },
+  { value: 'BUSINESS', label: 'Business' },
+  { value: 'DEALER', label: 'Dealer' },
+]
+
+export const customerTypeLabel = (t: CustomerType): string =>
+  CUSTOMER_TYPES.find((o) => o.value === t)?.label ?? t
+
 export interface CustomerWire {
   id: string
   name: string
@@ -188,6 +200,7 @@ export interface CustomerWire {
   alt_phone: string | null
   email: string | null
   location: string | null
+  type: CustomerType
   dealer_name: string | null
   is_dealer: boolean
   preferred_branch_id: string | null

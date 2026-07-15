@@ -180,7 +180,11 @@ export function CustomerDetailPage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl font-semibold">{c.name}</h1>
-                {c.is_dealer && <Badge variant="info">Dealer</Badge>}
+                {c.type === 'DEALER' ? (
+                  <Badge variant="info">Dealer</Badge>
+                ) : c.type === 'BUSINESS' ? (
+                  <Badge variant="secondary">Business</Badge>
+                ) : null}
                 {c.rating !== null && (
                   <Badge variant="outline">★ {c.rating}/5</Badge>
                 )}
@@ -198,7 +202,9 @@ export function CustomerDetailPage() {
           <Field label="Language" value={c.preferred_language} />
           <Field label="First seen" value={s.first_seen ? formatDate(s.first_seen) : '—'} />
           <Field label="Last visit" value={s.last_visit ? formatDate(s.last_visit) : '—'} />
-          {c.dealer_name && <Field label="Dealer" value={c.dealer_name} />}
+          {c.dealer_name && (
+            <Field label="Business / dealer" value={c.dealer_name} />
+          )}
           {c.notes && <Field label="Notes" value={c.notes} className="col-span-full" />}
         </CardContent>
       </Card>

@@ -20,17 +20,19 @@ import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
-import type {
-  BranchWire,
-  CustomerWire,
-  DeviceCategory,
-  FaultCodeWire,
-  JobDetailWire,
-  ModelWire,
-  PreferredLanguageCode,
-  UserWire,
-  WarrantyRegistrationWire,
-  WarrantyStatus,
+import {
+  CUSTOMER_TYPES,
+  type BranchWire,
+  type CustomerType,
+  type CustomerWire,
+  type DeviceCategory,
+  type FaultCodeWire,
+  type JobDetailWire,
+  type ModelWire,
+  type PreferredLanguageCode,
+  type UserWire,
+  type WarrantyRegistrationWire,
+  type WarrantyStatus,
 } from '@/lib/types'
 
 const CATEGORIES: DeviceCategory[] = ['HHP', 'CE', 'AC', 'REF', 'OTHER']
@@ -73,6 +75,10 @@ export function JobIntakePage() {
   const debouncedCustomerQuery = useDebouncedValue(customerQuery, 350)
   const [selectedCustomer, setSelectedCustomer] = useState<CustomerWire | null>(null)
   const [newCustomerName, setNewCustomerName] = useState('')
+  const [newCustomerAltPhone, setNewCustomerAltPhone] = useState('')
+  const [newCustomerEmail, setNewCustomerEmail] = useState('')
+  const [newCustomerLocation, setNewCustomerLocation] = useState('')
+  const [newCustomerType, setNewCustomerType] = useState<CustomerType>('INDIVIDUAL')
   const [newCustomerLanguage, setNewCustomerLanguage] = useState<PreferredLanguageCode>('EN')
 
   const customerResults = useQuery({
@@ -216,6 +222,10 @@ export function JobIntakePage() {
         customer: {
           name: newCustomerName.trim(),
           phone: customerQuery.trim() || undefined,
+          alt_phone: newCustomerAltPhone.trim() || undefined,
+          email: newCustomerEmail.trim() || undefined,
+          location: newCustomerLocation.trim() || undefined,
+          type: newCustomerType,
         },
       }
     } else {
@@ -293,6 +303,11 @@ export function JobIntakePage() {
     setSelectedCustomer(null)
     setCustomerQuery('')
     setNewCustomerName('')
+    setNewCustomerAltPhone('')
+    setNewCustomerEmail('')
+    setNewCustomerLocation('')
+    setNewCustomerType('INDIVIDUAL')
+    setNewCustomerLanguage('EN')
     setSelectedModel(null)
     setModelQuery('')
     setBeforePhotos([])
@@ -418,6 +433,43 @@ export function JobIntakePage() {
                     placeholder="Required if not selecting an existing customer"
                     value={newCustomerName}
                     onChange={(e) => setNewCustomerName(e.target.value)}
+                  />
+                </FormField>
+                <FormField label="Type" htmlFor="new-customer-type">
+                  <Select
+                    id="new-customer-type"
+                    value={newCustomerType}
+                    onChange={(e) =>
+                      setNewCustomerType(e.target.value as CustomerType)
+                    }
+                  >
+                    {CUSTOMER_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </Select>
+                </FormField>
+                <FormField label="Alternate phone" htmlFor="new-customer-altphone">
+                  <Input
+                    id="new-customer-altphone"
+                    value={newCustomerAltPhone}
+                    onChange={(e) => setNewCustomerAltPhone(e.target.value)}
+                  />
+                </FormField>
+                <FormField label="Email" htmlFor="new-customer-email">
+                  <Input
+                    id="new-customer-email"
+                    type="email"
+                    value={newCustomerEmail}
+                    onChange={(e) => setNewCustomerEmail(e.target.value)}
+                  />
+                </FormField>
+                <FormField label="Location" htmlFor="new-customer-location">
+                  <Input
+                    id="new-customer-location"
+                    value={newCustomerLocation}
+                    onChange={(e) => setNewCustomerLocation(e.target.value)}
                   />
                 </FormField>
                 <FormField label="Preferred language" htmlFor="new-customer-lang">

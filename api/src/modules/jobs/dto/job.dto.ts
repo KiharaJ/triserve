@@ -1,4 +1,4 @@
-import { DeviceCategory, WarrantyStatus } from '@prisma/client';
+import { CustomerType, DeviceCategory, WarrantyStatus } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEmail,
@@ -82,6 +82,11 @@ export class JobCustomerInput {
   @IsString()
   @MaxLength(255)
   location?: string;
+
+  /** Individual / Business / Dealer (§4.2); defaults to Individual. */
+  @IsOptional()
+  @IsEnum(CustomerType)
+  type?: CustomerType;
 }
 
 /**

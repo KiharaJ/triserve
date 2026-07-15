@@ -1,4 +1,4 @@
-import { PreferredLanguage } from '@prisma/client';
+import { CustomerType, PreferredLanguage } from '@prisma/client';
 import {
   IsBoolean,
   IsEmail,
@@ -53,11 +53,17 @@ export class CreateCustomerDto {
   @MaxLength(255)
   location?: string;
 
+  /** Individual / Business / Dealer. `is_dealer` is derived from this. */
+  @IsOptional()
+  @IsEnum(CustomerType)
+  type?: CustomerType;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)
   dealer_name?: string;
 
+  /** Legacy dealer flag; ignored when `type` is provided (kept for back-compat). */
   @IsOptional()
   @IsBoolean()
   is_dealer?: boolean;
@@ -111,11 +117,17 @@ export class UpdateCustomerDto {
   @MaxLength(255)
   location?: string;
 
+  /** Individual / Business / Dealer. `is_dealer` is derived from this. */
+  @IsOptional()
+  @IsEnum(CustomerType)
+  type?: CustomerType;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)
   dealer_name?: string;
 
+  /** Legacy dealer flag; ignored when `type` is provided (kept for back-compat). */
   @IsOptional()
   @IsBoolean()
   is_dealer?: boolean;
