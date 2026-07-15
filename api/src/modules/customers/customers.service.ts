@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, type Customer } from '@prisma/client';
+import { CustomerType, Prisma, type Customer } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import { normalizePhone } from '../../common/util/phone';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -23,6 +23,7 @@ export interface CustomerWire {
   alt_phone: string | null;
   email: string | null;
   location: string | null;
+  type: CustomerType;
   dealer_name: string | null;
   is_dealer: boolean;
   preferred_branch_id: string | null;
@@ -283,8 +284,8 @@ export class CustomersService {
         altPhoneNormalized: normalizePhone(dto.alt_phone),
         email: dto.email ?? null,
         location: dto.location ?? null,
+        ...resolveType(dto.type, dto.is_dealer),
         dealerName: dto.dealer_name ?? null,
-        isDealer: dto.is_dealer ?? false,
         preferredBranchId: dto.preferred_branch_id ?? null,
         preferredLanguage: dto.preferred_language ?? 'EN',
         rating: dto.rating ?? null,
@@ -323,7 +324,13 @@ export class CustomersService {
         ...(dto.dealer_name !== undefined
           ? { dealerName: dto.dealer_name }
           : {}),
-        ...(dto.is_dealer !== undefined ? { isDealer: dto.is_dealer } : {}),
+        // `type` is authoritative; keep the legacy `is_dealer` path for callers
+        // that still send only the boolean.
+        ...(dto.type !== undefined
+          ? resolveType(dto.type, undefined)
+          : dto.is_dealer !== undefined
+            ? resolveType(undefined, dto.is_dealer)
+            : {}),
         ...(dto.preferred_branch_id !== undefined
           ? { preferredBranchId: dto.preferred_branch_id }
           : {}),
@@ -377,6 +384,28 @@ function searchClauses(q: string): Prisma.CustomerWhereInput[] {
   return clauses;
 }
 
+/**
+ * Resolve the `{ type, isDealer }` pair to persist. `type` wins when given
+ * (isDealer derived: DEALER ⇒ true); otherwise fall back to the legacy
+ * boolean (is_dealer ⇒ DEALER, else INDIVIDUAL). Returns an empty patch when
+ * neither is supplied so an update leaves both columns untouched.
+ */
+export function resolveType(
+  type: CustomerType | undefined,
+  isDealer: boolean | undefined,
+): { type: CustomerType; isDealer: boolean } | Record<string, never> {
+  if (type !== undefined) {
+    return { type, isDealer: type === CustomerType.DEALER };
+  }
+  if (isDealer !== undefined) {
+    return {
+      type: isDealer ? CustomerType.DEALER : CustomerType.INDIVIDUAL,
+      isDealer,
+    };
+  }
+  return {};
+}
+
 export function toWire(c: Customer): CustomerWire {
   return {
     id: c.id,
@@ -386,6 +415,7 @@ export function toWire(c: Customer): CustomerWire {
     alt_phone: c.altPhone,
     email: c.email,
     location: c.location,
+    type: c.type,
     dealer_name: c.dealerName,
     is_dealer: c.isDealer,
     preferred_branch_id: c.preferredBranchId,

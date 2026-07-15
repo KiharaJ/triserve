@@ -77,6 +77,15 @@ enum PreferredLanguage {
   SW
 }
 
+/// Customer classification (§4.2). INDIVIDUAL and BUSINESS are retail; DEALER
+/// is trade — DEALER is the single source for the `is_dealer` flag the POS /
+/// pricing and invoice badges read (kept in sync on every write).
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
+  DEALER
+}
+
 /// Warranty status of a job (§4.3). Legacy Y/N maps to IW/OW; GOODWILL is a
 /// free repair outside warranty; UNKNOWN is the intake default until the
 /// front desk / diagnosis resolves it.
@@ -648,6 +657,9 @@ model Customer {
   altPhoneNormalized String?           @map("alt_phone_normalized") @db.VarChar(50)
   email              String?           @db.VarChar(255)
   location           String?           @db.VarChar(255)
+  /// Individual / Business / Dealer (§4.2). `isDealer` is derived from this
+  /// (DEALER ⇒ true) and kept in sync on write for the POS/pricing code.
+  type               CustomerType      @default(INDIVIDUAL) @map("customer_type")
   dealerName         String?           @map("dealer_name") @db.VarChar(255)
   isDealer           Boolean           @default(false) @map("is_dealer")
   preferredBranchId  String?           @map("preferred_branch_id") @db.Char(36)

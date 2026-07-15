@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -27,7 +28,11 @@ import {
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
-import type { CustomerWire } from '@/lib/types'
+import {
+  CUSTOMER_TYPES,
+  type CustomerType,
+  type CustomerWire,
+} from '@/lib/types'
 
 function initials(name: string): string {
   return name
@@ -53,9 +58,10 @@ export function CustomersListPage() {
   const [form, setForm] = useState({
     name: '',
     phone: '',
+    alt_phone: '',
     email: '',
     location: '',
-    is_dealer: false,
+    type: 'INDIVIDUAL' as CustomerType,
     dealer_name: '',
   })
 
@@ -78,10 +84,14 @@ export function CustomersListPage() {
         await api.post<CustomerWire>('/customers', {
           name: form.name,
           phone: form.phone || undefined,
+          alt_phone: form.alt_phone || undefined,
           email: form.email || undefined,
           location: form.location || undefined,
-          is_dealer: form.is_dealer || undefined,
-          dealer_name: form.is_dealer ? form.dealer_name || undefined : undefined,
+          type: form.type,
+          dealer_name:
+            form.type !== 'INDIVIDUAL'
+              ? form.dealer_name || undefined
+              : undefined,
         })
       ).data
     },
@@ -95,7 +105,15 @@ export function CustomersListPage() {
   })
 
   function openCreate() {
-    setForm({ name: '', phone: '', email: '', location: '', is_dealer: false, dealer_name: '' })
+    setForm({
+      name: '',
+      phone: '',
+      alt_phone: '',
+      email: '',
+      location: '',
+      type: 'INDIVIDUAL',
+      dealer_name: '',
+    })
     setDialogOpen(true)
   }
 
@@ -159,10 +177,12 @@ export function CustomersListPage() {
                   <TableCell className="font-mono text-sm">{c.phone ?? '—'}</TableCell>
                   <TableCell className="text-muted-foreground">{c.location ?? '—'}</TableCell>
                   <TableCell>
-                    {c.is_dealer ? (
+                    {c.type === 'DEALER' ? (
                       <Badge variant="info">Dealer</Badge>
+                    ) : c.type === 'BUSINESS' ? (
+                      <Badge variant="secondary">Business</Badge>
                     ) : (
-                      <span className="text-muted-foreground">Retail</span>
+                      <span className="text-muted-foreground">Individual</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -200,23 +220,32 @@ export function CustomersListPage() {
               <FormField label="Phone">
                 <Input value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="0765…" />
               </FormField>
+              <FormField label="Alternate phone">
+                <Input value={form.alt_phone} onChange={(e) => setForm((f) => ({ ...f, alt_phone: e.target.value }))} />
+              </FormField>
               <FormField label="Email">
-                <Input value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+                <Input type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+              </FormField>
+              <FormField label="Location">
+                <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
               </FormField>
             </div>
-            <FormField label="Location">
-              <Input value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
+            <FormField label="Type">
+              <Select
+                value={form.type}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, type: e.target.value as CustomerType }))
+                }
+              >
+                {CUSTOMER_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
             </FormField>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={form.is_dealer}
-                onChange={(e) => setForm((f) => ({ ...f, is_dealer: e.target.checked }))}
-              />
-              Dealer / business
-            </label>
-            {form.is_dealer && (
-              <FormField label="Dealer name">
+            {form.type !== 'INDIVIDUAL' && (
+              <FormField label="Business / dealer name">
                 <Input value={form.dealer_name} onChange={(e) => setForm((f) => ({ ...f, dealer_name: e.target.value }))} />
               </FormField>
             )}

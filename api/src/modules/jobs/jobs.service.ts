@@ -20,6 +20,7 @@ import {
 } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
+import { resolveType } from '../customers/customers.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import type {
   CreateJobDto,
@@ -594,6 +595,7 @@ export class JobsService {
         altPhoneNormalized: normalizePhone(dto.customer.alt_phone),
         email: dto.customer.email ?? null,
         location: dto.customer.location ?? null,
+        ...resolveType(dto.customer.type, undefined),
         createdById: user.userId,
         updatedById: user.userId,
       },
