@@ -38,6 +38,8 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // E17: per-company role × permission overrides — scoped like every other
   // company table (company_id force-injected on create, reads tenancy-filtered).
   Prisma.ModelName.RolePermission,
+  // E17b: the company's role registry (built-in + custom roles).
+  Prisma.ModelName.Role,
   Prisma.ModelName.Branch,
   Prisma.ModelName.Currency,
   Prisma.ModelName.PaymentMethod,

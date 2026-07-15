@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 import { z } from 'zod'
-import { USER_ROLES, type PaginatedResponse } from '@triserve/shared'
+import type { PaginatedResponse, RolesMatrixResponse } from '@triserve/shared'
 import { FormField } from '@/components/shared/form-field'
 import { Pager } from '@/components/shared/pager'
 import { Badge } from '@/components/ui/badge'
@@ -41,7 +41,7 @@ const userSchema = z
       .refine((v) => v === '' || v.length >= 8, {
         message: 'At least 8 characters',
       }),
-    role: z.enum(USER_ROLES),
+    role: z.string().min(1, 'Pick a role'),
     scope: z.enum(['branch', 'group']),
     home_branch_id: z.string(),
   })
@@ -88,6 +88,15 @@ export function UsersPage() {
         })
       ).data.data,
   })
+
+  const roles = useQuery({
+    queryKey: ['roles'],
+    queryFn: async () =>
+      (await api.get<RolesMatrixResponse>('/roles')).data.roles,
+  })
+  const roleOptions = roles.data ?? []
+  const roleLabel = (key: string) =>
+    roleOptions.find((r) => r.role === key)?.label ?? key
 
   const users = useQuery({
     queryKey: ['users', page, q, roleFilter, branchFilter],
@@ -218,9 +227,9 @@ export function UsersPage() {
           aria-label="Filter by role"
         >
           <option value="">All roles</option>
-          {USER_ROLES.map((r) => (
-            <option key={r} value={r}>
-              {r}
+          {roleOptions.map((r) => (
+            <option key={r.role} value={r.role}>
+              {r.label}
             </option>
           ))}
         </Select>
@@ -275,7 +284,7 @@ export function UsersPage() {
                     {u.email}
                   </TableCell>
                   <TableCell>
-                    <Badge variant="outline">{u.role}</Badge>
+                    <Badge variant="outline">{roleLabel(u.role)}</Badge>
                   </TableCell>
                   <TableCell>{u.scope}</TableCell>
                   <TableCell className="font-mono">
@@ -395,9 +404,9 @@ export function UsersPage() {
                 error={form.formState.errors.role?.message}
               >
                 <Select id="user-role" {...form.register('role')}>
-                  {USER_ROLES.map((r) => (
-                    <option key={r} value={r}>
-                      {r}
+                  {roleOptions.map((r) => (
+                    <option key={r.role} value={r.role}>
+                      {r.label}
                     </option>
                   ))}
                 </Select>

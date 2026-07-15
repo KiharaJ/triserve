@@ -19,6 +19,11 @@ import {
   type AccountType,
   type ApprovalType,
 } from '@prisma/client';
+import {
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  USER_ROLES,
+} from '@triserve/shared';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 
@@ -195,6 +200,26 @@ async function main(): Promise<void> {
     });
     console.log(`branch:         ${branch.code} — ${branch.name}${branch.isHq ? ' [HQ]' : ''}`);
   }
+
+  // --- Built-in roles (upsert by company_id + key, E17b) ---------------------
+  // The role registry every company starts with; custom roles are added later
+  // through the admin UI. Permissions themselves stay in @triserve/shared's
+  // default matrix + role_permissions overrides — these rows are the registry.
+  for (const key of USER_ROLES) {
+    await prisma.role.upsert({
+      where: { companyId_key: { companyId: company.id, key } },
+      update: { label: ROLE_LABELS[key], description: ROLE_DESCRIPTIONS[key] },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        key,
+        label: ROLE_LABELS[key],
+        description: ROLE_DESCRIPTIONS[key],
+        isSystem: true,
+      },
+    });
+  }
+  console.log(`roles:          ${USER_ROLES.length} built-in roles`);
 
   // --- Super admin (upsert by email) -----------------------------------------
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@triserve.local';

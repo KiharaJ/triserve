@@ -7,7 +7,7 @@
  */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PrismaClient, type UserRole, type UserScope } from '@prisma/client';
+import { PrismaClient, type UserScope } from '@prisma/client';
 import * as argon2 from 'argon2';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -62,7 +62,7 @@ beforeAll(async () => {
     await raw.branch.findFirstOrThrow({ where: { companyId, code: 'DAR' } })
   ).id;
   const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
-  const mk = (email: string, role: UserRole, scope: UserScope) =>
+  const mk = (email: string, role: string, scope: UserScope) =>
     raw.user.create({
       data: {
         companyId,

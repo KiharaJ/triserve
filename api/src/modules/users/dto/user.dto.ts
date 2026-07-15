@@ -1,4 +1,4 @@
-import { UserRole, UserScope } from '@prisma/client';
+import { UserScope } from '@prisma/client';
 import {
   IsEmail,
   IsEnum,
@@ -6,15 +6,19 @@ import {
   IsString,
   Length,
   MaxLength,
+  Matches,
   MinLength,
 } from 'class-validator';
+import { ROLE_KEY_PATTERN } from '@triserve/shared';
 import { BooleanQuery, ListQueryDto } from '../../../common/dto/list-query.dto';
 
 /** GET /users?role=&branch_id=&active=&q=&page=&page_size= */
 export class UserListQueryDto extends ListQueryDto {
+  /** Filter by role KEY (built-in or custom). */
   @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
+  @IsString()
+  @MaxLength(50)
+  role?: string;
 
   /** Filter by home branch. */
   @IsOptional()
@@ -54,8 +58,10 @@ export class CreateUserDto {
   @MaxLength(128)
   password!: string;
 
-  @IsEnum(UserRole)
-  role!: UserRole;
+  /** A role KEY (built-in or custom) — existence validated in the service. */
+  @IsString()
+  @Matches(ROLE_KEY_PATTERN, { message: 'Invalid role' })
+  role!: string;
 
   @IsEnum(UserScope)
   scope!: UserScope;
@@ -97,8 +103,9 @@ export class UpdateUserDto {
   password?: string;
 
   @IsOptional()
-  @IsEnum(UserRole)
-  role?: UserRole;
+  @IsString()
+  @Matches(ROLE_KEY_PATTERN, { message: 'Invalid role' })
+  role?: string;
 
   @IsOptional()
   @IsEnum(UserScope)

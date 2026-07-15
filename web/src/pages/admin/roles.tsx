@@ -5,9 +5,10 @@ import {
   PERMISSION_DOMAIN_LABELS,
   PERMISSION_LABELS,
   PERMISSIONS,
+  roleKeyFromLabel,
+  type CreateRoleBody,
   type Permission,
   type RoleMatrixEntry,
-  type RoleName,
   type RolesMatrixResponse,
 } from '@triserve/shared'
 import { Badge } from '@/components/ui/badge'
@@ -19,6 +20,16 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
@@ -45,8 +56,15 @@ export function RolesPage() {
       (await api.get<RolesMatrixResponse>('/roles')).data.roles,
   })
 
-  const [selected, setSelected] = useState<RoleName | null>(null)
+  const [selected, setSelected] = useState<string | null>(null)
   const [draft, setDraft] = useState<Set<Permission>>(new Set())
+  const [createOpen, setCreateOpen] = useState(false)
+  const [form, setForm] = useState({
+    label: '',
+    key: '',
+    description: '',
+    cloneFrom: '',
+  })
 
   const entry = useMemo<RoleMatrixEntry | undefined>(
     () => roles.data?.find((r) => r.role === selected),
@@ -66,7 +84,7 @@ export function RolesPage() {
   }, [entry])
 
   const save = useMutation({
-    mutationFn: async (role: RoleName) =>
+    mutationFn: async (role: string) =>
       (
         await api.put<RoleMatrixEntry>(`/roles/${role}/permissions`, {
           permissions: [...draft],
@@ -83,13 +101,38 @@ export function RolesPage() {
   })
 
   const reset = useMutation({
-    mutationFn: async (role: RoleName) =>
+    mutationFn: async (role: string) =>
       (await api.post<RoleMatrixEntry>(`/roles/${role}/reset`)).data,
     onSuccess: async (updated) => {
       toast.success(`${updated.label} reset to defaults`)
       setDraft(new Set(updated.effective))
       await queryClient.invalidateQueries({ queryKey: ['roles'] })
       if (me?.role === updated.role) await refreshUser()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const create = useMutation({
+    mutationFn: async (body: CreateRoleBody) =>
+      (await api.post<RoleMatrixEntry>('/roles', body)).data,
+    onSuccess: async (created) => {
+      toast.success(`Role “${created.label}” created`)
+      setCreateOpen(false)
+      setSelected(created.role)
+      await queryClient.invalidateQueries({ queryKey: ['roles'] })
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const remove = useMutation({
+    mutationFn: async (role: string) => {
+      await api.delete(`/roles/${role}`)
+      return role
+    },
+    onSuccess: async (deleted) => {
+      toast.success('Role deleted')
+      if (selected === deleted) setSelected(null)
+      await queryClient.invalidateQueries({ queryKey: ['roles'] })
     },
     onError: (e) => toast.error(apiErrorMessage(e)),
   })
@@ -107,7 +150,7 @@ export function RolesPage() {
   }, [entry, draft])
 
   const editable = (entry?.editable ?? false) && canManage
-  const busy = save.isPending || reset.isPending
+  const busy = save.isPending || reset.isPending || remove.isPending
 
   function toggle(perm: Permission) {
     setDraft((prev) => {
@@ -131,12 +174,24 @@ export function RolesPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <h1 className="text-lg font-semibold">Roles &amp; permissions</h1>
-        <p className="text-sm text-muted-foreground">
-          Tune what each role can do. Changes apply to everyone with that role
-          in your company and take effect immediately.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h1 className="text-lg font-semibold">Roles &amp; permissions</h1>
+          <p className="text-sm text-muted-foreground">
+            Tune what each role can do, or add your own roles. Changes apply to
+            everyone with that role and take effect immediately.
+          </p>
+        </div>
+        {canManage && (
+          <Button
+            onClick={() => {
+              setForm({ label: '', key: '', description: '', cloneFrom: '' })
+              setCreateOpen(true)
+            }}
+          >
+            New role
+          </Button>
+        )}
       </div>
 
       {roles.isPending && (
@@ -174,6 +229,7 @@ export function RolesPage() {
                     {r.description}
                   </p>
                   <div className="mt-2 flex flex-wrap gap-1">
+                    {!r.is_system && <Badge variant="success">Custom</Badge>}
                     {!r.editable && <Badge variant="info">Locked</Badge>}
                     {r.overridden.length > 0 && (
                       <Badge variant="warning">
@@ -191,21 +247,50 @@ export function RolesPage() {
             <Card>
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <CardTitle>{entry.label}</CardTitle>
-                  <CardDescription>{entry.description}</CardDescription>
+                  <div className="flex items-center gap-2">
+                    <CardTitle>{entry.label}</CardTitle>
+                    {entry.is_system ? (
+                      <Badge variant="secondary">Built-in</Badge>
+                    ) : (
+                      <Badge variant="success">Custom</Badge>
+                    )}
+                    <code className="text-[10px] text-muted-foreground">
+                      {entry.role}
+                    </code>
+                  </div>
+                  <CardDescription className="mt-1">
+                    {entry.description}
+                  </CardDescription>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {draft.size} of {ALL_COUNT} permissions granted
                   </p>
                 </div>
                 {editable && (
                   <div className="flex shrink-0 gap-2">
+                    {entry.deletable && canManage && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Delete the “${entry.label}” role? This cannot be undone.`,
+                            )
+                          )
+                            remove.mutate(entry.role)
+                        }}
+                      >
+                        Delete role
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
                       disabled={busy || entry.overridden.length === 0}
                       onClick={() => reset.mutate(entry.role)}
                     >
-                      Reset to defaults
+                      {entry.is_system ? 'Reset to defaults' : 'Clear all'}
                     </Button>
                     <Button
                       size="sm"
@@ -295,6 +380,114 @@ export function RolesPage() {
           )}
         </div>
       )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>New role</DialogTitle>
+            <DialogDescription>
+              Create a custom role, then fine-tune its permissions in the grid.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-4"
+            onSubmit={(e) => {
+              e.preventDefault()
+              const body: CreateRoleBody = {
+                label: form.label.trim(),
+                key: form.key.trim() || undefined,
+                description: form.description.trim() || undefined,
+                clone_from: form.cloneFrom || undefined,
+              }
+              create.mutate(body)
+            }}
+          >
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="role-label" className="text-sm font-medium">
+                Name
+              </label>
+              <Input
+                id="role-label"
+                placeholder="e.g. Front Desk Lead"
+                value={form.label}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, label: e.target.value }))
+                }
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="role-key" className="text-sm font-medium">
+                Key <span className="text-muted-foreground">(optional)</span>
+              </label>
+              <Input
+                id="role-key"
+                placeholder={
+                  form.label ? roleKeyFromLabel(form.label) : 'FRONT_DESK_LEAD'
+                }
+                value={form.key}
+                onChange={(e) =>
+                  setForm((f) => ({
+                    ...f,
+                    key: e.target.value.toUpperCase(),
+                  }))
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                UPPER_SNAKE identifier used in the API. Derived from the name
+                when left blank.
+              </p>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="role-desc" className="text-sm font-medium">
+                Description{' '}
+                <span className="text-muted-foreground">(optional)</span>
+              </label>
+              <Input
+                id="role-desc"
+                value={form.description}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, description: e.target.value }))
+                }
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label htmlFor="role-clone" className="text-sm font-medium">
+                Start from
+              </label>
+              <Select
+                id="role-clone"
+                value={form.cloneFrom}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, cloneFrom: e.target.value }))
+                }
+              >
+                <option value="">No permissions (empty)</option>
+                {(roles.data ?? []).map((r) => (
+                  <option key={r.role} value={r.role}>
+                    Copy from {r.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={create.isPending || form.label.trim().length < 2}
+              >
+                {create.isPending ? 'Creating…' : 'Create role'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

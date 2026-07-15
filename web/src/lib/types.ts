@@ -3,7 +3,7 @@
  * snake_case JSON the NestJS API returns; domain enums come from
  * @triserve/shared so both sides share one vocabulary.
  */
-import type { Permission, RoleName } from '@triserve/shared'
+import type { Permission } from '@triserve/shared'
 
 export type UserScope = 'branch' | 'group'
 
@@ -11,7 +11,7 @@ export interface PublicUser {
   id: string
   email: string
   full_name: string
-  role: RoleName
+  role: string
   scope: UserScope
   company_id: string
   home_branch_id: string | null
@@ -77,7 +77,7 @@ export interface UserWire {
   initials: string | null
   email: string
   phone: string | null
-  role: RoleName
+  role: string
   scope: UserScope
   home_branch_id: string | null
   totp_enabled: boolean

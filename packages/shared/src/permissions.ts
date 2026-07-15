@@ -108,7 +108,46 @@ export const USER_ROLES = [
   'ACCOUNTANT',
 ] as const;
 
+/**
+ * The seven BUILT-IN role names. Companies may additionally define their own
+ * custom roles (E17b) whose keys are arbitrary uppercase slugs — those are NOT
+ * in this union, so anything that must accept any role key is typed `string`
+ * (a role KEY), and `RoleName` is reserved for the built-ins that carry static
+ * defaults, labels and descriptions here.
+ */
 export type RoleName = (typeof USER_ROLES)[number];
+
+/** Alias that reads intentionally at custom-role call sites. */
+export const BUILTIN_ROLES = USER_ROLES;
+
+/** True when `key` is one of the seven built-in roles. */
+export function isBuiltinRole(key: string): key is RoleName {
+  return (USER_ROLES as readonly string[]).includes(key);
+}
+
+/**
+ * Custom role keys: 2–50 chars, UPPER_SNAKE (uppercase letters, digits,
+ * underscores), starting with a letter. Built-in keys follow the same shape,
+ * so this validates both; uniqueness (incl. not colliding with a built-in) is
+ * enforced by the API against the company's roles.
+ */
+export const ROLE_KEY_PATTERN = /^[A-Z][A-Z0-9_]{1,49}$/;
+
+/** True when `key` is a syntactically valid role key. */
+export function isValidRoleKey(key: string): boolean {
+  return ROLE_KEY_PATTERN.test(key);
+}
+
+/** Derive a candidate role key from a free-text label ("Front Desk" → "FRONT_DESK"). */
+export function roleKeyFromLabel(label: string): string {
+  return label
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/^([0-9])/, '_$1')
+    .slice(0, 50);
+}
 
 /**
  * Default role → permissions map (DESIGN.md §3).
@@ -270,14 +309,16 @@ export const ROLE_PERMISSIONS: Readonly<
 
 /**
  * True when `role` holds `permission` under the DEFAULT matrix.
- * SUPER_ADMIN always passes.
+ * SUPER_ADMIN always passes. A custom role (not in the built-in map) has NO
+ * static default — its grants live entirely in the per-company overrides — so
+ * this returns false for it (callers resolve the real answer via overrides).
  */
 export function roleHasPermission(
-  role: RoleName,
+  role: string,
   permission: Permission,
 ): boolean {
   if (role === 'SUPER_ADMIN') return true;
-  return ROLE_PERMISSIONS[role].includes(permission);
+  return (ROLE_PERMISSIONS[role as RoleName] ?? []).includes(permission);
 }
 
 // ---------------------------------------------------------------------------
@@ -292,36 +333,48 @@ export function roleHasPermission(
 // guarantees a company can never lock every admin out of its own tenant.
 // ---------------------------------------------------------------------------
 
-/** Every role a company MAY re-scope (all but the all-powerful SUPER_ADMIN). */
+/** Every built-in role a company MAY re-scope (all but the SUPER_ADMIN). */
 export const EDITABLE_ROLES: readonly RoleName[] = USER_ROLES.filter(
   (r) => r !== 'SUPER_ADMIN',
 );
 
-/** True when a company is allowed to edit this role's permission set. */
-export function isRoleEditable(role: RoleName): boolean {
+/**
+ * True when a company may edit this role's permission set. Only SUPER_ADMIN is
+ * locked (it always holds every permission). All other built-in roles AND any
+ * custom role are editable.
+ */
+export function isRoleEditable(role: string): boolean {
   return role !== 'SUPER_ADMIN';
+}
+
+/** The default permission set for a role KEY (empty for a custom role). */
+export function defaultPermissionsFor(role: string): readonly Permission[] {
+  if (role === 'SUPER_ADMIN') return ALL_PERMISSIONS;
+  return ROLE_PERMISSIONS[role as RoleName] ?? [];
 }
 
 /** One persisted deviation from the default matrix for a single company. */
 export interface PermissionOverride {
-  role: RoleName;
+  /** A role KEY — a built-in or a custom role. */
+  role: string;
   permission: Permission;
   /** true = grant on top of the default, false = revoke from the default. */
   granted: boolean;
 }
 
 /**
- * Resolve a role's EFFECTIVE permission set from the static defaults plus a
- * company's overrides. SUPER_ADMIN always resolves to every permission.
+ * Resolve a role's EFFECTIVE permission set from its default plus a company's
+ * overrides. SUPER_ADMIN always resolves to every permission. A custom role
+ * has an empty default, so its grants come entirely from `granted` overrides.
  * Overrides for permissions no longer in the catalogue are ignored.
  */
 export function resolveEffectivePermissions(
-  role: RoleName,
+  role: string,
   overrides: readonly PermissionOverride[],
 ): Permission[] {
   if (role === 'SUPER_ADMIN') return [...ALL_PERMISSIONS];
 
-  const effective = new Set<Permission>(ROLE_PERMISSIONS[role]);
+  const effective = new Set<Permission>(defaultPermissionsFor(role));
   const known = new Set<Permission>(ALL_PERMISSIONS);
   for (const o of overrides) {
     if (o.role !== role || !known.has(o.permission)) continue;
@@ -443,13 +496,19 @@ export const ROLE_DESCRIPTIONS: Record<RoleName, string> = {
 
 /** One role's resolved permission state (GET /roles). */
 export interface RoleMatrixEntry {
-  role: RoleName;
+  /** Role KEY — built-in (e.g. "TECHNICIAN") or a custom slug. */
+  role: string;
   label: string;
   description: string;
+  /** true for the seven built-ins, false for company-defined custom roles. */
+  is_system: boolean;
+  /** Whether this role's permission set may be edited (false only for SUPER_ADMIN). */
   editable: boolean;
+  /** Whether this role may be deleted (custom, not held by any user). */
+  deletable: boolean;
   /** Effective permissions after applying this company's overrides. */
   effective: Permission[];
-  /** The static default permissions for this role. */
+  /** The default permissions for this role (empty for a custom role). */
   default: Permission[];
   /** Permissions whose effective grant differs from the default. */
   overridden: Permission[];
@@ -465,4 +524,22 @@ export interface RolesMatrixResponse {
 /** PUT /roles/{role}/permissions body — the desired effective grant set. */
 export interface UpdateRolePermissionsBody {
   permissions: Permission[];
+}
+
+/** POST /roles body — create a custom role. */
+export interface CreateRoleBody {
+  /** Optional explicit key (UPPER_SNAKE); derived from `label` when omitted. */
+  key?: string;
+  label: string;
+  description?: string;
+  /** Seed the new role's permissions with these (defaults to none). */
+  permissions?: Permission[];
+  /** Or clone the effective permissions of an existing role key. */
+  clone_from?: string;
+}
+
+/** PATCH /roles/{role} body — rename / re-describe a custom role. */
+export interface UpdateRoleBody {
+  label?: string;
+  description?: string;
 }

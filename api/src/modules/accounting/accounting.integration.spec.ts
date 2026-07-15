@@ -37,6 +37,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import {
   JournalService,
   normalizeJournalLines,
@@ -57,7 +58,7 @@ const scoped = new PrismaService();
 /** Service under test, wired exactly as in the DI container. */
 const service = new JournalService(
   scoped,
-  new ApprovalsService(scoped, new AuditService(scoped)),
+  new ApprovalsService(scoped, new AuditService(scoped), new PermissionResolverService(scoped)),
 );
 
 let companyId: string; // the SEEDED company (Samsung ASC Group)

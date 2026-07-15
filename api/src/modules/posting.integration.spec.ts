@@ -12,7 +12,7 @@
  */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PrismaClient, type UserRole, type UserScope } from '@prisma/client';
+import { PrismaClient, type UserScope } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';

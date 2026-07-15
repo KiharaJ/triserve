@@ -1,5 +1,5 @@
 import type { Permission } from '@triserve/shared';
-import type { UserRole, UserScope } from '@prisma/client';
+import type { UserScope } from '@prisma/client';
 
 /**
  * Shared auth types (Task 0.2 / E18).
@@ -17,7 +17,7 @@ export interface AccessTokenPayload {
   sub: string; // user id
   sid: string; // session id
   companyId: string;
-  role: UserRole;
+  role: string;
   scope: UserScope;
   homeBranchId: string | null;
   type: 'access';
@@ -41,7 +41,7 @@ export interface AuthUser {
   userId: string;
   sessionId: string;
   companyId: string;
-  role: UserRole;
+  role: string;
   scope: UserScope;
   homeBranchId: string | null;
 }
@@ -51,7 +51,7 @@ export interface PublicUser {
   id: string;
   email: string;
   full_name: string;
-  role: UserRole;
+  role: string;
   scope: UserScope;
   company_id: string;
   home_branch_id: string | null;

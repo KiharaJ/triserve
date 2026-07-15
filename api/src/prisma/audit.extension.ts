@@ -67,6 +67,8 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // can do — audited like the other access-control tables. Writes are simple
   // create/update/delete (never createMany, never a caller-managed tx).
   Prisma.ModelName.RolePermission,
+  // E17b: creating/renaming/deleting a role is an access-control change — audited.
+  Prisma.ModelName.Role,
   Prisma.ModelName.Currency,
   Prisma.ModelName.PaymentMethod,
   Prisma.ModelName.FaultCode,

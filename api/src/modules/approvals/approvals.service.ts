@@ -13,10 +13,11 @@ import {
   type ApprovalStatus,
   type ApprovalType,
 } from '@prisma/client';
-import { roleHasPermission, type PaginatedResponse } from '@triserve/shared';
+import { type PaginatedResponse } from '@triserve/shared';
 import { assertBranchAccess } from '../../common/authz/branch-access';
 import { getCurrentUser } from '../../common/context/request-context';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import type { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
 import type { ApprovalListQueryDto } from './dto/approvals.dto';
@@ -124,6 +125,7 @@ export class ApprovalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly resolver: PermissionResolverService,
   ) {}
 
   /**
@@ -188,7 +190,12 @@ export class ApprovalsService {
     decider: AuthUser,
     reason?: string,
   ): Promise<ApprovalEntry> {
-    if (!roleHasPermission(decider.role, 'approval.decide')) {
+    const canDecide = await this.resolver.has(
+      decider.companyId,
+      decider.role,
+      'approval.decide',
+    );
+    if (!canDecide) {
       throw new ForbiddenException('Missing permission(s): approval.decide');
     }
     if (decision === 'REJECTED' && !reason?.trim()) {

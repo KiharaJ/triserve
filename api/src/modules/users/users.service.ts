@@ -4,12 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  Prisma,
-  type User,
-  type UserRole,
-  type UserScope,
-} from '@prisma/client';
+import { Prisma, type User, type UserScope } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -30,7 +25,7 @@ export interface UserWire {
   initials: string | null;
   email: string;
   phone: string | null;
-  role: UserRole;
+  role: string;
   scope: UserScope;
   home_branch_id: string | null;
   totp_enabled: boolean;
@@ -100,6 +95,7 @@ export class UsersService {
 
   /** POST /users. */
   async create(dto: CreateUserDto, actor: AuthUser): Promise<UserWire> {
+    await this.assertRoleExists(dto.role);
     const homeBranchId = await this.resolveHomeBranch(
       dto.scope,
       dto.home_branch_id ?? null,
@@ -137,6 +133,7 @@ export class UsersService {
     actor: AuthUser,
   ): Promise<UserWire> {
     const before = await this.findRow(id);
+    if (dto.role !== undefined) await this.assertRoleExists(dto.role);
 
     const nextScope = dto.scope ?? before.scope;
     const nextHomeBranchId =
@@ -211,6 +208,18 @@ export class UsersService {
     });
     if (!row) throw new NotFoundException('User not found');
     return row;
+  }
+
+  /**
+   * The assigned role must be one of the company's registered roles (built-in
+   * or custom). The scope extension pins the lookup to the caller's company,
+   * so a foreign/unknown key 400s rather than assigning a non-existent role.
+   */
+  private async assertRoleExists(role: string): Promise<void> {
+    const found = await this.prisma.role.findFirst({ where: { key: role } });
+    if (!found) {
+      throw new BadRequestException(`Unknown role: ${role}`);
+    }
   }
 
   /**

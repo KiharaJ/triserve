@@ -30,6 +30,7 @@ import { AllExceptionsFilter } from '../../common/filters/all-exceptions.filter'
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
 import { AuditService } from '../audit/audit.service';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import {
   ApprovalsService,
   ruleRequiresApproval,
@@ -51,7 +52,7 @@ const raw = new PrismaClient();
 /** The DI-shape client: PrismaClient + company-scope + audit extensions. */
 const scoped = new PrismaService();
 /** Service under test, wired exactly as in the DI container. */
-const service = new ApprovalsService(scoped, new AuditService(scoped));
+const service = new ApprovalsService(scoped, new AuditService(scoped), new PermissionResolverService(scoped));
 
 let companyId: string; // the SEEDED company (Samsung ASC Group)
 let branchDar: string; // seeded DAR branch

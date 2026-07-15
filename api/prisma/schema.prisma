@@ -25,15 +25,11 @@ datasource db {
 // Enums (§3, §4.1)
 // ---------------------------------------------------------------------------
 
-enum UserRole {
-  SUPER_ADMIN
-  BRANCH_MANAGER
-  SERVICE_ADVISOR
-  TECHNICIAN
-  STOREKEEPER
-  WARRANTY_CLERK
-  ACCOUNTANT
-}
+// NOTE (E17b): `users.role` and `role_permissions.role` are plain VARCHAR role
+// KEYS, not a DB enum, so companies can define custom roles beyond the seven
+// built-ins. The registry of valid keys per company is the `roles` table; the
+// seven built-ins are seeded there as system rows. @triserve/shared still
+// carries the built-in keys, their labels and their default permission sets.
 
 enum UserScope {
   branch
@@ -179,6 +175,8 @@ model Company {
   products              Product[]
   // E17: per-company overrides of the default role × permission matrix.
   rolePermissions       RolePermission[]
+  // E17b: the company's role registry (built-in + custom).
+  roles                 Role[]
 
   @@map("companies")
 }
@@ -242,7 +240,8 @@ model User {
   email        String    @unique @db.VarChar(255)
   phone        String?   @db.VarChar(50)
   passwordHash String    @map("password_hash") @db.VarChar(255)
-  role         UserRole
+  /// A role KEY into the company's `roles` table (built-in or custom).
+  role         String    @db.VarChar(50)
   homeBranchId String?   @map("home_branch_id") @db.Char(36)
   scope        UserScope @default(branch)
   totpSecret   String?   @map("totp_secret") @db.VarChar(255)
@@ -361,13 +360,16 @@ model User {
 /// permission the default withholds; `granted = false` revokes one the
 /// default grants. A role with no rows resolves to its plain default, and a
 /// permission added to the catalogue later is inherited until overridden.
-/// SUPER_ADMIN is never stored here — it always holds every permission.
+/// SUPER_ADMIN is never stored here — it always holds every permission. For a
+/// CUSTOM role (E17b) the default is empty, so every one of its permissions is
+/// a `granted = true` row here.
 model RolePermission {
-  id         String   @id @default(uuid()) @db.Char(36)
-  companyId  String   @map("company_id") @db.Char(36)
-  role       UserRole
+  id         String  @id @default(uuid()) @db.Char(36)
+  companyId  String  @map("company_id") @db.Char(36)
+  /// A role KEY (built-in or custom) — see the `roles` table.
+  role       String  @db.VarChar(50)
   /// A @triserve/shared permission string, e.g. "invoice.void".
-  permission String   @db.VarChar(100)
+  permission String  @db.VarChar(100)
   granted    Boolean
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
@@ -380,6 +382,36 @@ model RolePermission {
   @@unique([companyId, role, permission])
   @@index([companyId, role])
   @@map("role_permissions")
+}
+
+/// The registry of roles a company recognises (E17b). Seeds with the seven
+/// built-ins (`is_system = true`, keys matching @triserve/shared's built-in
+/// role names) and grows as admins add custom roles. `users.role` and
+/// `role_permissions.role` reference `key` (not a hard FK — validated in the
+/// service, consistent with how `users.role` was an enum before).
+///
+/// Built-in rows cannot be deleted or re-keyed (their permission SET is still
+/// editable via role_permissions). Custom rows can be renamed and deleted when
+/// no user holds them. SUPER_ADMIN additionally always holds every permission.
+model Role {
+  id          String  @id @default(uuid()) @db.Char(36)
+  companyId   String  @map("company_id") @db.Char(36)
+  /// UPPER_SNAKE role key, unique per company.
+  key         String  @db.VarChar(50)
+  label       String  @db.VarChar(100)
+  description String? @db.VarChar(255)
+  /// true for the seven built-ins; false for company-defined roles.
+  isSystem    Boolean @default(false) @map("is_system")
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, key])
+  @@map("roles")
 }
 
 // ---------------------------------------------------------------------------

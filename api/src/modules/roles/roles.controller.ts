@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  Patch,
   Post,
   Put,
   UseGuards,
@@ -19,14 +21,18 @@ import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import { UpdateRolePermissionsDto } from './dto/role-permissions.dto';
+import { CreateRoleDto, UpdateRoleDto } from './dto/role.dto';
 import { RolesService } from './roles.service';
 
 /**
  * /api/v1/roles (E17) — the editable role × permission matrix.
  *
- *   GET  /roles                         'user.read'   full matrix
- *   PUT  /roles/{role}/permissions      'user.manage' set a role's grants
- *   POST /roles/{role}/reset            'user.manage' back to defaults
+ *   GET    /roles                       'user.read'   full matrix
+ *   POST   /roles                       'user.manage' create a custom role
+ *   PATCH  /roles/{role}                'user.manage' rename a custom role
+ *   DELETE /roles/{role}                'user.manage' delete a custom role
+ *   PUT    /roles/{role}/permissions    'user.manage' set a role's grants
+ *   POST   /roles/{role}/reset          'user.manage' back to defaults
  *
  * Company-scoped; SUPER_ADMIN is immutable (always every permission). Editing
  * a role takes effect on the next request via the resolver cache invalidation.
@@ -40,6 +46,35 @@ export class RolesController {
   @RequirePermissions('user.read')
   matrix(@CurrentUser() user: AuthUser): Promise<RolesMatrixResponse> {
     return this.roles.matrix(user);
+  }
+
+  @Post()
+  @RequirePermissions('user.manage')
+  create(
+    @Body() dto: CreateRoleDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<RoleMatrixEntry> {
+    return this.roles.createRole(dto, user);
+  }
+
+  @Patch(':role')
+  @RequirePermissions('user.manage')
+  updateRole(
+    @Param('role') role: string,
+    @Body() dto: UpdateRoleDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<RoleMatrixEntry> {
+    return this.roles.updateRole(role, dto, user);
+  }
+
+  @Delete(':role')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions('user.manage')
+  deleteRole(
+    @Param('role') role: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<void> {
+    return this.roles.deleteRole(role, user);
   }
 
   @Put(':role/permissions')

@@ -22,7 +22,7 @@
  */
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PrismaClient, type UserRole, type UserScope } from '@prisma/client';
+import { PrismaClient, type UserScope } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { existsSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -144,7 +144,7 @@ beforeAll(async () => {
   const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
   const mk = (
     email: string,
-    role: UserRole,
+    role: string,
     scope: UserScope,
     company: string,
     homeBranchId: string | null,
