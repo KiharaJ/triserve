@@ -337,6 +337,61 @@ export interface ParsedJobCard {
   warnings: string[]
 }
 
+/** A `code - label` pair off a GSPN document; `code` is null when unprefixed. */
+export interface GspnCode {
+  code: string | null
+  label: string
+}
+
+export interface ParsedClaimLine {
+  line_no: number
+  part_no: string
+  description: string | null
+  location: string | null
+  qty: number
+  unit_price_usd: string | null
+  amount_usd: string | null
+  invoice_no: string | null
+  part_serial_no: string | null
+}
+
+/**
+ * POST /warranty-claims/import/gspn-pdf — a DRAFT parsed from a GSPN Warranty
+ * Claim Detail PDF. Nothing is created; the claim still has to be matched to
+ * one of our jobs, which is a human call. Money is USD minor units.
+ */
+export interface ParsedClaim {
+  claim_no: string | null
+  samsung_ref_no: string | null
+  ticket_no: string | null
+  gspn_status: string | null
+  service_type: ServiceType | null
+  customer_name: string | null
+  phone: string | null
+  model: string | null
+  serial: string | null
+  imei_masked: string | null
+  purchase_date: string | null
+  repair_received_at: string | null
+  completed_at: string | null
+  delivered_at: string | null
+  warranty_status: WarrantyStatus | null
+  condition_code: GspnCode | null
+  symptom_code: GspnCode | null
+  defect_code: GspnCode | null
+  defect_type: GspnCode | null
+  repair_code: GspnCode | null
+  defect_description: string | null
+  repair_description: string | null
+  claim_amount_usd: string | null
+  labour_amount_usd: string | null
+  parts_amount_usd: string | null
+  shipping_amount_usd: string | null
+  tax_amount_usd: string | null
+  lines: ParsedClaimLine[]
+  warnings: string[]
+}
+
 /** One Samsung GSPN diagnostic code — `kind` disambiguates the shared table. */
 export interface ServiceCodeWire extends FaultCodeWire {
   kind: ServiceCodeKind

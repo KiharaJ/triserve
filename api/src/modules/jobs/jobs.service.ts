@@ -30,12 +30,12 @@ import type { AuthUser } from '../auth/auth.types';
 import { resolveType } from '../customers/customers.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import {
-  extractRows,
   looksLikeJobCard,
   parseJobCard,
   JOBCARD_MARKER,
   type ParsedJobCard,
 } from './gspn-jobcard.parser';
+import { extractRows, type PdfRow } from './gspn-pdf';
 import type {
   CreateJobDto,
   DispatchJobDto,
@@ -356,7 +356,7 @@ export class JobsService {
       throw new BadRequestException('The uploaded file is not a PDF');
     }
 
-    let rows;
+    let rows: PdfRow[];
     try {
       rows = await extractRows(new Uint8Array(file.buffer));
     } catch {

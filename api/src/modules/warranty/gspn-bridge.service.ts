@@ -1,7 +1,18 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { type WarrantyClaimStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
+import { extractRows, type PdfRow } from '../jobs/gspn-pdf';
+import {
+  CLAIM_MARKER,
+  looksLikeClaim,
+  parseClaim,
+  type ParsedClaim,
+} from './gspn-claim.parser';
 import { WarrantyClaimsService } from './warranty-claims.service';
 
 /**
@@ -56,7 +67,9 @@ export class GspnBridgeService {
       },
       include: {
         branch: { select: { code: true } },
-        job: { include: { device: { select: { imeiSerial: true, model: true } } } },
+        job: {
+          include: { device: { select: { imeiSerial: true, model: true } } },
+        },
       },
       orderBy: [{ submittedAt: 'desc' }, { createdAt: 'desc' }],
     });
@@ -93,7 +106,11 @@ export class GspnBridgeService {
     user: AuthUser,
   ): Promise<GspnImportReport> {
     const records = parseCsv(csv);
-    const report: GspnImportReport = { total: records.length, applied: 0, errors: [] };
+    const report: GspnImportReport = {
+      total: records.length,
+      applied: 0,
+      errors: [],
+    };
 
     for (const r of records) {
       const claimNo = (r.claim_no ?? '').trim();
@@ -103,7 +120,10 @@ export class GspnBridgeService {
         continue;
       }
       if (!['APPROVED', 'REJECTED', 'PAID'].includes(outcome)) {
-        report.errors.push({ claim_no: claimNo, reason: `invalid outcome "${r.outcome}"` });
+        report.errors.push({
+          claim_no: claimNo,
+          reason: `invalid outcome "${r.outcome}"`,
+        });
         continue;
       }
       const claim = await this.prisma.warrantyClaim.findFirst({
@@ -120,7 +140,10 @@ export class GspnBridgeService {
         try {
           reimbursed = usdToCents(r.reimbursed_usd as string);
         } catch {
-          report.errors.push({ claim_no: claimNo, reason: `bad reimbursed_usd "${r.reimbursed_usd}"` });
+          report.errors.push({
+            claim_no: claimNo,
+            reason: `bad reimbursed_usd "${r.reimbursed_usd}"`,
+          });
           continue;
         }
       }
@@ -144,7 +167,44 @@ export class GspnBridgeService {
     }
     return report;
   }
+
+  /**
+   * POST /warranty-claims/import/gspn-pdf — read a Warranty Claim Detail PDF.
+   *
+   * The CSV bridge above only covers RECONCILIATION (claim_no → outcome).
+   * GSPN has no export at all for the claim's detail — the codes, the cost
+   * split, the part lines — so the printed PDF is the only way to get it in
+   * without retyping. Parsed in memory and discarded; nothing is written,
+   * because matching a claim to one of our jobs is a human judgement.
+   */
+  async parseClaimPdf(file?: Express.Multer.File): Promise<ParsedClaim> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('A PDF file is required');
+    }
+    // Trust the bytes, not the client-declared mimetype.
+    if (!file.buffer.subarray(0, 5).equals(PDF_MAGIC_BYTES)) {
+      throw new BadRequestException('The uploaded file is not a PDF');
+    }
+
+    let rows: PdfRow[];
+    try {
+      rows = await extractRows(new Uint8Array(file.buffer));
+    } catch {
+      throw new UnprocessableEntityException(
+        'That PDF could not be read. If it is a scan or a photo, enter the claim by hand instead.',
+      );
+    }
+    if (!looksLikeClaim(rows)) {
+      throw new UnprocessableEntityException(
+        `That does not look like a GSPN Warranty Claim Detail (no "${CLAIM_MARKER}" heading found)`,
+      );
+    }
+    return parseClaim(rows);
+  }
 }
+
+/** `%PDF-` — checked against the actual bytes, not the declared mimetype. */
+const PDF_MAGIC_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
 // ── CSV helpers ───────────────────────────────────────────────────────────────
 function csvCell(v: string): string {

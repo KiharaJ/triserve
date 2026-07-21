@@ -8,12 +8,17 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { PaginatedResponse } from '@triserve/shared';
 import { IsString, MaxLength } from 'class-validator';
+import { memoryStorage } from 'multer';
 import { PermissionsGuard } from '../../common/authz/permissions.guard';
 import { RequirePermissions } from '../../common/authz/require-permissions.decorator';
+import { MULTER_HARD_CEILING_BYTES } from '../attachments/attachments.constants';
 import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
@@ -28,6 +33,7 @@ import {
   GspnBridgeService,
   type GspnImportReport,
 } from './gspn-bridge.service';
+import type { ParsedClaim } from './gspn-claim.parser';
 import {
   WarrantyClaimsService,
   type WarrantyClaimWire,
@@ -78,6 +84,26 @@ export class WarrantyClaimsController {
     @CurrentUser() user: AuthUser,
   ): Promise<GspnImportReport> {
     return this.gspn.importReconciliations(dto.csv ?? '', user);
+  }
+
+  /**
+   * Parse a GSPN "Warranty Claim Detail" PDF into a DRAFT (§4.7).
+   *
+   * Creates nothing: GSPN has no CSV export for claim detail, so this reads
+   * the printed PDF instead. The claim still has to be matched to one of our
+   * jobs, which is a judgement call, so the draft comes back for a human to
+   * confirm. `warranty.claim.create` because that is what it feeds.
+   */
+  @Post('import/gspn-pdf')
+  @RequirePermissions('warranty.claim.create')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MULTER_HARD_CEILING_BYTES },
+    }),
+  )
+  importPdf(@UploadedFile() file: Express.Multer.File): Promise<ParsedClaim> {
+    return this.gspn.parseClaimPdf(file);
   }
 
   @Get()

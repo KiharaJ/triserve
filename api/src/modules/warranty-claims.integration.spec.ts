@@ -130,7 +130,9 @@ async function submittedClaim(amountUsd: string): Promise<string> {
     claim_amount_usd: amountUsd,
     labour_code: 'LEM',
   });
-  await submit(tokens.clerkDar, claim.id, { claim_no: `SN-${claim.id.slice(0, 8)}` });
+  await submit(tokens.clerkDar, claim.id, {
+    claim_no: `SN-${claim.id.slice(0, 8)}`,
+  });
   return claim.id;
 }
 
@@ -238,7 +240,9 @@ afterAll(async () => {
   const entryIds = entries.map((e) => e.id);
   await raw.journalLine.deleteMany({ where: { entryId: { in: entryIds } } });
   await raw.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
-  await raw.warrantyClaim.deleteMany({ where: { id: { in: createdClaimIds } } });
+  await raw.warrantyClaim.deleteMany({
+    where: { id: { in: createdClaimIds } },
+  });
   await raw.auditLog.deleteMany({
     where: { entityType: 'WarrantyClaim', entityId: { in: createdClaimIds } },
   });
@@ -246,7 +250,9 @@ afterAll(async () => {
   await raw.device.deleteMany({ where: { id: deviceId } });
   await raw.customer.deleteMany({ where: { id: customerId } });
   await raw.session.deleteMany({ where: { userId: { in: testUserIds } } });
-  await raw.user.deleteMany({ where: { email: { in: Object.values(EMAILS) } } });
+  await raw.user.deleteMany({
+    where: { email: { in: Object.values(EMAILS) } },
+  });
   await raw.$disconnect();
   await app.close();
 });
@@ -348,7 +354,11 @@ describe('Authorization + scoping', () => {
       claim_amount_usd: '4200',
     });
     const audit = await raw.auditLog.findFirst({
-      where: { entityType: 'WarrantyClaim', entityId: claim.id, action: 'CREATE' },
+      where: {
+        entityType: 'WarrantyClaim',
+        entityId: claim.id,
+        action: 'CREATE',
+      },
     });
     expect(audit).not.toBeNull();
     expect(audit!.actorUserId).toBe(ids.clerkDar);
@@ -380,7 +390,9 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
 
   it('APPROVED posts Dr AR–Samsung / Cr Warranty Revenue (USD, balanced)', async () => {
     const id = await submittedClaim('10000'); // $100.00
-    const approved = await reconcile(tokens.clerkDar, id, { outcome: 'APPROVED' });
+    const approved = await reconcile(tokens.clerkDar, id, {
+      outcome: 'APPROVED',
+    });
     expect(approved.status).toBe('APPROVED');
 
     const entries = await entriesFor(id);
@@ -416,7 +428,9 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
 
   it('REJECTED posts nothing', async () => {
     const id = await submittedClaim('5000');
-    const rejected = await reconcile(tokens.clerkDar, id, { outcome: 'REJECTED' });
+    const rejected = await reconcile(tokens.clerkDar, id, {
+      outcome: 'REJECTED',
+    });
     expect(rejected.status).toBe('REJECTED');
     expect(await entriesFor(id)).toHaveLength(0);
   });
@@ -519,6 +533,96 @@ describe('GSPN CSV bridge (E13, Task 4.3)', () => {
       .post('/api/v1/warranty-claims/import')
       .set('Authorization', `Bearer ${tokens.advisorDar}`)
       .send({ csv: 'claim_no,outcome\nX,APPROVED' })
+      .expect(403);
+  });
+});
+
+/**
+ * GSPN publishes no export at all for claim DETAIL (the codes, the cost split,
+ * the part lines) — only the printed PDF carries it, so it is read directly.
+ */
+describe('GSPN claim-detail PDF import (§4.7)', () => {
+  /** Minimal single-page PDF containing `lines` of text. */
+  function makePdf(lines: string[]): Buffer {
+    const content = lines
+      .map((t, i) => `BT /F1 10 Tf 31 ${700 - i * 20} Td (${t}) Tj ET`)
+      .join('\n');
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    return Buffer.from(pdf, 'latin1');
+  }
+
+  it('returns a DRAFT and creates no claim', async () => {
+    const before = await raw.warrantyClaim.count();
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import/gspn-pdf')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .attach(
+        'file',
+        makePdf([
+          'Warranty Claim Detail',
+          'ASC Claim No 4294486119',
+          'Samsung Ref. No 691010405931',
+        ]),
+        { filename: 'claim.pdf', contentType: 'application/pdf' },
+      )
+      .expect(201);
+
+    const body = res.body as { claim_no: string; samsung_ref_no: string };
+    expect(body.claim_no).toBe('4294486119');
+    expect(body.samsung_ref_no).toBe('691010405931');
+    // Matching a claim to one of our jobs is a human call — nothing is saved.
+    expect(await raw.warrantyClaim.count()).toBe(before);
+  });
+
+  it('rejects a non-PDF even when it claims to be one', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import/gspn-pdf')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .attach('file', Buffer.from('not a pdf at all'), {
+        filename: 'evil.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(400);
+  });
+
+  it('rejects a job card uploaded to the claim endpoint (422)', async () => {
+    // Both are GSPN PDFs; only the heading tells them apart.
+    await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import/gspn-pdf')
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .attach('file', makePdf(['Service Order Sheet', 'Customer Name X']), {
+        filename: 'jobcard.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(422);
+  });
+
+  it('requires warranty.claim.create', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/warranty-claims/import/gspn-pdf')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .attach('file', makePdf(['Warranty Claim Detail']), {
+        filename: 'claim.pdf',
+        contentType: 'application/pdf',
+      })
       .expect(403);
   });
 });

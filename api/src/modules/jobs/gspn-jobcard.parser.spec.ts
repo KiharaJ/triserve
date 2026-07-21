@@ -8,15 +8,18 @@
  * two-column label/value table — using invented values.
  */
 import {
+  JOBCARD_LABELS,
+  looksLikeJobCard,
+  parseJobCard,
+} from './gspn-jobcard.parser';
+import {
   buildFieldMap,
   extractRows,
-  looksLikeJobCard,
   parseGspnDate,
   parseGspnDateTime,
   parseGspnPhone,
-  parseJobCard,
   type PdfRow,
-} from './gspn-jobcard.parser';
+} from './gspn-pdf';
 
 /** Build a row the way extractRows would, from `x:text` pairs. */
 function row(y: number, page: number, ...pairs: [number, string][]): PdfRow {
@@ -142,14 +145,14 @@ describe('parseJobCard — the Samsung Service Order Sheet', () => {
   it("a right-column label terminates the left column's value", () => {
     // The two-column table shares one baseline: without knowing that
     // "Serial No ( IMEI )" is a label, the model swallows the rest of the row.
-    const fields = buildFieldMap(jobCardRows());
+    const fields = buildFieldMap(jobCardRows(), JOBCARD_LABELS);
     expect(fields.get('Model Name')).toBe('SM-A065FZKDAFB');
     expect(fields.get('Request Date')).toBe('07.15.2026');
   });
 
   it("the header's `Address:` does not capture the customer's `Address`", () => {
     // They differ only by a colon — one is the service centre's.
-    const fields = buildFieldMap(jobCardRows());
+    const fields = buildFieldMap(jobCardRows(), JOBCARD_LABELS);
     expect(fields.get('Address:')).toBe('SAM NUJOMA ROAD 000');
     expect(fields.get('Address')).toBe('MBANDE TEMEKE Daressalaam TZ');
   });

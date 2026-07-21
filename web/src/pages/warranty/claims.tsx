@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Download, Upload } from 'lucide-react'
+import { Download, FileText, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
 import type { PaginatedResponse } from '@triserve/shared'
@@ -31,6 +31,7 @@ import { useAuth } from '@/lib/auth'
 import { decimalToMinor, formatDate, formatMoney, minorToDecimal } from '@/lib/format'
 import type {
   LabourCode,
+  ParsedClaim,
   WarrantyClaimStatus,
   WarrantyClaimWire,
 } from '@/lib/types'
@@ -83,6 +84,9 @@ export function WarrantyClaimsPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [importCsv, setImportCsv] = useState('')
 
+  /** The last GSPN claim-detail PDF read, shown alongside the create dialog. */
+  const [pdfDraft, setPdfDraft] = useState<ParsedClaim | null>(null)
+
   const canCreate = can('warranty.claim.create')
   const canSubmit = can('warranty.claim.submit')
   const canReconcile = can('warranty.claim.reconcile')
@@ -113,8 +117,47 @@ export function WarrantyClaimsPage() {
     setLabourCode('')
     setClaimNo('')
     setNotes('')
+    setPdfDraft(null)
     setDialogOpen(true)
   }
+
+  /**
+   * Read a GSPN Warranty Claim Detail PDF into the create dialog.
+   *
+   * GSPN exports no CSV for claim detail, so the printed PDF is the only way
+   * in short of retyping. It cannot tell us WHICH of our jobs the claim
+   * belongs to — it identifies the handset, not the job — so the advisor
+   * still picks that, and nothing is saved until they do.
+   */
+  const importPdfMut = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return (
+        await api.post<ParsedClaim>('/warranty-claims/import/gspn-pdf', fd)
+      ).data
+    },
+    onSuccess: (draft) => {
+      setEditId(null)
+      setJobId('')
+      setJobLabel(null)
+      setLabourCode('')
+      setClaimNo(draft.claim_no ?? '')
+      setAmount(draft.claim_amount_usd ? minorToDecimal(draft.claim_amount_usd) : '')
+      setNotes(
+        [
+          draft.samsung_ref_no && `Samsung ref ${draft.samsung_ref_no}`,
+          draft.ticket_no && `ticket ${draft.ticket_no}`,
+          draft.repair_description,
+        ]
+          .filter(Boolean)
+          .join(' · '),
+      )
+      setPdfDraft(draft)
+      setDialogOpen(true)
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
 
   function openEdit(c: WarrantyClaimWire) {
     setEditId(c.id)
@@ -300,6 +343,31 @@ export function WarrantyClaimsPage() {
             <Upload className="size-4" /> Import GSPN
           </Button>
         )}
+        {canCreate && (
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            asChild
+            title="Read a GSPN Warranty Claim Detail PDF"
+          >
+            <label>
+              <FileText className="size-4" />
+              {importPdfMut.isPending ? 'Reading…' : 'Read claim PDF'}
+              <input
+                type="file"
+                accept="application/pdf"
+                className="hidden"
+                disabled={importPdfMut.isPending}
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) importPdfMut.mutate(file)
+                  // Let the same file be picked again after a failed read.
+                  e.target.value = ''
+                }}
+              />
+            </label>
+          </Button>
+        )}
         {canCreate && <Button onClick={openCreate}>New claim</Button>}
       </div>
 
@@ -417,6 +485,46 @@ export function WarrantyClaimsPage() {
             <DialogTitle>{editId ? 'Edit warranty claim' : 'New warranty claim'}</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-3">
+            {pdfDraft && (
+              <div className="flex flex-col gap-1.5 rounded-md border bg-muted/40 p-2.5 text-xs">
+                <p className="font-medium">Read from the claim PDF</p>
+                <p className="text-muted-foreground">
+                  {[
+                    pdfDraft.model,
+                    pdfDraft.serial && `serial ${pdfDraft.serial}`,
+                    pdfDraft.customer_name,
+                    pdfDraft.gspn_status,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+                {/* The split the claim was settled on — what makes a short
+                    payment attributable later. */}
+                <p className="text-muted-foreground">
+                  Labour {formatMoney(pdfDraft.labour_amount_usd ?? '0', 'USD')} · Parts{' '}
+                  {formatMoney(pdfDraft.parts_amount_usd ?? '0', 'USD')} · Shipping{' '}
+                  {formatMoney(pdfDraft.shipping_amount_usd ?? '0', 'USD')} · Tax{' '}
+                  {formatMoney(pdfDraft.tax_amount_usd ?? '0', 'USD')}
+                </p>
+                {pdfDraft.lines.length > 0 && (
+                  <p className="text-muted-foreground">
+                    {pdfDraft.lines
+                      .map((l) => `${l.part_no} ×${l.qty}`)
+                      .join(', ')}
+                  </p>
+                )}
+                {/* The PDF identifies the handset, not the job — so the
+                    advisor still has to say which job this belongs to. */}
+                <p className="text-muted-foreground">
+                  Pick the job this claim belongs to below.
+                </p>
+                {pdfDraft.warnings.map((w) => (
+                  <p key={w} className="text-amber-700 dark:text-amber-400">
+                    {w}
+                  </p>
+                ))}
+              </div>
+            )}
             {!editId && (
               <FormField label="Job" htmlFor="claim-job">
                 <JobPicker
