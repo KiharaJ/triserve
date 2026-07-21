@@ -823,82 +823,6 @@ export function JobIntakePage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Warranty</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <FormField label="Warranty status" htmlFor="warranty_status">
-              <Select
-                id="warranty_status"
-                {...form.register('warranty_status', {
-                  // Coverage follows the status by default; an advisor can
-                  // still override it below for the labour-only / parts-only
-                  // cases the Samsung job card allows.
-                  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
-                    const next = e.target.value as WarrantyStatus
-                    form.setValue('coverage', defaultCoverageFor(next), {
-                      shouldValidate: true,
-                    })
-                    setAppliedRegistrationId(null)
-                  },
-                })}
-              >
-                {WARRANTY_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </Select>
-            </FormField>
-            <FormField label="Who pays" htmlFor="coverage">
-              <Select id="coverage" {...form.register('coverage')}>
-                {JOB_COVERAGES.map((c) => (
-                  <option key={c.value} value={c.value}>
-                    {c.label}
-                  </option>
-                ))}
-              </Select>
-            </FormField>
-          </div>
-
-          {coverageValue !== 'FULL' && (
-            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
-              The customer pays for this repair
-              {coverageValue === 'LABOUR_ONLY'
-                ? ' (parts)'
-                : coverageValue === 'PARTS_ONLY'
-                  ? ' (labour)'
-                  : ''}
-              . A quote must be raised and accepted before work starts —
-              repair is blocked until then.
-            </p>
-          )}
-          {warrantyStatusValue === 'UNKNOWN' && (
-            <p className="text-xs text-muted-foreground">
-              Warranty not ruled yet. Left as-is, this job is treated as
-              chargeable until someone decides.
-            </p>
-          )}
-          {appliedRegistrationId && (
-            <p className="text-xs text-muted-foreground">
-              Ruled from the matched warranty registration — recorded as the
-              evidence for this decision.
-            </p>
-          )}
-
-          <FormField
-            label="Return by"
-            htmlFor="return_by_date"
-            hint="Promised collection date shown to the customer."
-            className="sm:max-w-[50%]"
-          >
-            <Input id="return_by_date" type="date" {...form.register('return_by_date')} />
-          </FormField>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>Job details</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
@@ -1013,6 +937,82 @@ export function JobIntakePage() {
               <Input id="so_number" {...form.register('so_number')} />
             </FormField>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Warranty</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FormField label="Warranty status" htmlFor="warranty_status">
+              <Select
+                id="warranty_status"
+                {...form.register('warranty_status', {
+                  // Coverage follows the status by default; an advisor can
+                  // still override it below for the labour-only / parts-only
+                  // cases the Samsung job card allows.
+                  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+                    const next = e.target.value as WarrantyStatus
+                    form.setValue('coverage', defaultCoverageFor(next), {
+                      shouldValidate: true,
+                    })
+                    setAppliedRegistrationId(null)
+                  },
+                })}
+              >
+                {WARRANTY_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            <FormField label="Who pays" htmlFor="coverage">
+              <Select id="coverage" {...form.register('coverage')}>
+                {JOB_COVERAGES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+          </div>
+
+          {coverageValue !== 'FULL' && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+              The customer pays for this repair
+              {coverageValue === 'LABOUR_ONLY'
+                ? ' (parts)'
+                : coverageValue === 'PARTS_ONLY'
+                  ? ' (labour)'
+                  : ''}
+              . A quote must be raised and accepted before work starts —
+              repair is blocked until then.
+            </p>
+          )}
+          {warrantyStatusValue === 'UNKNOWN' && (
+            <p className="text-xs text-muted-foreground">
+              Warranty not ruled yet. Left as-is, this job is treated as
+              chargeable until someone decides.
+            </p>
+          )}
+          {appliedRegistrationId && (
+            <p className="text-xs text-muted-foreground">
+              Ruled from the matched warranty registration — recorded as the
+              evidence for this decision.
+            </p>
+          )}
+
+          <FormField
+            label="Return by"
+            htmlFor="return_by_date"
+            hint="Promised collection date shown to the customer."
+            className="sm:max-w-[50%]"
+          >
+            <Input id="return_by_date" type="date" {...form.register('return_by_date')} />
+          </FormField>
         </CardContent>
       </Card>
 
