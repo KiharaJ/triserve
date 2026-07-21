@@ -24,6 +24,7 @@ import {
   type FaultCodeWire,
   type PaymentMethodWire,
   type RepairActionWire,
+  type ServiceCategoryWire,
   type ServiceCodeWire,
   type TaxRateWire,
 } from './config-tables.service';
@@ -33,6 +34,7 @@ import {
   CreateFaultCodeDto,
   CreatePaymentMethodDto,
   CreateRepairActionDto,
+  CreateServiceCategoryDto,
   CreateServiceCodeDto,
   CreateTaxRateDto,
   ServiceCodeListQueryDto,
@@ -40,6 +42,7 @@ import {
   UpdateFaultCodeDto,
   UpdatePaymentMethodDto,
   UpdateRepairActionDto,
+  UpdateServiceCategoryDto,
   UpdateServiceCodeDto,
   UpdateTaxRateDto,
 } from './dto/config-tables.dto';
@@ -141,6 +144,68 @@ export class FaultCodesController {
     @CurrentUser() user: AuthUser,
   ): Promise<void> {
     return this.config.removeFaultCode(id, user);
+  }
+}
+
+/**
+ * Service categories (§4.3) — what the customer is asking for.
+ *
+ * `GET /service-categories/active` is readable with `job.read` for the same
+ * reason as the code pickers: the front desk chooses one at intake and does
+ * not hold `config.read`.
+ */
+@Controller('service-categories')
+@UseGuards(AuthGuard, PermissionsGuard)
+export class ServiceCategoriesController {
+  constructor(private readonly config: ConfigTablesService) {}
+
+  @Get()
+  @RequirePermissions('config.read')
+  list(
+    @Query() query: ConfigListQueryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCategoryWire>> {
+    return this.config.listServiceCategories(query, user);
+  }
+
+  @Get('active')
+  @RequirePermissions('job.read')
+  active(
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCategoryWire>> {
+    return this.config.listServiceCategories(
+      { active: true, page: 1, page_size: 100 },
+      user,
+    );
+  }
+
+  @Post()
+  @RequirePermissions('config.manage')
+  create(
+    @Body() dto: CreateServiceCategoryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ServiceCategoryWire> {
+    return this.config.createServiceCategory(dto, user);
+  }
+
+  @Patch(':id')
+  @RequirePermissions('config.manage')
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateServiceCategoryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ServiceCategoryWire> {
+    return this.config.updateServiceCategory(id, dto, user);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions('config.manage')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<void> {
+    return this.config.removeServiceCategory(id, user);
   }
 }
 

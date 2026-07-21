@@ -7,6 +7,7 @@ import {
   IsString,
   Length,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -196,6 +197,73 @@ export class UpdateServiceCodeDto {
   @IsOptional()
   @IsEnum(DEVICE_CATEGORIES)
   category?: DeviceCategory | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+// --- Service categories (what the customer is asking for, §4.3) -----------------
+
+/**
+ * A service LINE the centre offers — mobile repair, TV repair, AC repair,
+ * general repair, and whatever else a company adds. Deliberately a config
+ * table rather than an enum: the lines differ per centre and change without
+ * a release.
+ */
+export class CreateServiceCategoryDto {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(30)
+  @Matches(CODE_PATTERN, { message: CODE_MESSAGE })
+  code!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  label!: string;
+
+  /** Normal turnaround for this line, in hours; omit for "no standard". */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24 * 365)
+  default_sla_hours?: number | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class UpdateServiceCategoryDto {
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(30)
+  @Matches(CODE_PATTERN, { message: CODE_MESSAGE })
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  label?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(24 * 365)
+  default_sla_hours?: number | null;
 
   @IsOptional()
   @IsInt()

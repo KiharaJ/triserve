@@ -9,6 +9,7 @@ import {
   Prisma,
   type ApprovalType,
   type JobCoverage,
+  type JobPriority,
   type ServiceCodeKind,
   type ServiceType,
   type WarrantySource,
@@ -65,6 +66,13 @@ export interface JobWire {
   assigned_engineer_id: string | null;
   warranty_status: WarrantyStatus;
   service_type: ServiceType;
+  /** The service line the customer asked for (§4.3). */
+  service_category_id: string | null;
+  priority: JobPriority;
+  /** Internal turnaround target — NOT the date promised to the customer. */
+  sla_due_at: string | null;
+  /** Convenience: past `sla_due_at` and not finished yet. */
+  is_overdue: boolean;
   /** What the warranty PAYS FOR — what invoicing and the quote gate read. */
   coverage: JobCoverage;
   warranty_source: WarrantySource | null;
@@ -233,6 +241,15 @@ export class JobsService {
       ...(query.state ? { state: { code: query.state } } : {}),
       ...(query.coverage ? { coverage: query.coverage } : {}),
       ...(query.service_type ? { serviceType: query.service_type } : {}),
+      ...(query.service_category_id
+        ? { serviceCategoryId: query.service_category_id }
+        : {}),
+      ...(query.priority ? { priority: query.priority } : {}),
+      // Overdue is "past the target AND still open" — a finished job that ran
+      // late is history, not a thing to chase.
+      ...(query.overdue
+        ? { slaDueAt: { lt: new Date() }, state: { isTerminal: false } }
+        : {}),
       ...(query.warranty_status
         ? { warrantyStatus: query.warranty_status }
         : {}),
@@ -297,6 +314,13 @@ export class JobsService {
     }
     await this.assertServiceCodeKinds(dto);
 
+    // The service line sets the internal turnaround target. Resolved here
+    // rather than trusted from the client so `sla_due_at` always matches the
+    // category's configured SLA at the moment of intake.
+    const category = dto.service_category_id
+      ? await this.loadServiceCategory(dto.service_category_id)
+      : null;
+
     // The warranty ruling: `coverage` is what everything downstream reads, so
     // derive it when the caller only stated warranty_status, and record WHO
     // decided — but only if a decision was actually made. An untouched intake
@@ -343,6 +367,11 @@ export class JobsService {
         assignedEngineerId: dto.assigned_engineer_id ?? null,
         warrantyStatus,
         serviceType: dto.service_type ?? 'CARRY_IN',
+        serviceCategoryId: category?.id ?? null,
+        priority: dto.priority ?? 'NORMAL',
+        slaDueAt: category?.defaultSlaHours
+          ? new Date(now.getTime() + category.defaultSlaHours * 3_600_000)
+          : null,
         coverage,
         warrantySource,
         warrantyRegistrationId: dto.warranty_registration_id ?? null,
@@ -433,6 +462,27 @@ export class JobsService {
       dto.coverage !== undefined ||
       dto.warranty_source !== undefined;
 
+    // Changing the service line re-targets the SLA off the ORIGINAL intake
+    // time — the clock started when the customer handed the device over, not
+    // when someone corrected the category.
+    let categoryChange: Prisma.JobUncheckedUpdateInput | undefined;
+    if (dto.service_category_id !== undefined) {
+      if (dto.service_category_id === null) {
+        categoryChange = { serviceCategoryId: null, slaDueAt: null };
+      } else {
+        const cat = await this.loadServiceCategory(dto.service_category_id);
+        const job = await this.getRow(id, user);
+        categoryChange = {
+          serviceCategoryId: cat.id,
+          slaDueAt: cat.defaultSlaHours
+            ? new Date(
+                job.receivedAt.getTime() + cat.defaultSlaHours * 3_600_000,
+              )
+            : null,
+        };
+      }
+    }
+
     // Coverage is locked once money has been COMMITTED against the job.
     //
     // The lock is deliberately keyed on financial commitment, not on a
@@ -472,6 +522,8 @@ export class JobsService {
         ...(dto.service_type !== undefined
           ? { serviceType: dto.service_type }
           : {}),
+        ...(dto.priority !== undefined ? { priority: dto.priority } : {}),
+        ...(categoryChange !== undefined ? categoryChange : {}),
         // A bare warranty_status change still moves coverage, because coverage
         // is what bills the customer — leaving it stale would silently keep
         // charging an in-warranty repair.
@@ -1070,6 +1122,22 @@ export class JobsService {
     );
   }
 
+  /** An in-company, non-deleted service line — 400 rather than a raw FK error. */
+  private async loadServiceCategory(
+    id: string,
+  ): Promise<{ id: string; defaultSlaHours: number | null }> {
+    const row = await this.prisma.serviceCategory.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, defaultSlaHours: true },
+    });
+    if (!row) {
+      throw new BadRequestException(
+        'service_category_id does not match a service category of your company',
+      );
+    }
+    return row;
+  }
+
   private async assertWarrantyRegistrationInCompany(id: string): Promise<void> {
     const reg = await this.prisma.warrantyRegistration.findFirst({
       where: { id, deletedAt: null },
@@ -1190,6 +1258,13 @@ function toWire(j: JobWithState): JobWire {
     assigned_engineer_id: j.assignedEngineerId,
     warranty_status: j.warrantyStatus,
     service_type: j.serviceType,
+    service_category_id: j.serviceCategoryId,
+    priority: j.priority,
+    sla_due_at: j.slaDueAt?.toISOString() ?? null,
+    // Computed here rather than stored: "overdue" is a function of the clock,
+    // so a stored flag would be stale the moment it was written.
+    is_overdue:
+      j.slaDueAt !== null && !j.state.isTerminal && j.slaDueAt < new Date(),
     coverage: j.coverage,
     warranty_source: j.warrantySource,
     warranty_registration_id: j.warrantyRegistrationId,

@@ -82,6 +82,10 @@ interface JobBody {
   warranty_status: string;
   service_type: string;
   coverage: string;
+  service_category_id: string | null;
+  priority: string;
+  sla_due_at: string | null;
+  is_overdue: boolean;
   warranty_source: string | null;
   warranty_decided_by: string | null;
   warranty_decided_at: string | null;
@@ -1112,5 +1116,130 @@ describe('Admin overrides of the job guards (§4.11)', () => {
       .send({ warranty_status: 'IW' })
       .expect(200);
     expect((res.body as JobBody).coverage).toBe('FULL');
+  });
+});
+
+describe('Service line + priority (§4.3)', () => {
+  async function categoryId(code: string): Promise<string> {
+    const c = await raw.serviceCategory.findFirstOrThrow({
+      where: { companyId, code, deletedAt: null },
+    });
+    return c.id;
+  }
+
+  it('sets the turnaround target from the service line', async () => {
+    const mobile = await categoryId('MOBILE'); // seeded at 48h
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      service_category_id: mobile,
+      priority: 'URGENT',
+      customer: { name: `${TEST_PREFIX} Line`, phone: '0765990001' },
+      device: { category: 'HHP', imei_serial: '358000000000018' },
+    });
+    expect(job.service_category_id).toBe(mobile);
+    expect(job.priority).toBe('URGENT');
+
+    const row = await raw.job.findUniqueOrThrow({ where: { id: job.id } });
+    // received_at + 48h, computed server-side from the category's SLA.
+    expect(row.slaDueAt?.getTime()).toBe(
+      row.receivedAt.getTime() + 48 * 3_600_000,
+    );
+    expect(job.is_overdue).toBe(false);
+  });
+
+  it('a line with no standard turnaround leaves the target unset', async () => {
+    const general = await categoryId('GENERAL'); // seeded with no SLA
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      service_category_id: general,
+      customer: { name: `${TEST_PREFIX} NoSla`, phone: '0765990002' },
+      device: { category: 'HHP', imei_serial: '358000000000026' },
+    });
+    expect(job.sla_due_at).toBeNull();
+    // Priority is independent of the line and defaults to NORMAL.
+    expect(job.priority).toBe('NORMAL');
+  });
+
+  it('rejects a service line from outside the company', async () => {
+    await createJob(
+      tokens.advisorDar,
+      {
+        branch_id: branchDar,
+        service_category_id: '00000000-0000-4000-8000-000000000000',
+        customer: { name: `${TEST_PREFIX} BadLine`, phone: '0765990003' },
+        device: { category: 'HHP', imei_serial: '358000000000034' },
+      },
+      400,
+    );
+  });
+
+  it('filters by priority and by service line', async () => {
+    const ac = await categoryId('AC_REF');
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      service_category_id: ac,
+      priority: 'HIGH',
+      customer: { name: `${TEST_PREFIX} Filter`, phone: '0765990004' },
+      device: { category: 'AC', imei_serial: '358000000000042' },
+    });
+
+    const byPriority = await request(app.getHttpServer())
+      .get('/api/v1/jobs')
+      .query({ priority: 'HIGH', page_size: 100 })
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const pr = byPriority.body as { data: Array<{ id: string }> };
+    expect(pr.data.some((j) => j.id === job.id)).toBe(true);
+
+    const byLine = await request(app.getHttpServer())
+      .get('/api/v1/jobs')
+      .query({ service_category_id: ac, page_size: 100 })
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const ln = byLine.body as { data: Array<{ id: string }> };
+    expect(ln.data.some((j) => j.id === job.id)).toBe(true);
+  });
+
+  it('?overdue=true finds jobs past target, and ignores finished ones', async () => {
+    const mobile = await categoryId('MOBILE');
+    const late = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      service_category_id: mobile,
+      customer: { name: `${TEST_PREFIX} Late`, phone: '0765990005' },
+      device: { category: 'HHP', imei_serial: '358000000000059' },
+    });
+    // Wind the target into the past.
+    await raw.job.update({
+      where: { id: late.id },
+      data: { slaDueAt: new Date(Date.now() - 3_600_000) },
+    });
+
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/jobs')
+      .query({ overdue: true, page_size: 100 })
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const body = res.body as {
+      data: Array<{ id: string; is_overdue: boolean }>;
+    };
+    const hit = body.data.find((j) => j.id === late.id);
+    expect(hit).toBeDefined();
+    expect(hit?.is_overdue).toBe(true);
+
+    // Close it: a finished job that ran late is history, not something to chase.
+    const closed = await raw.workflowState.findFirstOrThrow({
+      where: { companyId, code: 'CANCELLED' },
+    });
+    await raw.job.update({
+      where: { id: late.id },
+      data: { stateId: closed.id },
+    });
+    const after = await request(app.getHttpServer())
+      .get('/api/v1/jobs')
+      .query({ overdue: true, page_size: 100 })
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const body2 = after.body as { data: Array<{ id: string }> };
+    expect(body2.data.some((j) => j.id === late.id)).toBe(false);
   });
 });

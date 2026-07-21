@@ -200,6 +200,31 @@ export type ServiceType =
  */
 export type JobCoverage = 'FULL' | 'LABOUR_ONLY' | 'PARTS_ONLY' | 'NONE'
 
+/** How urgently a job needs doing — the triage signal the board sorts by. */
+export type JobPriority = 'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'
+
+export const JOB_PRIORITIES: { value: JobPriority; label: string }[] = [
+  { value: 'LOW', label: 'Low' },
+  { value: 'NORMAL', label: 'Normal' },
+  { value: 'HIGH', label: 'High' },
+  { value: 'URGENT', label: 'Urgent' },
+]
+
+/**
+ * A service line the centre offers — what the customer is ASKING FOR.
+ * A config table, so a centre adds its own lines without a release.
+ */
+export interface ServiceCategoryWire {
+  id: string
+  code: string
+  label: string
+  default_sla_hours: number | null
+  sort_order: number
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
 /** The evidence behind a warranty ruling (§4.7). */
 export type WarrantySource = 'REGISTRATION' | 'PURCHASE_DATE' | 'MANUAL' | 'GOODWILL'
 
@@ -411,6 +436,11 @@ export interface JobWire {
   assigned_engineer_id: string | null
   warranty_status: WarrantyStatus
   service_type: ServiceType
+  service_category_id: string | null
+  priority: JobPriority
+  /** Internal turnaround target — NOT the date promised to the customer. */
+  sla_due_at: string | null
+  is_overdue: boolean
   coverage: JobCoverage
   warranty_source: WarrantySource | null
   warranty_registration_id: string | null

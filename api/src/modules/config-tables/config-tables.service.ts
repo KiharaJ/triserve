@@ -11,6 +11,7 @@ import {
   type FaultCode,
   type PaymentMethod,
   type RepairAction,
+  type ServiceCategory,
   type ServiceCode,
   type ServiceCodeKind,
   type TaxRate,
@@ -24,6 +25,7 @@ import type {
   CreateFaultCodeDto,
   CreatePaymentMethodDto,
   CreateRepairActionDto,
+  CreateServiceCategoryDto,
   CreateServiceCodeDto,
   CreateTaxRateDto,
   ServiceCodeListQueryDto,
@@ -31,6 +33,7 @@ import type {
   UpdateFaultCodeDto,
   UpdatePaymentMethodDto,
   UpdateRepairActionDto,
+  UpdateServiceCategoryDto,
   UpdateServiceCodeDto,
   UpdateTaxRateDto,
 } from './dto/config-tables.dto';
@@ -56,6 +59,12 @@ export interface PaymentMethodWire {
 }
 
 export type FaultCodeWire = PaymentMethodWire;
+
+/** One service line the centre offers (§4.3). */
+export interface ServiceCategoryWire extends PaymentMethodWire {
+  default_sla_hours: number | null;
+  sort_order: number;
+}
 
 /** One GSPN diagnostic code (§4.7). `kind` is what disambiguates the table. */
 export interface ServiceCodeWire extends PaymentMethodWire {
@@ -299,6 +308,104 @@ export class ConfigTablesService {
   async removeFaultCode(id: string, user: AuthUser): Promise<void> {
     await this.mustExist(this.prisma.faultCode, id, 'Fault code');
     await this.prisma.faultCode.update({
+      where: { id },
+      data: { deletedAt: new Date(), active: false, updatedById: user.userId },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Service categories (what the customer is asking for, §4.3)
+  // -------------------------------------------------------------------------
+
+  async listServiceCategories(
+    query: ConfigListQueryDto,
+    user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCategoryWire>> {
+    const { page, pageSize } = pageArgs(query);
+    const where: Prisma.ServiceCategoryWhereInput = {
+      companyId: user.companyId,
+      deletedAt: null,
+      ...(query.active !== undefined ? { active: query.active } : {}),
+      ...(query.q
+        ? {
+            OR: [
+              { code: { contains: query.q } },
+              { label: { contains: query.q } },
+            ],
+          }
+        : {}),
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.serviceCategory.count({ where }),
+      this.prisma.serviceCategory.findMany({
+        where,
+        orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      data: rows.map(serviceCategoryToWire),
+      page,
+      page_size: pageSize,
+      total,
+    };
+  }
+
+  async createServiceCategory(
+    dto: CreateServiceCategoryDto,
+    user: AuthUser,
+  ): Promise<ServiceCategoryWire> {
+    try {
+      const row = await this.prisma.serviceCategory.create({
+        data: {
+          companyId: user.companyId,
+          code: dto.code.toUpperCase(),
+          label: dto.label,
+          defaultSlaHours: dto.default_sla_hours ?? null,
+          sortOrder: dto.sort_order ?? 0,
+          active: dto.active ?? true,
+          createdById: user.userId,
+          updatedById: user.userId,
+        },
+      });
+      return serviceCategoryToWire(row);
+    } catch (e) {
+      throw mapUniqueCode(e, 'service category');
+    }
+  }
+
+  async updateServiceCategory(
+    id: string,
+    dto: UpdateServiceCategoryDto,
+    user: AuthUser,
+  ): Promise<ServiceCategoryWire> {
+    await this.mustExist(this.prisma.serviceCategory, id, 'Service category');
+    try {
+      const row = await this.prisma.serviceCategory.update({
+        where: { id },
+        data: {
+          ...(dto.code !== undefined ? { code: dto.code.toUpperCase() } : {}),
+          ...(dto.label !== undefined ? { label: dto.label } : {}),
+          ...(dto.default_sla_hours !== undefined
+            ? { defaultSlaHours: dto.default_sla_hours }
+            : {}),
+          ...(dto.sort_order !== undefined
+            ? { sortOrder: dto.sort_order }
+            : {}),
+          ...(dto.active !== undefined ? { active: dto.active } : {}),
+          updatedById: user.userId,
+        },
+      });
+      return serviceCategoryToWire(row);
+    } catch (e) {
+      throw mapUniqueCode(e, 'service category');
+    }
+  }
+
+  async removeServiceCategory(id: string, user: AuthUser): Promise<void> {
+    await this.mustExist(this.prisma.serviceCategory, id, 'Service category');
+    await this.prisma.serviceCategory.update({
       where: { id },
       data: { deletedAt: new Date(), active: false, updatedById: user.userId },
     });
@@ -751,6 +858,19 @@ function faultCodeToWire(r: FaultCode): FaultCodeWire {
     id: r.id,
     code: r.code,
     label: r.label,
+    active: r.active,
+    created_at: r.createdAt.toISOString(),
+    updated_at: r.updatedAt.toISOString(),
+  };
+}
+
+function serviceCategoryToWire(r: ServiceCategory): ServiceCategoryWire {
+  return {
+    id: r.id,
+    code: r.code,
+    label: r.label,
+    default_sla_hours: r.defaultSlaHours,
+    sort_order: r.sortOrder,
     active: r.active,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),

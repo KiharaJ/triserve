@@ -36,6 +36,8 @@ import {
   type ModelWire,
   type ParsedJobCard,
   type PreferredLanguageCode,
+  JOB_PRIORITIES,
+  type ServiceCategoryWire,
   type ServiceCodeWire,
   type UserWire,
   type WarrantyRegistrationWire,
@@ -53,6 +55,8 @@ const WARRANTY_KIND_LABEL: Record<string, string> = {
 const fieldsSchema = z.object({
   branch_id: z.string().optional(),
   category: z.enum(['HHP', 'CE', 'AC', 'REF', 'OTHER']),
+  service_category_id: z.string().optional(),
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']),
   imei_serial: z.string().max(100).optional(),
   color: z.string().max(50).optional(),
   purchase_date: z.string().optional(),
@@ -146,6 +150,17 @@ export function JobIntakePage() {
   // counter; condition/defect/defect-type/block/repair are diagnosis outputs
   // and belong on the job detail page, not intake. Served by /active so a
   // front-desk user without config.read can still populate the picker.
+  // What the customer is asking for. Served by /active so the front desk can
+  // populate it without holding config.read.
+  const serviceCategories = useQuery({
+    queryKey: ['service-categories', 'active'],
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<ServiceCategoryWire>>(
+          '/service-categories/active',
+        )
+      ).data.data,
+  })
   const symptomCodes = useQuery({
     queryKey: ['service-codes', 'SYMPTOM'],
     queryFn: async () =>
@@ -200,6 +215,8 @@ export function JobIntakePage() {
     defaultValues: {
       branch_id: '',
       category: 'HHP',
+      service_category_id: '',
+      priority: 'NORMAL',
       imei_serial: '',
       color: '',
       purchase_date: '',
@@ -367,6 +384,8 @@ export function JobIntakePage() {
         warranty_status: values.warranty_status,
         coverage: values.coverage,
         service_type: values.service_type,
+        service_category_id: values.service_category_id || undefined,
+        priority: values.priority,
         warranty_source: ruledFromRegistration ? 'REGISTRATION' : undefined,
         warranty_registration_id: ruledFromRegistration
           ? appliedRegistrationId
@@ -883,6 +902,34 @@ export function JobIntakePage() {
           <CardTitle>Job details</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {/* What the customer wants, and how urgently — the two fields that
+              make triage and per-line reporting possible. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FormField
+              label="Service needed"
+              htmlFor="service_category_id"
+              hint="What the customer is asking for. Sets the turnaround target."
+            >
+              <Select id="service_category_id" {...form.register('service_category_id')}>
+                <option value="">—</option>
+                {serviceCategories.data?.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                    {c.default_sla_hours ? ` (${c.default_sla_hours}h)` : ''}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            <FormField label="Priority" htmlFor="priority">
+              <Select id="priority" {...form.register('priority')}>
+                {JOB_PRIORITIES.map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+          </div>
           <FormField
             label="Fault reported"
             htmlFor="fault_reported"

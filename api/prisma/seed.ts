@@ -20,11 +20,7 @@ import {
   type ApprovalType,
   type ServiceCodeKind,
 } from '@prisma/client';
-import {
-  ROLE_DESCRIPTIONS,
-  ROLE_LABELS,
-  USER_ROLES,
-} from '@triserve/shared';
+import { ROLE_DESCRIPTIONS, ROLE_LABELS, USER_ROLES } from '@triserve/shared';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 
@@ -32,11 +28,26 @@ const prisma = new PrismaClient();
 
 const COMPANY_NAME = 'Samsung ASC Group';
 
-const BRANCHES: Array<{ code: string; name: string; isHq: boolean; tzRegion: string }> = [
-  { code: 'DAR', name: 'Dar es Salaam ASC', isHq: true, tzRegion: 'Dar es Salaam' },
+const BRANCHES: Array<{
+  code: string;
+  name: string;
+  isHq: boolean;
+  tzRegion: string;
+}> = [
+  {
+    code: 'DAR',
+    name: 'Dar es Salaam ASC',
+    isHq: true,
+    tzRegion: 'Dar es Salaam',
+  },
   { code: 'KRK', name: 'Kariakoo ASC', isHq: false, tzRegion: 'Dar es Salaam' },
   { code: 'ARU', name: 'Arusha ASC', isHq: false, tzRegion: 'Arusha' },
-  { code: 'MLM', name: 'Moshi (Kilimanjaro) ASC', isHq: false, tzRegion: 'Kilimanjaro' },
+  {
+    code: 'MLM',
+    name: 'Moshi (Kilimanjaro) ASC',
+    isHq: false,
+    tzRegion: 'Kilimanjaro',
+  },
   { code: 'DOD', name: 'Dodoma ASC', isHq: false, tzRegion: 'Dodoma' },
 ];
 
@@ -96,6 +107,47 @@ const CHART_OF_ACCOUNTS: Array<{
 ];
 
 /**
+ * The service lines the centre offers (§4.3) — what the customer is ASKING
+ * FOR, as distinct from the device's Samsung repair grouping.
+ *
+ * A starting set only: this is a config table precisely so a centre adds its
+ * own lines (installation, diagnostics-only, insurance work) without a
+ * release. SLA hours are the normal promised turnaround for the line — an
+ * in-home AC callout is not a same-week job like a handset on the bench.
+ */
+const SERVICE_CATEGORIES: Array<{
+  code: string;
+  label: string;
+  defaultSlaHours: number | null;
+  sortOrder: number;
+}> = [
+  {
+    code: 'MOBILE',
+    label: 'Mobile / handset repair',
+    defaultSlaHours: 48,
+    sortOrder: 10,
+  },
+  {
+    code: 'CE',
+    label: 'TV / audio repair',
+    defaultSlaHours: 72,
+    sortOrder: 20,
+  },
+  {
+    code: 'AC_REF',
+    label: 'AC & refrigeration',
+    defaultSlaHours: 96,
+    sortOrder: 30,
+  },
+  {
+    code: 'GENERAL',
+    label: 'General repair',
+    defaultSlaHours: null,
+    sortOrder: 40,
+  },
+];
+
+/**
  * Samsung GSPN diagnostic codes (§4.7) — a STARTER set, not the full list.
  *
  * Every code here is one observed on a real Samsung document (the GSPN
@@ -148,7 +200,11 @@ const WORKFLOW_STATES: Array<{
 }> = [
   { code: 'RECEIVED', label: 'Received', isInitial: true, sortOrder: 10 },
   { code: 'DIAGNOSING', label: 'Diagnosing', sortOrder: 20 },
-  { code: 'AWAITING_CUSTOMER_APPROVAL', label: 'Awaiting Customer Approval', sortOrder: 30 },
+  {
+    code: 'AWAITING_CUSTOMER_APPROVAL',
+    label: 'Awaiting Customer Approval',
+    sortOrder: 30,
+  },
   { code: 'AWAITING_PARTS', label: 'Awaiting Parts', sortOrder: 40 },
   { code: 'IN_REPAIR', label: 'In Repair', sortOrder: 50 },
   { code: 'QC', label: 'Quality Check', sortOrder: 60 },
@@ -156,7 +212,12 @@ const WORKFLOW_STATES: Array<{
   { code: 'DISPATCHED', label: 'Dispatched', sortOrder: 80 },
   { code: 'CLOSED', label: 'Closed', isTerminal: true, sortOrder: 90 },
   { code: 'CANCELLED', label: 'Cancelled', isTerminal: true, sortOrder: 100 },
-  { code: 'RETURNED_UNREPAIRED', label: 'Returned Unrepaired', isTerminal: true, sortOrder: 110 },
+  {
+    code: 'RETURNED_UNREPAIRED',
+    label: 'Returned Unrepaired',
+    isTerminal: true,
+    sortOrder: 110,
+  },
 ];
 
 /**
@@ -183,9 +244,21 @@ const WORKFLOW_TRANSITIONS: Array<{
 }> = [
   { from: 'RECEIVED', to: 'DIAGNOSING', requiredPermission: 'job.transition' },
   { from: 'RECEIVED', to: 'CANCELLED', requiredPermission: 'job.transition' },
-  { from: 'DIAGNOSING', to: 'AWAITING_CUSTOMER_APPROVAL', requiredPermission: 'job.transition' },
-  { from: 'DIAGNOSING', to: 'AWAITING_PARTS', requiredPermission: 'job.transition' },
-  { from: 'DIAGNOSING', to: 'RETURNED_UNREPAIRED', requiredPermission: 'job.transition' },
+  {
+    from: 'DIAGNOSING',
+    to: 'AWAITING_CUSTOMER_APPROVAL',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'DIAGNOSING',
+    to: 'AWAITING_PARTS',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'DIAGNOSING',
+    to: 'RETURNED_UNREPAIRED',
+    requiredPermission: 'job.transition',
+  },
   { from: 'DIAGNOSING', to: 'CANCELLED', requiredPermission: 'job.transition' },
   {
     from: 'AWAITING_CUSTOMER_APPROVAL',
@@ -194,15 +267,39 @@ const WORKFLOW_TRANSITIONS: Array<{
     requiresApproval: false, // OW-quote approval gating arrives with POS
     guardCode: 'ow_quote_approved',
   },
-  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'AWAITING_PARTS', requiredPermission: 'job.transition' },
-  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'CANCELLED', requiredPermission: 'job.transition' },
-  { from: 'AWAITING_CUSTOMER_APPROVAL', to: 'RETURNED_UNREPAIRED', requiredPermission: 'job.transition' },
-  { from: 'AWAITING_PARTS', to: 'IN_REPAIR', requiredPermission: 'job.transition.repair' },
+  {
+    from: 'AWAITING_CUSTOMER_APPROVAL',
+    to: 'AWAITING_PARTS',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'AWAITING_CUSTOMER_APPROVAL',
+    to: 'CANCELLED',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'AWAITING_CUSTOMER_APPROVAL',
+    to: 'RETURNED_UNREPAIRED',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'AWAITING_PARTS',
+    to: 'IN_REPAIR',
+    requiredPermission: 'job.transition.repair',
+  },
   { from: 'IN_REPAIR', to: 'QC', requiredPermission: 'job.transition.repair' },
   { from: 'QC', to: 'READY', requiredPermission: 'job.transition.repair' },
   { from: 'QC', to: 'IN_REPAIR', requiredPermission: 'job.transition.repair' }, // rework
-  { from: 'READY', to: 'DISPATCHED', requiredPermission: 'job.transition.dispatch' },
-  { from: 'DISPATCHED', to: 'CLOSED', requiredPermission: 'job.transition.dispatch' },
+  {
+    from: 'READY',
+    to: 'DISPATCHED',
+    requiredPermission: 'job.transition.dispatch',
+  },
+  {
+    from: 'DISPATCHED',
+    to: 'CLOSED',
+    requiredPermission: 'job.transition.dispatch',
+  },
 ];
 
 async function main(): Promise<void> {
@@ -229,7 +326,12 @@ async function main(): Promise<void> {
   for (const b of BRANCHES) {
     const branch = await prisma.branch.upsert({
       where: { companyId_code: { companyId: company.id, code: b.code } },
-      update: { name: b.name, isHq: b.isHq, tzRegion: b.tzRegion, active: true },
+      update: {
+        name: b.name,
+        isHq: b.isHq,
+        tzRegion: b.tzRegion,
+        active: true,
+      },
       create: {
         id: randomUUID(),
         companyId: company.id,
@@ -239,7 +341,9 @@ async function main(): Promise<void> {
         tzRegion: b.tzRegion,
       },
     });
-    console.log(`branch:         ${branch.code} — ${branch.name}${branch.isHq ? ' [HQ]' : ''}`);
+    console.log(
+      `branch:         ${branch.code} — ${branch.name}${branch.isHq ? ' [HQ]' : ''}`,
+    );
   }
 
   // --- Built-in roles (upsert by company_id + key, E17b) ---------------------
@@ -265,7 +369,9 @@ async function main(): Promise<void> {
   // --- Super admin (upsert by email) -----------------------------------------
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@triserve.local';
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'ChangeMe123!';
-  const passwordHash = await argon2.hash(adminPassword, { type: argon2.argon2id });
+  const passwordHash = await argon2.hash(adminPassword, {
+    type: argon2.argon2id,
+  });
 
   const admin = await prisma.user.upsert({
     where: { email: adminEmail },
@@ -288,7 +394,9 @@ async function main(): Promise<void> {
       scope: 'group',
     },
   });
-  console.log(`super admin:    ${admin.email} (role=${admin.role}, scope=${admin.scope})`);
+  console.log(
+    `super admin:    ${admin.email} (role=${admin.role}, scope=${admin.scope})`,
+  );
 
   // --- Payment methods (upsert by company_id + code) --------------------------
   for (const pm of PAYMENT_METHODS) {
@@ -338,7 +446,34 @@ async function main(): Promise<void> {
         type: a.type,
       },
     });
-    console.log(`account:        ${account.code} — ${account.name} [${account.type}]`);
+    console.log(
+      `account:        ${account.code} — ${account.name} [${account.type}]`,
+    );
+  }
+
+  // --- Service categories (upsert by company_id + code, §4.3) --------------
+  for (const c of SERVICE_CATEGORIES) {
+    const sc = await prisma.serviceCategory.upsert({
+      where: { companyId_code: { companyId: company.id, code: c.code } },
+      update: {
+        label: c.label,
+        defaultSlaHours: c.defaultSlaHours,
+        sortOrder: c.sortOrder,
+        active: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        code: c.code,
+        label: c.label,
+        defaultSlaHours: c.defaultSlaHours,
+        sortOrder: c.sortOrder,
+      },
+    });
+    console.log(
+      `service line:   ${sc.code} — ${sc.label}` +
+        (sc.defaultSlaHours ? ` (${sc.defaultSlaHours}h)` : ''),
+    );
   }
 
   // --- Samsung GSPN diagnostic codes (upsert by company_id + kind + code,
@@ -503,7 +638,9 @@ async function main(): Promise<void> {
       },
     });
     supplierIdByName.set(supplier.name, supplier.id);
-    console.log(`supplier:       ${supplier.name} (${supplier.defaultCurrency})`);
+    console.log(
+      `supplier:       ${supplier.name} (${supplier.defaultCurrency})`,
+    );
   }
 
   const SAMPLE_PARTS = [

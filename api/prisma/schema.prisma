@@ -138,6 +138,19 @@ enum WarrantySource {
   GOODWILL
 }
 
+/// How urgently a job needs doing (§4.3).
+///
+/// An ENUM, unlike ServiceCategory: sorting and escalation depend on the
+/// ORDER, so the set must be closed. It deliberately does NOT compute a due
+/// date — turnaround comes from the service category's SLA; priority is the
+/// signal a human triages by.
+enum JobPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
 /// The six GSPN diagnostic code axes sharing the `service_codes` table.
 enum ServiceCodeKind {
   CONDITION
@@ -194,23 +207,24 @@ model Company {
   createdBy   User?     @relation("CompanyCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("CompanyUpdatedBy", fields: [updatedById], references: [id])
 
-  branches       Branch[]
-  users          User[]
-  currencies     Currency[]
-  paymentMethods PaymentMethod[]
-  faultCodes     FaultCode[]
-  repairActions  RepairAction[]
-  serviceCodes   ServiceCode[]
-  taxRates       TaxRate[]
-  approvals      Approval[]
-  approvalRules  ApprovalRule[]
-  accounts       ChartOfAccount[]
-  journalEntries JournalEntry[]
-  customers      Customer[]
-  devices        Device[]
-  deviceModels   DeviceModel[]
-  jobs           Job[]
-  attachments    Attachment[]
+  branches          Branch[]
+  users             User[]
+  currencies        Currency[]
+  paymentMethods    PaymentMethod[]
+  faultCodes        FaultCode[]
+  repairActions     RepairAction[]
+  serviceCodes      ServiceCode[]
+  serviceCategories ServiceCategory[]
+  taxRates          TaxRate[]
+  approvals         Approval[]
+  approvalRules     ApprovalRule[]
+  accounts          ChartOfAccount[]
+  journalEntries    JournalEntry[]
+  customers         Customer[]
+  devices           Device[]
+  deviceModels      DeviceModel[]
+  jobs              Job[]
+  attachments       Attachment[]
 
   workflowStates      WorkflowState[]
   workflowTransitions WorkflowTransition[]
@@ -327,30 +341,32 @@ model User {
   homeBranch Branch? @relation("UserHomeBranch", fields: [homeBranchId], references: [id])
 
   // Inverse sides of audit relations
-  createdUsers          User[]          @relation("UserCreatedBy")
-  updatedUsers          User[]          @relation("UserUpdatedBy")
-  createdCompanies      Company[]       @relation("CompanyCreatedBy")
-  updatedCompanies      Company[]       @relation("CompanyUpdatedBy")
-  createdBranches       Branch[]        @relation("BranchCreatedBy")
-  updatedBranches       Branch[]        @relation("BranchUpdatedBy")
-  createdCurrencies     Currency[]      @relation("CurrencyCreatedBy")
-  updatedCurrencies     Currency[]      @relation("CurrencyUpdatedBy")
-  createdPaymentMethods PaymentMethod[] @relation("PaymentMethodCreatedBy")
-  updatedPaymentMethods PaymentMethod[] @relation("PaymentMethodUpdatedBy")
-  createdFaultCodes     FaultCode[]     @relation("FaultCodeCreatedBy")
-  updatedFaultCodes     FaultCode[]     @relation("FaultCodeUpdatedBy")
-  createdRepairActions  RepairAction[]  @relation("RepairActionCreatedBy")
-  updatedRepairActions  RepairAction[]  @relation("RepairActionUpdatedBy")
-  createdServiceCodes   ServiceCode[]   @relation("ServiceCodeCreatedBy")
-  updatedServiceCodes   ServiceCode[]   @relation("ServiceCodeUpdatedBy")
-  createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
-  updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
-  createdCustomers      Customer[]      @relation("CustomerCreatedBy")
-  updatedCustomers      Customer[]      @relation("CustomerUpdatedBy")
-  createdDevices        Device[]        @relation("DeviceCreatedBy")
-  updatedDevices        Device[]        @relation("DeviceUpdatedBy")
-  createdDeviceModels   DeviceModel[]   @relation("DeviceModelCreatedBy")
-  updatedDeviceModels   DeviceModel[]   @relation("DeviceModelUpdatedBy")
+  createdUsers             User[]            @relation("UserCreatedBy")
+  updatedUsers             User[]            @relation("UserUpdatedBy")
+  createdCompanies         Company[]         @relation("CompanyCreatedBy")
+  updatedCompanies         Company[]         @relation("CompanyUpdatedBy")
+  createdBranches          Branch[]          @relation("BranchCreatedBy")
+  updatedBranches          Branch[]          @relation("BranchUpdatedBy")
+  createdCurrencies        Currency[]        @relation("CurrencyCreatedBy")
+  updatedCurrencies        Currency[]        @relation("CurrencyUpdatedBy")
+  createdPaymentMethods    PaymentMethod[]   @relation("PaymentMethodCreatedBy")
+  updatedPaymentMethods    PaymentMethod[]   @relation("PaymentMethodUpdatedBy")
+  createdFaultCodes        FaultCode[]       @relation("FaultCodeCreatedBy")
+  updatedFaultCodes        FaultCode[]       @relation("FaultCodeUpdatedBy")
+  createdRepairActions     RepairAction[]    @relation("RepairActionCreatedBy")
+  updatedRepairActions     RepairAction[]    @relation("RepairActionUpdatedBy")
+  createdServiceCodes      ServiceCode[]     @relation("ServiceCodeCreatedBy")
+  updatedServiceCodes      ServiceCode[]     @relation("ServiceCodeUpdatedBy")
+  createdServiceCategories ServiceCategory[] @relation("ServiceCategoryCreatedBy")
+  updatedServiceCategories ServiceCategory[] @relation("ServiceCategoryUpdatedBy")
+  createdTaxRates          TaxRate[]         @relation("TaxRateCreatedBy")
+  updatedTaxRates          TaxRate[]         @relation("TaxRateUpdatedBy")
+  createdCustomers         Customer[]        @relation("CustomerCreatedBy")
+  updatedCustomers         Customer[]        @relation("CustomerUpdatedBy")
+  createdDevices           Device[]          @relation("DeviceCreatedBy")
+  updatedDevices           Device[]          @relation("DeviceUpdatedBy")
+  createdDeviceModels      DeviceModel[]     @relation("DeviceModelCreatedBy")
+  updatedDeviceModels      DeviceModel[]     @relation("DeviceModelUpdatedBy")
 
   createdWorkflowStates      WorkflowState[]      @relation("WorkflowStateCreatedBy")
   updatedWorkflowStates      WorkflowState[]      @relation("WorkflowStateUpdatedBy")
@@ -1006,6 +1022,42 @@ model RepairAction {
   @@map("repair_actions")
 }
 
+/// A service line the centre offers (§4.3): what the customer is ASKING FOR
+/// — mobile repair, TV repair, AC & refrigeration, general repair, and
+/// whatever else a company adds.
+///
+/// DATA, not an enum, so a company adds its own lines (installation,
+/// diagnostics-only, insurance work) without a migration — the same way
+/// fault codes and workflow states already work.
+///
+/// Distinct from `devices.category` (Samsung's repair grouping, which drives
+/// parts compatibility) and from `jobs.service_type` (HOW the device arrives).
+model ServiceCategory {
+  id              String  @id @default(uuid()) @db.Char(36)
+  companyId       String  @map("company_id") @db.Char(36)
+  code            String  @db.VarChar(30)
+  label           String  @db.VarChar(255)
+  /// Turnaround this line is normally promised in; NULL = no standard.
+  defaultSlaHours Int?    @map("default_sla_hours")
+  sortOrder       Int     @default(0) @map("sort_order")
+  active          Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("ServiceCategoryCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("ServiceCategoryUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company @relation(fields: [companyId], references: [id])
+  jobs    Job[]
+
+  @@unique([companyId, code])
+  @@index([companyId, active])
+  @@map("service_categories")
+}
+
 /// Samsung GSPN diagnostic vocabulary (§4.7) — six code axes in one table,
 /// discriminated by `kind`, because GSPN rejects a warranty claim that is
 /// missing any of them (Condition, Symptom, Defect, Defect Type, Defect Block,
@@ -1103,6 +1155,15 @@ model Job {
   assignedEngineerId     String?         @map("assigned_engineer_id") @db.Char(36)
   warrantyStatus         WarrantyStatus  @default(UNKNOWN) @map("warranty_status")
   serviceType            ServiceType     @default(CARRY_IN) @map("service_type")
+  /// WHAT the customer is asking for (mobile repair, AC repair, …).
+  serviceCategoryId      String?         @map("service_category_id") @db.Char(36)
+  /// How urgently — the triage signal the board sorts by.
+  priority               JobPriority     @default(NORMAL)
+  /// INTERNAL target: received_at + the category's SLA. Deliberately NOT
+  /// `returnByDate`, which is what was PROMISED TO THE CUSTOMER — the two
+  /// differ constantly, and merging them would make "are we late?" and "did
+  /// we let the customer down?" the same question.
+  slaDueAt               DateTime?       @map("sla_due_at") @db.DateTime(3)
   /// The BILLING consequence of the warranty ruling — see {@link JobCoverage}.
   /// Invoicing and the `ow_quote_approved` workflow guard read this field.
   coverage               JobCoverage     @default(NONE)
@@ -1168,6 +1229,7 @@ model Job {
   createdBy        User?         @relation("JobCreatedBy", fields: [createdById], references: [id])
   updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
 
+  serviceCategory      ServiceCategory?      @relation(fields: [serviceCategoryId], references: [id])
   warrantyRegistration WarrantyRegistration? @relation(fields: [warrantyRegistrationId], references: [id])
   warrantyDecidedBy    User?                 @relation("JobWarrantyDecidedBy", fields: [warrantyDecidedById], references: [id])
 
@@ -1190,6 +1252,9 @@ model Job {
   @@index([companyId, assignedEngineerId])
   @@index([companyId, receivedAt])
   @@index([companyId, coverage])
+  @@index([companyId, priority])
+  @@index([companyId, slaDueAt])
+  @@index([serviceCategoryId])
   @@index([customerId])
   @@index([deviceId])
   @@index([warrantyRegistrationId])

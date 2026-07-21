@@ -48,6 +48,8 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // §4.7: the Samsung GSPN diagnostic code vocabulary — company-level config
   // like fault codes, shared by every branch.
   Prisma.ModelName.ServiceCode,
+  // §4.3: the service lines the centre offers — company-level config too.
+  Prisma.ModelName.ServiceCategory,
   Prisma.ModelName.TaxRate,
   Prisma.ModelName.AuditLog,
   Prisma.ModelName.Approval,

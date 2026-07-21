@@ -2,6 +2,7 @@ import {
   CustomerType,
   DeviceCategory,
   JobCoverage,
+  JobPriority,
   ServiceType,
   WarrantyStatus,
   WarrantySource,
@@ -20,7 +21,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
-import { ListQueryDto } from '../../../common/dto/list-query.dto';
+import { BooleanQuery, ListQueryDto } from '../../../common/dto/list-query.dto';
 
 /**
  * GET /jobs?branch_id=&state=&assigned_engineer_id=&warranty_status=&q=&from=&to=&page=
@@ -59,6 +60,20 @@ export class JobListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsEnum(ServiceType)
   service_type?: ServiceType;
+
+  /** What the customer asked for — the service line. */
+  @IsOptional()
+  @IsUUID()
+  service_category_id?: string;
+
+  @IsOptional()
+  @IsEnum(JobPriority)
+  priority?: JobPriority;
+
+  /** Only jobs past their internal SLA target and not yet finished. */
+  @IsOptional()
+  @BooleanQuery()
+  overdue?: boolean;
 
   @IsOptional()
   @IsISO8601()
@@ -188,6 +203,20 @@ export class CreateJobDto {
   service_type?: ServiceType;
 
   /**
+   * The service line the customer is asking for (mobile repair, AC repair…).
+   * Optional so intake is never blocked by unconfigured categories, but it is
+   * what makes triage and per-line reporting possible.
+   */
+  @IsOptional()
+  @IsUUID()
+  service_category_id?: string;
+
+  /** Triage signal; defaults to NORMAL. */
+  @IsOptional()
+  @IsEnum(JobPriority)
+  priority?: JobPriority;
+
+  /**
    * What the warranty pays for. Omit and it derives from `warranty_status`
    * (IW/GOODWILL → FULL, else NONE) — send it explicitly for the partial
    * cases the Samsung job card allows (labour-only / parts-only).
@@ -294,6 +323,14 @@ export class UpdateJobDto {
   @IsOptional()
   @IsEnum(ServiceType)
   service_type?: ServiceType;
+
+  @IsOptional()
+  @IsUUID()
+  service_category_id?: string | null;
+
+  @IsOptional()
+  @IsEnum(JobPriority)
+  priority?: JobPriority;
 
   @IsOptional()
   @IsEnum(JobCoverage)
