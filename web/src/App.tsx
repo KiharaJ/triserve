@@ -13,6 +13,7 @@ import { CustomerDetailPage } from '@/pages/customers/detail'
 import { CustomersListPage } from '@/pages/customers/list'
 import { DevicesListPage } from '@/pages/devices/list'
 import { DashboardPage } from '@/pages/dashboard'
+import { GuidePage } from '@/pages/guide'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
 import { ProductsPage } from '@/pages/inventory/products'
@@ -69,6 +70,7 @@ function App() {
         }
       >
         <Route index element={<DashboardPage />} />
+        <Route path="guide" element={<GuidePage />} />
         <Route path="jobs">
           <Route index element={<JobsPage />} />
           <Route path="new" element={<JobIntakePage />} />

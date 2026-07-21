@@ -8,6 +8,7 @@ import {
   ClipboardCheck,
   Factory,
   KeyRound,
+  BookOpen,
   LayoutDashboard,
   LogOut,
   MapPin,
@@ -75,6 +76,8 @@ const NAV_SECTIONS: NavSection[] = [
   {
     items: [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, color: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400' },
+      // No permission: everyone needs to be able to look up how their job works.
+      { to: '/guide', label: 'How this works', icon: BookOpen, end: false, color: 'bg-violet-500/15 text-violet-600 dark:text-violet-400' },
       { to: '/jobs', label: 'Jobs', icon: Wrench, end: false, permission: 'job.read', color: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
       { to: '/operations', label: 'Operations', icon: Activity, end: false, permission: 'job.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: false, permission: 'approval.decide', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
