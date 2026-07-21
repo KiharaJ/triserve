@@ -17,6 +17,7 @@ import {
   ClipboardCheck,
   Inbox,
   PackageCheck,
+  AlertTriangle,
   PackageSearch,
   Pin,
   Plus,
@@ -46,6 +47,7 @@ import type {
   BranchWire,
   CustomerWire,
   DeviceWire,
+  JobPriority,
   JobWire,
   UserWire,
   WarrantyStatus,
@@ -117,11 +119,35 @@ interface CardProps {
   dragging?: boolean
 }
 
+/**
+ * Priority shows only when it is NOT normal — see the same note on the list.
+ * A chip on every card is 600 identical chips, and the eye stops seeing them.
+ */
+function priorityChip(priority: JobPriority) {
+  if (priority === 'NORMAL') return null
+  const tone =
+    priority === 'URGENT'
+      ? 'border-destructive/40 bg-destructive/10 text-destructive'
+      : priority === 'HIGH'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+        : 'border-muted-foreground/30 text-muted-foreground'
+  return (
+    <span
+      className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${tone}`}
+    >
+      {priority}
+    </span>
+  )
+}
+
 function JobCard({ job, customer, device, engineer, dragging }: CardProps) {
   return (
     <div
       className={
         'flex flex-col gap-1.5 rounded-lg border bg-card p-3 text-sm shadow-xs' +
+        // A left edge rather than a background wash: it reads at a glance down
+        // a dense column without fighting the card's own content.
+        (job.is_overdue ? ' border-l-2 border-l-destructive' : '') +
         (dragging ? ' opacity-50' : '')
       }
     >
@@ -135,7 +161,10 @@ function JobCard({ job, customer, device, engineer, dragging }: CardProps) {
         >
           {job.job_no}
         </Link>
-        {warrantyBadge(job.warranty_status)}
+        <span className="flex shrink-0 items-center gap-1">
+          {priorityChip(job.priority)}
+          {warrantyBadge(job.warranty_status)}
+        </span>
       </div>
       <div className="text-muted-foreground">
         {device?.model ?? device?.brand ?? '—'}
@@ -149,7 +178,19 @@ function JobCard({ job, customer, device, engineer, dragging }: CardProps) {
               {engineer.initials ?? engineer.full_name.slice(0, 2).toUpperCase()}
             </Badge>
           )}
-          <span>{formatAge(job.received_at)}</span>
+          <span
+            className={job.is_overdue ? 'font-medium text-destructive' : ''}
+            title={
+              job.sla_due_at
+                ? `Target ${new Date(job.sla_due_at).toLocaleDateString()}${job.is_overdue ? ' — overdue' : ''}`
+                : 'No turnaround target'
+            }
+          >
+            {job.is_overdue && (
+              <AlertTriangle className="mr-0.5 inline size-3 align-[-1px]" />
+            )}
+            {formatAge(job.received_at)}
+          </span>
         </span>
       </div>
     </div>

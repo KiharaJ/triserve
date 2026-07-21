@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Plus, Search } from 'lucide-react'
+import { AlertTriangle, Plus, Search } from 'lucide-react'
 import { useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
@@ -22,10 +22,12 @@ import { useAuth } from '@/lib/auth'
 import { formatAge, formatDate } from '@/lib/format'
 import { useByIds } from '@/lib/use-by-ids'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
+import { JOB_PRIORITIES } from '@/lib/types'
 import type {
   BranchWire,
   CustomerWire,
   DeviceWire,
+  JobPriority,
   JobWire,
   UserWire,
   WarrantyStatus,
@@ -53,6 +55,28 @@ function warrantyBadge(status: WarrantyStatus) {
  * and one page). Filter by branch/engineer/warranty/state + free-text search;
  * the board remains available via the view toggle for workflow management.
  */
+/**
+ * Priority is shown ONLY when it is not NORMAL.
+ *
+ * Most jobs are normal, so a badge on every row would be 600 identical chips
+ * carrying no information — the eye stops seeing them, which is exactly when
+ * the URGENT one gets missed. Silence is the signal.
+ */
+function priorityChip(priority: JobPriority) {
+  if (priority === 'NORMAL') return null
+  const tone =
+    priority === 'URGENT'
+      ? 'border-destructive/40 bg-destructive/10 text-destructive'
+      : priority === 'HIGH'
+        ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+        : 'border-muted-foreground/30 text-muted-foreground'
+  return (
+    <span className={`rounded-full border px-1.5 py-0.5 text-[10px] font-semibold uppercase ${tone}`}>
+      {priority}
+    </span>
+  )
+}
+
 export function JobsListView() {
   const { user, can } = useAuth()
   // Filters arriving in the URL, so a link from the "Right now" tiles lands on
@@ -242,6 +266,26 @@ export function JobsListView() {
             </option>
           ))}
         </Select>
+        {/* Kept in the URL, not local state, so it round-trips with the
+            "Right now" tiles and the filter chip above stays truthful. */}
+        <Select
+          value={urlPriority}
+          onChange={(e) => {
+            if (e.target.value) urlParams.set('priority', e.target.value)
+            else urlParams.delete('priority')
+            setUrlParams(urlParams, { replace: true })
+            setPage(1)
+          }}
+          className="w-32"
+          aria-label="Filter by priority"
+        >
+          <option value="">All priorities</option>
+          {JOB_PRIORITIES.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
+            </option>
+          ))}
+        </Select>
         <div className="flex-1" />
         {can('job.create') && (
           <Button asChild size="sm" className="gap-1.5">
@@ -266,6 +310,7 @@ export function JobsListView() {
                 <TableHead>Job #</TableHead>
                 <TableHead>Customer</TableHead>
                 <TableHead>Device</TableHead>
+                <TableHead>Priority</TableHead>
                 <TableHead>State</TableHead>
                 <TableHead>Warranty</TableHead>
                 <TableHead>Engineer</TableHead>
@@ -276,7 +321,7 @@ export function JobsListView() {
             <TableBody>
               {jobs.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={8} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={9} className="py-10 text-center text-muted-foreground">
                     No jobs match these filters.
                   </TableCell>
                 </TableRow>
@@ -307,6 +352,7 @@ export function JobsListView() {
                         </span>
                       ) : null}
                     </TableCell>
+                    <TableCell>{priorityChip(j.priority)}</TableCell>
                     <TableCell>
                       <Badge variant="info">{j.state_label}</Badge>
                     </TableCell>
@@ -324,7 +370,22 @@ export function JobsListView() {
                     <TableCell className="text-right text-muted-foreground">
                       {formatDate(j.received_at)}
                     </TableCell>
-                    <TableCell className="text-right tabular-nums text-muted-foreground">
+                    <TableCell
+                      className={
+                        'text-right tabular-nums ' +
+                        (j.is_overdue
+                          ? 'font-medium text-destructive'
+                          : 'text-muted-foreground')
+                      }
+                      title={
+                        j.sla_due_at
+                          ? `Target ${formatDate(j.sla_due_at)}${j.is_overdue ? ' — overdue' : ''}`
+                          : 'No turnaround target'
+                      }
+                    >
+                      {j.is_overdue && (
+                        <AlertTriangle className="mr-1 inline size-3.5 align-[-2px]" />
+                      )}
                       {formatAge(j.received_at)}
                     </TableCell>
                   </TableRow>
