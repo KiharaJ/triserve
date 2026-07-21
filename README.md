@@ -93,6 +93,31 @@ Prerequisites: Node.js >= 20, npm >= 10, Docker.
 
 Per-workspace scripts can be run with `npm run <script> -w @triserve/<pkg>`.
 
+## Tests and the test database
+
+`npm test -w @triserve/api` runs against a **separate database**
+(`triserve_test` by default, override with `TEST_DATABASE_URL`) — never your
+development one.
+
+This is not a nicety. The integration suites are real end-to-end tests: they
+create companies, jobs and claims over HTTP and delete them again in
+`afterAll`. Pointed at a development database, a teardown that fails part-way
+leaves debris that breaks the *next* run, and an over-broad delete filter takes
+real rows with it. They previously ran against the dev DB and cost us the
+imported customer/device/job history.
+
+How it is enforced:
+
+- `test/jest-env.ts` (`setupFiles`) pins `DATABASE_URL` before any spec is
+  imported — each spec builds its own `PrismaClient` at module scope, so this
+  has to happen first. It is set explicitly, not with `??`, so the `.env` value
+  cannot win.
+- `test/jest-global-setup.ts` creates the database if missing, then runs
+  `prisma migrate deploy` and the seed. It **refuses to run** unless the
+  database name contains `test`.
+
+If you add a spec, do not reintroduce a `?? 'mysql://…/triserve'` fallback.
+
 ## Inventory migration importer (Task 2.10, DESIGN.md §10 / §4.4b)
 
 Load the real parts catalogue + opening stock from the spreadsheets. Export

@@ -34,7 +34,7 @@ import { WorkflowService } from './workflow/workflow.service';
 
 // Jest does not load /api/.env; default to the local dev database.
 process.env.DATABASE_URL =
-  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve';
+  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve_test';
 
 const TEST_PREFIX = '__TEST_1_2__';
 const PASSWORD = 'Workflow1.2-Pass!';

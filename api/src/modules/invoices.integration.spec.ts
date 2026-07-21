@@ -22,7 +22,7 @@ import { AppModule } from '../app.module';
 import { AllExceptionsFilter } from '../common/filters/all-exceptions.filter';
 
 process.env.DATABASE_URL =
-  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve';
+  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve_test';
 
 const TEST_PREFIX = '__TEST_3_1__';
 const PASSWORD = 'Invoice3.1-Pass!';
