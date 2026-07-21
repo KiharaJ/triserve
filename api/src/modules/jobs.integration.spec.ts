@@ -54,6 +54,8 @@ let branchKrk: string;
 const ids: Record<string, string> = {};
 const tokens: Record<string, string> = {};
 const createdJobIds: string[] = [];
+/** Warranty registrations created as fixtures — removed AFTER jobs (FK). */
+const createdRegistrationIds: string[] = [];
 
 async function login(email: string): Promise<string> {
   const res = await request(app.getHttpServer())
@@ -75,6 +77,17 @@ interface JobBody {
   received_by_customer: string | null;
   waybill_no: string | null;
   assigned_engineer_id: string | null;
+  warranty_status: string;
+  service_type: string;
+  coverage: string;
+  warranty_source: string | null;
+  warranty_decided_by: string | null;
+  warranty_decided_at: string | null;
+  accessories_held: string | null;
+  return_by_date: string | null;
+  symptom_code_id: string | null;
+  repair_code_id: string | null;
+  device?: { purchase_date: string | null };
   allowed_next_transitions?: Array<{ to_state_code: string }>;
 }
 
@@ -197,6 +210,10 @@ afterAll(async () => {
     where: { OR: [{ companyId: companyBId }, { id: { in: createdJobIds } }] },
   });
   await raw.jobCounter.deleteMany({ where: { companyId: companyBId } });
+  // After jobs: jobs.warranty_registration_id FKs into this table.
+  await raw.warrantyRegistration.deleteMany({
+    where: { id: { in: createdRegistrationIds } },
+  });
   await raw.device.deleteMany({
     where: {
       OR: [
@@ -592,6 +609,203 @@ describe('PATCH /jobs/{id} — mutable fields, never status', () => {
       .set('Authorization', `Bearer ${tokens.advisorDar}`)
       .send({ state_code: 'CLOSED' })
       .expect(400);
+  });
+});
+
+describe('warranty intake (§4.7 — the Samsung job card)', () => {
+  it('IW intake derives FULL coverage and records WHO ruled it', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'IW',
+      service_type: 'PICKUP',
+      accessories_held: 'SIM TRAY',
+      return_by_date: '2026-08-01',
+      customer: { name: `${TEST_PREFIX} Warranty IW`, phone: '0765770001' },
+      device: {
+        category: 'HHP',
+        imei_serial: '356000000000019',
+        purchase_date: '2026-05-13',
+      },
+    });
+    expect(job.coverage).toBe('FULL');
+    expect(job.service_type).toBe('PICKUP');
+    expect(job.warranty_source).toBe('MANUAL');
+    expect(job.warranty_decided_by).toBe(ids.advisorDar);
+    expect(job.warranty_decided_at).toBeTruthy();
+    expect(job.accessories_held).toBe('SIM TRAY');
+    // A @db.Date must survive the round trip as the SAME calendar day.
+    expect(job.return_by_date).toBe('2026-08-01');
+    expect(job.device?.purchase_date).toBe('2026-05-13');
+  });
+
+  it('an untouched intake stays UNKNOWN/NONE with NO decider (not-yet-ruled ≠ ruled out)', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Warranty silent`, phone: '0765770002' },
+      device: { category: 'HHP', imei_serial: '356000000000027' },
+    });
+    expect(job.warranty_status).toBe('UNKNOWN');
+    expect(job.coverage).toBe('NONE');
+    expect(job.warranty_source).toBeNull();
+    expect(job.warranty_decided_by).toBeNull();
+  });
+
+  it('GOODWILL is FULL coverage — the shop absorbs it, so the customer is billed nothing', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'GOODWILL',
+      customer: { name: `${TEST_PREFIX} Goodwill`, phone: '0765770003' },
+      device: { category: 'HHP', imei_serial: '356000000000035' },
+    });
+    expect(job.coverage).toBe('FULL');
+  });
+
+  it('PATCHing warranty_status alone still moves coverage (a stale coverage would keep billing)', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'OW',
+      customer: { name: `${TEST_PREFIX} Reruled`, phone: '0765770004' },
+      device: { category: 'HHP', imei_serial: '356000000000043' },
+    });
+    expect(job.coverage).toBe('NONE');
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ warranty_status: 'IW' })
+      .expect(200);
+    const body = res.body as JobBody;
+    expect(body.coverage).toBe('FULL');
+    expect(body.warranty_decided_by).toBe(ids.advisorDar);
+  });
+
+  it('LABOUR_ONLY / PARTS_ONLY survive a bare warranty_status of IW', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'IW',
+      coverage: 'LABOUR_ONLY',
+      customer: { name: `${TEST_PREFIX} Partial`, phone: '0765770005' },
+      device: { category: 'HHP', imei_serial: '356000000000050' },
+    });
+    // Explicit coverage must NOT be flattened to FULL by the IW status.
+    expect(job.coverage).toBe('LABOUR_ONLY');
+  });
+
+  it('a service code of the WRONG kind is rejected (ids are interchangeable UUIDs)', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Codes`, phone: '0765770006' },
+      device: { category: 'HHP', imei_serial: '356000000000068' },
+    });
+    const repair = await raw.serviceCode.findFirstOrThrow({
+      where: { companyId, kind: 'REPAIR', code: 'A01', deletedAt: null },
+    });
+    const symptom = await raw.serviceCode.findFirstOrThrow({
+      where: { companyId, kind: 'SYMPTOM', code: 'T83', deletedAt: null },
+    });
+
+    // A REPAIR code in the symptom slot would sail through to GSPN and be
+    // rejected weeks later — reject it at the door instead.
+    await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ symptom_code_id: repair.id })
+      .expect(400);
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ symptom_code_id: symptom.id, repair_code_id: repair.id })
+      .expect(200);
+    const body = res.body as JobBody;
+    expect(body.symptom_code_id).toBe(symptom.id);
+    expect(body.repair_code_id).toBe(repair.id);
+  });
+
+  it('POST /jobs accepts the exact payload the intake form sends (symptom code + registration source)', async () => {
+    const symptom = await raw.serviceCode.findFirstOrThrow({
+      where: { companyId, kind: 'SYMPTOM', code: 'T83', deletedAt: null },
+    });
+    const reg = await raw.warrantyRegistration.create({
+      data: {
+        companyId,
+        branchId: branchDar,
+        productName: `${TEST_PREFIX} Galaxy A06`,
+        brand: 'Samsung',
+        serialNo: '356000000000084',
+        kind: 'SAMSUNG',
+        startDate: new Date('2026-05-13T00:00:00.000Z'),
+        expiryDate: new Date('2027-05-13T00:00:00.000Z'),
+      },
+    });
+    createdRegistrationIds.push(reg.id);
+
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'IW',
+      coverage: 'FULL',
+      service_type: 'CARRY_IN',
+      warranty_source: 'REGISTRATION',
+      warranty_registration_id: reg.id,
+      symptom_code_id: symptom.id,
+      accessories_held: 'SIM TRAY',
+      return_by_date: '2026-08-15',
+      fault_reported: 'NOT CHARGING',
+      customer: { name: `${TEST_PREFIX} Form payload`, phone: '0765770008' },
+      device: {
+        category: 'HHP',
+        imei_serial: '356000000000084',
+        purchase_date: '2026-05-13',
+      },
+    });
+
+    expect(job.coverage).toBe('FULL');
+    expect(job.warranty_source).toBe('REGISTRATION');
+    expect(job.symptom_code_id).toBe(symptom.id);
+    expect(job.accessories_held).toBe('SIM TRAY');
+    expect(job.return_by_date).toBe('2026-08-15');
+    const row = await raw.job.findUniqueOrThrow({ where: { id: job.id } });
+    expect(row.warrantyRegistrationId).toBe(reg.id);
+  });
+
+  it('POST /jobs rejects a wrong-kind code at intake, not just on PATCH', async () => {
+    const repair = await raw.serviceCode.findFirstOrThrow({
+      where: { companyId, kind: 'REPAIR', code: 'A01', deletedAt: null },
+    });
+    await createJob(
+      tokens.advisorDar,
+      {
+        branch_id: branchDar,
+        symptom_code_id: repair.id,
+        customer: { name: `${TEST_PREFIX} Bad code`, phone: '0765770009' },
+        device: { category: 'HHP', imei_serial: '356000000000092' },
+      },
+      400,
+    );
+  });
+
+  it('a later intake never overwrites a purchase date already on file', async () => {
+    const imei = '356000000000076';
+    await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} PD first`, phone: '0765770007' },
+      device: {
+        category: 'HHP',
+        imei_serial: imei,
+        purchase_date: '2026-01-10',
+      },
+    });
+    const second = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} PD first`, phone: '0765770007' },
+      device: {
+        category: 'HHP',
+        imei_serial: imei,
+        purchase_date: '2026-06-30',
+      },
+    });
+    // Warranty hinges on this date — the earliest evidence wins.
+    expect(second.device?.purchase_date).toBe('2026-01-10');
   });
 });
 

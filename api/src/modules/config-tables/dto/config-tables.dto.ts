@@ -1,13 +1,35 @@
+import type { DeviceCategory, ServiceCodeKind } from '@prisma/client';
 import {
   IsBoolean,
+  IsEnum,
+  IsInt,
   IsOptional,
   IsString,
   Length,
   Matches,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
 import { BooleanQuery, ListQueryDto } from '../../../common/dto/list-query.dto';
+
+/** Prisma enums are types, not values — class-validator needs a value object. */
+const SERVICE_CODE_KINDS: Record<ServiceCodeKind, ServiceCodeKind> = {
+  CONDITION: 'CONDITION',
+  SYMPTOM: 'SYMPTOM',
+  DEFECT: 'DEFECT',
+  DEFECT_TYPE: 'DEFECT_TYPE',
+  DEFECT_BLOCK: 'DEFECT_BLOCK',
+  REPAIR: 'REPAIR',
+};
+
+const DEVICE_CATEGORIES: Record<DeviceCategory, DeviceCategory> = {
+  HHP: 'HHP',
+  CE: 'CE',
+  AC: 'AC',
+  REF: 'REF',
+  OTHER: 'OTHER',
+};
 
 /**
  * Wire DTOs for the per-company config tables (Task 0.7, DESIGN.md §4.14 /
@@ -98,6 +120,87 @@ export class UpdateFaultCodeDto {
   @MinLength(1)
   @MaxLength(255)
   label?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+// --- Service codes (Samsung GSPN, §4.7) -----------------------------------------
+
+/**
+ * `service_codes` is six lookups in one table, so `kind` is required on create
+ * and the list endpoint is nearly always filtered by it — a picker wants
+ * SYMPTOM codes, never a mixed bag of all six.
+ *
+ * Note the code pattern is NOT applied here: Samsung's codes are theirs, and
+ * rejecting one we did not anticipate would block a legitimate claim. Length
+ * is bounded; the character set is not ours to police.
+ */
+export class ServiceCodeListQueryDto extends ConfigListQueryDto {
+  @IsOptional()
+  @IsEnum(SERVICE_CODE_KINDS)
+  kind?: ServiceCodeKind;
+
+  @IsOptional()
+  @IsEnum(DEVICE_CATEGORIES)
+  category?: DeviceCategory;
+}
+
+export class CreateServiceCodeDto {
+  @IsEnum(SERVICE_CODE_KINDS)
+  kind!: ServiceCodeKind;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(30)
+  code!: string;
+
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  label!: string;
+
+  /** Narrows the code to one device grouping; omit/null = applies to all. */
+  @IsOptional()
+  @IsEnum(DEVICE_CATEGORIES)
+  category?: DeviceCategory | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class UpdateServiceCodeDto {
+  @IsOptional()
+  @IsEnum(SERVICE_CODE_KINDS)
+  kind?: ServiceCodeKind;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(30)
+  code?: string;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(255)
+  label?: string;
+
+  @IsOptional()
+  @IsEnum(DEVICE_CATEGORIES)
+  category?: DeviceCategory | null;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sort_order?: number;
 
   @IsOptional()
   @IsBoolean()

@@ -22,6 +22,11 @@ import { formatDate, formatDateTime } from '@/lib/format'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
 import {
   CUSTOMER_TYPES,
+  JOB_COVERAGES,
+  SERVICE_TYPES,
+  coverageLabel,
+  defaultCoverageFor,
+  serviceTypeLabel,
   type BranchWire,
   type CustomerType,
   type CustomerWire,
@@ -30,6 +35,7 @@ import {
   type JobDetailWire,
   type ModelWire,
   type PreferredLanguageCode,
+  type ServiceCodeWire,
   type UserWire,
   type WarrantyRegistrationWire,
   type WarrantyStatus,
@@ -48,9 +54,26 @@ const fieldsSchema = z.object({
   category: z.enum(['HHP', 'CE', 'AC', 'REF', 'OTHER']),
   imei_serial: z.string().max(100).optional(),
   color: z.string().max(50).optional(),
+  purchase_date: z.string().optional(),
   fault_reported: z.string().min(3, 'Describe the fault (min 3 characters)').max(5000),
   fault_code_id: z.string().optional(),
+  symptom_code_id: z.string().optional(),
   warranty_status: z.enum(['IW', 'OW', 'GOODWILL', 'UNKNOWN']),
+  coverage: z.enum(['FULL', 'LABOUR_ONLY', 'PARTS_ONLY', 'NONE']),
+  service_type: z.enum([
+    'CARRY_IN',
+    'PICKUP',
+    'IN_HOME',
+    'INITIAL_INSTALL',
+    'INSPECTION',
+    'INSURANCE',
+    'PRODUCT_RETURN',
+    'RETURN_HANDLING',
+    'STOCK_REPAIR',
+    'ADH',
+  ]),
+  accessories_held: z.string().max(500).optional(),
+  return_by_date: z.string().optional(),
   assigned_engineer_id: z.string().optional(),
   so_number: z.string().max(100).optional(),
 })
@@ -118,6 +141,19 @@ export function JobIntakePage() {
         })
       ).data.data,
   })
+  // The customer-reported symptom is the ONE GSPN code knowable at the
+  // counter; condition/defect/defect-type/block/repair are diagnosis outputs
+  // and belong on the job detail page, not intake. Served by /active so a
+  // front-desk user without config.read can still populate the picker.
+  const symptomCodes = useQuery({
+    queryKey: ['service-codes', 'SYMPTOM'],
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<ServiceCodeWire>>('/service-codes/active', {
+          params: { kind: 'SYMPTOM' },
+        })
+      ).data.data,
+  })
   const branches = useQuery({
     queryKey: ['branches', 'all'],
     enabled: user?.scope === 'group' && can('config.read'),
@@ -165,9 +201,17 @@ export function JobIntakePage() {
       category: 'HHP',
       imei_serial: '',
       color: '',
+      purchase_date: '',
       fault_reported: '',
       fault_code_id: '',
+      symptom_code_id: '',
       warranty_status: 'UNKNOWN',
+      // UNKNOWN means "not ruled yet", and until someone rules it the customer
+      // is presumed to be paying — same conservative default as the API.
+      coverage: 'NONE',
+      service_type: 'CARRY_IN',
+      accessories_held: '',
+      return_by_date: '',
       assigned_engineer_id: '',
       so_number: '',
     },
@@ -191,10 +235,29 @@ export function JobIntakePage() {
         )
       ).data,
   })
-  const coverage =
+  const registration =
     warranty.data && typeof warranty.data === 'object' && 'id' in warranty.data
       ? (warranty.data as WarrantyRegistrationWire)
       : null
+
+  // Set only when the ruling was JUSTIFIED by the registration above — it is
+  // what makes `warranty_source` REGISTRATION rather than MANUAL, so it must
+  // not survive a later manual override of the warranty fields.
+  const [appliedRegistrationId, setAppliedRegistrationId] = useState<string | null>(null)
+
+  const warrantyStatusValue = form.watch('warranty_status')
+  const coverageValue = form.watch('coverage')
+
+  /**
+   * Rule the job from the matched registration: IW + full cover, and remember
+   * WHICH registration said so. A live Samsung registration is the strongest
+   * evidence available at the counter.
+   */
+  function applyRegistration(reg: WarrantyRegistrationWire) {
+    form.setValue('warranty_status', 'IW', { shouldValidate: true })
+    form.setValue('coverage', 'FULL', { shouldValidate: true })
+    setAppliedRegistrationId(reg.id)
+  }
 
   const createJob = useMutation({
     mutationFn: async (body: Record<string, unknown>) =>
@@ -240,8 +303,17 @@ export function JobIntakePage() {
         model: selectedModel?.model_code ?? (modelQuery.trim() || undefined),
         model_id: selectedModel?.id,
         color: values.color?.trim() || undefined,
+        purchase_date: values.purchase_date || undefined,
       },
     }
+
+    // Only claim REGISTRATION as the source if the ruling still matches what
+    // the registration set — an advisor who then changed the warranty by hand
+    // made a MANUAL call, and the audit trail should say so.
+    const ruledFromRegistration =
+      appliedRegistrationId !== null &&
+      values.warranty_status === 'IW' &&
+      values.coverage === 'FULL'
 
     try {
       const job = await createJob.mutateAsync({
@@ -250,8 +322,17 @@ export function JobIntakePage() {
         ...devicePayload,
         so_number: values.so_number?.trim() || undefined,
         warranty_status: values.warranty_status,
+        coverage: values.coverage,
+        service_type: values.service_type,
+        warranty_source: ruledFromRegistration ? 'REGISTRATION' : undefined,
+        warranty_registration_id: ruledFromRegistration
+          ? appliedRegistrationId
+          : undefined,
         fault_reported: values.fault_reported,
         fault_code_id: values.fault_code_id || undefined,
+        symptom_code_id: values.symptom_code_id || undefined,
+        accessories_held: values.accessories_held?.trim() || undefined,
+        return_by_date: values.return_by_date || undefined,
         assigned_engineer_id: values.assigned_engineer_id || undefined,
       })
 
@@ -310,6 +391,7 @@ export function JobIntakePage() {
     setNewCustomerLanguage('EN')
     setSelectedModel(null)
     setModelQuery('')
+    setAppliedRegistrationId(null)
     setBeforePhotos([])
     photoPreviews.forEach((u) => URL.revokeObjectURL(u))
     setPhotoPreviews([])
@@ -362,8 +444,15 @@ export function JobIntakePage() {
             {createdJob.device.category})
           </p>
           <p>IMEI/Serial: {createdJob.device.imei_serial ?? '—'}</p>
-          <p>Warranty: {createdJob.warranty_status}</p>
+          <p>Service type: {serviceTypeLabel(createdJob.service_type)}</p>
+          <p>
+            Warranty: {createdJob.warranty_status} — {coverageLabel(createdJob.coverage)}
+          </p>
+          {/* T&C 2 makes accessories a custody liability — they must appear on
+              the customer's copy, not just in the database. */}
+          <p>Accessories held: {createdJob.accessories_held ?? '—'}</p>
           <p>Fault reported: {createdJob.fault_reported ?? '—'}</p>
+          {createdJob.return_by_date && <p>Return by: {formatDate(createdJob.return_by_date)}</p>}
           <hr className="my-2" />
           <p className="text-xs">Customer signature captured at intake.</p>
         </div>
@@ -520,11 +609,11 @@ export function JobIntakePage() {
             </div>
           </FormField>
 
-          {coverage && (
+          {registration && (
             <div
               className={
                 'flex items-start gap-3 rounded-lg border p-3 text-sm ' +
-                (coverage.is_expired
+                (registration.is_expired
                   ? 'border-amber-500/30 bg-amber-500/10'
                   : 'border-emerald-500/30 bg-emerald-500/10')
               }
@@ -532,38 +621,41 @@ export function JobIntakePage() {
               <ShieldCheck
                 className={
                   'mt-0.5 size-5 shrink-0 ' +
-                  (coverage.is_expired
+                  (registration.is_expired
                     ? 'text-amber-600 dark:text-amber-400'
                     : 'text-emerald-600 dark:text-emerald-400')
                 }
               />
               <div className="flex flex-col gap-0.5">
                 <span className="font-medium">
-                  {coverage.is_expired
-                    ? `Warranty expired ${formatDate(coverage.expiry_date)}`
-                    : `Under ${WARRANTY_KIND_LABEL[coverage.kind]} warranty · covered until ${formatDate(coverage.expiry_date)}`}
+                  {registration.is_expired
+                    ? `Warranty expired ${formatDate(registration.expiry_date)}`
+                    : `Under ${WARRANTY_KIND_LABEL[registration.kind]} warranty · covered until ${formatDate(registration.expiry_date)}`}
                 </span>
                 <span className="text-muted-foreground">
-                  {coverage.product_name}
-                  {coverage.brand ? ` · ${coverage.brand}` : ''}
-                  {coverage.kind === 'SAMSUNG' && !coverage.is_expired
+                  {registration.product_name}
+                  {registration.brand ? ` · ${registration.brand}` : ''}
+                  {registration.kind === 'SAMSUNG' && !registration.is_expired
                     ? ' — this may be an in-warranty (IW) claim.'
                     : ''}
                 </span>
               </div>
-              {!coverage.is_expired && coverage.kind === 'SAMSUNG' && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="xs"
-                  className="ml-auto"
-                  onClick={() =>
-                    form.setValue('warranty_status', 'IW', { shouldValidate: true })
-                  }
-                >
-                  Set IW
-                </Button>
-              )}
+              {!registration.is_expired &&
+                (appliedRegistrationId === registration.id ? (
+                  <Badge variant="success" className="ml-auto shrink-0">
+                    Applied
+                  </Badge>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="xs"
+                    className="ml-auto shrink-0"
+                    onClick={() => applyRegistration(registration)}
+                  >
+                    Apply IW cover
+                  </Button>
+                ))}
             </div>
           )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -615,8 +707,93 @@ export function JobIntakePage() {
               </Select>
             </FormField>
           </div>
-          <FormField label="Colour" htmlFor="color">
-            <Input id="color" placeholder="e.g. Black" {...form.register('color')} />
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FormField label="Colour" htmlFor="color">
+              <Input id="color" placeholder="e.g. Black" {...form.register('color')} />
+            </FormField>
+            <FormField
+              label="Purchase date"
+              htmlFor="purchase_date"
+              hint="From the receipt — decides warranty when no registration matches."
+            >
+              <Input id="purchase_date" type="date" {...form.register('purchase_date')} />
+            </FormField>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Warranty</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FormField label="Warranty status" htmlFor="warranty_status">
+              <Select
+                id="warranty_status"
+                {...form.register('warranty_status', {
+                  // Coverage follows the status by default; an advisor can
+                  // still override it below for the labour-only / parts-only
+                  // cases the Samsung job card allows.
+                  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => {
+                    const next = e.target.value as WarrantyStatus
+                    form.setValue('coverage', defaultCoverageFor(next), {
+                      shouldValidate: true,
+                    })
+                    setAppliedRegistrationId(null)
+                  },
+                })}
+              >
+                {WARRANTY_STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+            <FormField label="Who pays" htmlFor="coverage">
+              <Select id="coverage" {...form.register('coverage')}>
+                {JOB_COVERAGES.map((c) => (
+                  <option key={c.value} value={c.value}>
+                    {c.label}
+                  </option>
+                ))}
+              </Select>
+            </FormField>
+          </div>
+
+          {coverageValue !== 'FULL' && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+              The customer pays for this repair
+              {coverageValue === 'LABOUR_ONLY'
+                ? ' (parts)'
+                : coverageValue === 'PARTS_ONLY'
+                  ? ' (labour)'
+                  : ''}
+              . A quote must be raised and accepted before work starts —
+              repair is blocked until then.
+            </p>
+          )}
+          {warrantyStatusValue === 'UNKNOWN' && (
+            <p className="text-xs text-muted-foreground">
+              Warranty not ruled yet. Left as-is, this job is treated as
+              chargeable until someone decides.
+            </p>
+          )}
+          {appliedRegistrationId && (
+            <p className="text-xs text-muted-foreground">
+              Ruled from the matched warranty registration — recorded as the
+              evidence for this decision.
+            </p>
+          )}
+
+          <FormField
+            label="Return by"
+            htmlFor="return_by_date"
+            hint="Promised collection date shown to the customer."
+            className="sm:max-w-[50%]"
+          >
+            <Input id="return_by_date" type="date" {...form.register('return_by_date')} />
           </FormField>
         </CardContent>
       </Card>
@@ -651,14 +828,41 @@ export function JobIntakePage() {
                 </Select>
               </FormField>
             )}
-            <FormField label="Warranty status" htmlFor="warranty_status">
-              <Select id="warranty_status" {...form.register('warranty_status')}>
-                {WARRANTY_STATUSES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+            {symptomCodes.data && symptomCodes.data.length > 0 && (
+              <FormField
+                label="Customer symptom (GSPN)"
+                htmlFor="symptom_code_id"
+                hint="Diagnosis codes are set by the engineer during repair."
+              >
+                <Select id="symptom_code_id" {...form.register('symptom_code_id')}>
+                  <option value="">—</option>
+                  {symptomCodes.data.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.code} — {sc.label}
+                    </option>
+                  ))}
+                </Select>
+              </FormField>
+            )}
+            <FormField label="Service type" htmlFor="service_type">
+              <Select id="service_type" {...form.register('service_type')}>
+                {SERVICE_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}
                   </option>
                 ))}
               </Select>
+            </FormField>
+            <FormField
+              label="Accessories held"
+              htmlFor="accessories_held"
+              hint="Anything kept with the device — SIM tray, case, charger."
+            >
+              <Input
+                id="accessories_held"
+                placeholder="e.g. SIM TRAY"
+                {...form.register('accessories_held')}
+              />
             </FormField>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

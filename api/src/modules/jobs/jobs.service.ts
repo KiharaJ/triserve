@@ -4,7 +4,14 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { Prisma, type WarrantyStatus } from '@prisma/client';
+import {
+  Prisma,
+  type JobCoverage,
+  type ServiceCodeKind,
+  type ServiceType,
+  type WarrantySource,
+  type WarrantyStatus,
+} from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import { randomUUID } from 'node:crypto';
 import { assertBranchAccess } from '../../common/authz/branch-access';
@@ -48,9 +55,28 @@ export interface JobWire {
   booked_by: string;
   assigned_engineer_id: string | null;
   warranty_status: WarrantyStatus;
+  service_type: ServiceType;
+  /** What the warranty PAYS FOR — what invoicing and the quote gate read. */
+  coverage: JobCoverage;
+  warranty_source: WarrantySource | null;
+  warranty_registration_id: string | null;
+  warranty_decided_by: string | null;
+  warranty_decided_at: string | null;
   fault_reported: string | null;
   fault_code_id: string | null;
   tech_report: string | null;
+  /** GSPN diagnostic codes (§4.7) — all six needed to file a claim. */
+  condition_code_id: string | null;
+  symptom_code_id: string | null;
+  defect_code_id: string | null;
+  defect_type_id: string | null;
+  defect_block_id: string | null;
+  repair_code_id: string | null;
+  repair_description: string | null;
+  accessories_held: string | null;
+  appointment_at: string | null;
+  return_by_date: string | null;
+  repair_warranty_until: string | null;
   state_id: string;
   state_code: string;
   state_label: string;
@@ -87,6 +113,8 @@ export interface JobDeviceSummary {
   category: string;
   imei_serial: string | null;
   color: string | null;
+  /** Drives the IW/OW ruling when no warranty registration matches (§4.7). */
+  purchase_date: string | null;
 }
 
 /** GET /jobs/{id} — full detail incl. relations + legal next moves. */
@@ -162,6 +190,8 @@ export class JobsService {
       ...(query.branch_id ? { branchId: query.branch_id } : {}),
       ...(query.customer_id ? { customerId: query.customer_id } : {}),
       ...(query.state ? { state: { code: query.state } } : {}),
+      ...(query.coverage ? { coverage: query.coverage } : {}),
+      ...(query.service_type ? { serviceType: query.service_type } : {}),
       ...(query.warranty_status
         ? { warrantyStatus: query.warranty_status }
         : {}),
@@ -219,6 +249,29 @@ export class JobsService {
     if (dto.assigned_engineer_id) {
       await this.assertUserInCompany(dto.assigned_engineer_id);
     }
+    if (dto.warranty_registration_id) {
+      await this.assertWarrantyRegistrationInCompany(
+        dto.warranty_registration_id,
+      );
+    }
+    await this.assertServiceCodeKinds(dto);
+
+    // The warranty ruling: `coverage` is what everything downstream reads, so
+    // derive it when the caller only stated warranty_status, and record WHO
+    // decided — but only if a decision was actually made. An untouched intake
+    // stays UNKNOWN/NONE with a null source, which reads as "not yet ruled"
+    // rather than "someone ruled it out of warranty".
+    const warrantyStatus = dto.warranty_status ?? 'UNKNOWN';
+    const ruled =
+      dto.warranty_status !== undefined || dto.coverage !== undefined;
+    const coverage = dto.coverage ?? defaultCoverage(warrantyStatus);
+    const warrantySource =
+      dto.warranty_source ??
+      (ruled
+        ? dto.warranty_registration_id
+          ? 'REGISTRATION'
+          : 'MANUAL'
+        : null);
 
     const initial = await this.prisma.workflowState.findFirst({
       where: { isInitial: true, active: true, deletedAt: null },
@@ -247,9 +300,24 @@ export class JobsService {
         deviceId,
         bookedById: user.userId,
         assignedEngineerId: dto.assigned_engineer_id ?? null,
-        warrantyStatus: dto.warranty_status ?? 'UNKNOWN',
+        warrantyStatus,
+        serviceType: dto.service_type ?? 'CARRY_IN',
+        coverage,
+        warrantySource,
+        warrantyRegistrationId: dto.warranty_registration_id ?? null,
+        warrantyDecidedById: ruled ? user.userId : null,
+        warrantyDecidedAt: ruled ? now : null,
         faultReported: dto.fault_reported ?? null,
         faultCodeId: dto.fault_code_id ?? null,
+        conditionCodeId: dto.condition_code_id ?? null,
+        symptomCodeId: dto.symptom_code_id ?? null,
+        defectCodeId: dto.defect_code_id ?? null,
+        defectTypeId: dto.defect_type_id ?? null,
+        defectBlockId: dto.defect_block_id ?? null,
+        repairCodeId: dto.repair_code_id ?? null,
+        accessoriesHeld: dto.accessories_held ?? null,
+        appointmentAt: dto.appointment_at ? new Date(dto.appointment_at) : null,
+        returnByDate: toDateOnly(dto.return_by_date),
         stateId: initial.id,
         receivedAt: now,
         notes: dto.notes ?? null,
@@ -274,6 +342,19 @@ export class JobsService {
     }
     if (dto.fault_code_id)
       await this.assertFaultCodeInCompany(dto.fault_code_id);
+    if (dto.warranty_registration_id) {
+      await this.assertWarrantyRegistrationInCompany(
+        dto.warranty_registration_id,
+      );
+    }
+    await this.assertServiceCodeKinds(dto);
+
+    // Re-ruling the warranty re-stamps who decided and when — an amended
+    // ruling that kept the original decider's name would misattribute it.
+    const reruled =
+      dto.warranty_status !== undefined ||
+      dto.coverage !== undefined ||
+      dto.warranty_source !== undefined;
 
     await this.prisma.job.update({
       where: { id },
@@ -290,8 +371,71 @@ export class JobsService {
         ...(dto.warranty_status !== undefined
           ? { warrantyStatus: dto.warranty_status }
           : {}),
+        ...(dto.service_type !== undefined
+          ? { serviceType: dto.service_type }
+          : {}),
+        // A bare warranty_status change still moves coverage, because coverage
+        // is what bills the customer — leaving it stale would silently keep
+        // charging an in-warranty repair.
+        ...(dto.coverage !== undefined
+          ? { coverage: dto.coverage }
+          : dto.warranty_status !== undefined
+            ? { coverage: defaultCoverage(dto.warranty_status) }
+            : {}),
+        ...(dto.warranty_source !== undefined
+          ? { warrantySource: dto.warranty_source }
+          : reruled
+            ? {
+                warrantySource: dto.warranty_registration_id
+                  ? 'REGISTRATION'
+                  : 'MANUAL',
+              }
+            : {}),
+        ...(dto.warranty_registration_id !== undefined
+          ? { warrantyRegistrationId: dto.warranty_registration_id }
+          : {}),
+        ...(reruled
+          ? { warrantyDecidedById: user.userId, warrantyDecidedAt: new Date() }
+          : {}),
         ...(dto.fault_code_id !== undefined
           ? { faultCodeId: dto.fault_code_id }
+          : {}),
+        ...(dto.condition_code_id !== undefined
+          ? { conditionCodeId: dto.condition_code_id }
+          : {}),
+        ...(dto.symptom_code_id !== undefined
+          ? { symptomCodeId: dto.symptom_code_id }
+          : {}),
+        ...(dto.defect_code_id !== undefined
+          ? { defectCodeId: dto.defect_code_id }
+          : {}),
+        ...(dto.defect_type_id !== undefined
+          ? { defectTypeId: dto.defect_type_id }
+          : {}),
+        ...(dto.defect_block_id !== undefined
+          ? { defectBlockId: dto.defect_block_id }
+          : {}),
+        ...(dto.repair_code_id !== undefined
+          ? { repairCodeId: dto.repair_code_id }
+          : {}),
+        ...(dto.repair_description !== undefined
+          ? { repairDescription: dto.repair_description }
+          : {}),
+        ...(dto.accessories_held !== undefined
+          ? { accessoriesHeld: dto.accessories_held }
+          : {}),
+        ...(dto.appointment_at !== undefined
+          ? {
+              appointmentAt: dto.appointment_at
+                ? new Date(dto.appointment_at)
+                : null,
+            }
+          : {}),
+        ...(dto.return_by_date !== undefined
+          ? { returnByDate: toDateOnly(dto.return_by_date) }
+          : {}),
+        ...(dto.repair_warranty_until !== undefined
+          ? { repairWarrantyUntil: toDateOnly(dto.repair_warranty_until) }
           : {}),
         ...(dto.so_number !== undefined
           ? { soNumber: normalizeSoNumber(dto.so_number) }
@@ -635,13 +779,27 @@ export class JobsService {
       );
     }
 
+    const purchaseDate = toDateOnly(dto.device.purchase_date);
+
     const imei = normalizeImeiSerial(dto.device.imei_serial);
     if (imei) {
       const match = await this.prisma.device.findFirst({
         where: { imeiSerial: imei, deletedAt: null },
         orderBy: { createdAt: 'asc' },
       });
-      if (match) return match.id;
+      if (match) {
+        // Backfill only: the front desk seeing a receipt for a device already
+        // on file is new information worth keeping, but a later intake must
+        // not overwrite a purchase date already established — that date
+        // decides warranty, so the earliest evidence wins.
+        if (purchaseDate && !match.purchaseDate) {
+          await this.prisma.device.update({
+            where: { id: match.id },
+            data: { purchaseDate, updatedById: user.userId },
+          });
+        }
+        return match.id;
+      }
     }
 
     if (dto.device.model_id) {
@@ -665,6 +823,7 @@ export class JobsService {
         category: dto.device.category,
         imeiSerial: imei,
         color: dto.device.color ?? null,
+        purchaseDate,
         createdById: user.userId,
         updatedById: user.userId,
       },
@@ -680,6 +839,47 @@ export class JobsService {
       throw new BadRequestException(
         'fault_code_id does not match a fault code of your company',
       );
+    }
+  }
+
+  private async assertWarrantyRegistrationInCompany(id: string): Promise<void> {
+    const reg = await this.prisma.warrantyRegistration.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!reg) {
+      throw new BadRequestException(
+        'warranty_registration_id does not match a warranty registration of your company',
+      );
+    }
+  }
+
+  /**
+   * The six GSPN code fields are all plain UUIDs, so nothing structural stops
+   * a REPAIR code being saved as the symptom. Each supplied id must resolve to
+   * an in-company service code of the MATCHING kind — a mismatch here surfaces
+   * as a GSPN rejection weeks after the handset has gone back.
+   */
+  private async assertServiceCodeKinds(
+    dto: CreateJobDto | UpdateJobDto,
+  ): Promise<void> {
+    const pairs: Array<[string | null | undefined, ServiceCodeKind, string]> = [
+      [dto.condition_code_id, 'CONDITION', 'condition_code_id'],
+      [dto.symptom_code_id, 'SYMPTOM', 'symptom_code_id'],
+      [dto.defect_code_id, 'DEFECT', 'defect_code_id'],
+      [dto.defect_type_id, 'DEFECT_TYPE', 'defect_type_id'],
+      [dto.defect_block_id, 'DEFECT_BLOCK', 'defect_block_id'],
+      [dto.repair_code_id, 'REPAIR', 'repair_code_id'],
+    ];
+    for (const [id, kind, field] of pairs) {
+      if (!id) continue; // undefined = untouched, null = cleared
+      const row = await this.prisma.serviceCode.findFirst({
+        where: { id, kind, deletedAt: null },
+      });
+      if (!row) {
+        throw new BadRequestException(
+          `${field} does not match a ${kind} service code of your company`,
+        );
+      }
     }
   }
 
@@ -719,6 +919,37 @@ function searchClauses(q: string): Prisma.JobWhereInput[] {
   return clauses;
 }
 
+/**
+ * Prisma @db.Date values arrive as a Date at UTC midnight. Rendering them with
+ * toISOString() and slicing is correct; going through local time is NOT — in a
+ * negative-offset zone it yields the previous day.
+ */
+function toDateString(d: Date | null): string | null {
+  return d ? d.toISOString().slice(0, 10) : null;
+}
+
+/**
+ * Inbound ISO string → a Date pinned to UTC midnight for a @db.Date column.
+ * `new Date('2026-07-21')` is already UTC midnight, but a full timestamp is
+ * not — truncating first keeps "the day the customer was promised" intact
+ * regardless of the sender's offset.
+ */
+function toDateOnly(s: string | null | undefined): Date | null {
+  return s ? new Date(`${s.slice(0, 10)}T00:00:00.000Z`) : null;
+}
+
+/**
+ * The billing consequence implied by a warranty ruling, used when the caller
+ * states only `warranty_status`. GOODWILL is a free repair the shop absorbs,
+ * so the customer is charged nothing — FULL, same as IW. UNKNOWN means "not
+ * ruled yet", and until someone rules it the customer is presumed to be
+ * paying: NONE, which is the conservative side (it gates repair behind a
+ * quote rather than silently starting unbilled work).
+ */
+function defaultCoverage(status: WarrantyStatus): JobCoverage {
+  return status === 'IW' || status === 'GOODWILL' ? 'FULL' : 'NONE';
+}
+
 function toWire(j: JobWithState): JobWire {
   return {
     id: j.id,
@@ -730,9 +961,28 @@ function toWire(j: JobWithState): JobWire {
     booked_by: j.bookedById,
     assigned_engineer_id: j.assignedEngineerId,
     warranty_status: j.warrantyStatus,
+    service_type: j.serviceType,
+    coverage: j.coverage,
+    warranty_source: j.warrantySource,
+    warranty_registration_id: j.warrantyRegistrationId,
+    warranty_decided_by: j.warrantyDecidedById,
+    warranty_decided_at: j.warrantyDecidedAt?.toISOString() ?? null,
     fault_reported: j.faultReported,
     fault_code_id: j.faultCodeId,
     tech_report: j.techReport,
+    condition_code_id: j.conditionCodeId,
+    symptom_code_id: j.symptomCodeId,
+    defect_code_id: j.defectCodeId,
+    defect_type_id: j.defectTypeId,
+    defect_block_id: j.defectBlockId,
+    repair_code_id: j.repairCodeId,
+    repair_description: j.repairDescription,
+    accessories_held: j.accessoriesHeld,
+    appointment_at: j.appointmentAt?.toISOString() ?? null,
+    // DATE columns: date-only on the wire, so a timezone shift can never move
+    // a promised return date to the previous day.
+    return_by_date: toDateString(j.returnByDate),
+    repair_warranty_until: toDateString(j.repairWarrantyUntil),
     state_id: j.stateId,
     state_code: j.state.code,
     state_label: j.state.label,
@@ -773,6 +1023,7 @@ function toDetailWire(
       category: j.device.category,
       imei_serial: j.device.imeiSerial,
       color: j.device.color,
+      purchase_date: toDateString(j.device.purchaseDate),
     },
     allowed_next_transitions: allowed,
   };

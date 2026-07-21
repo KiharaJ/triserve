@@ -49,6 +49,7 @@ let createdTechId: string;
 let createdFaultCodeId: string;
 let createdTaxRateId: string;
 let createdCurrencyId: string;
+let createdServiceCodeId: string;
 
 async function login(email: string, password = PASSWORD): Promise<string> {
   const res = await request(app.getHttpServer())
@@ -108,6 +109,7 @@ afterAll(async () => {
     createdFaultCodeId,
     createdTaxRateId,
     createdCurrencyId,
+    createdServiceCodeId,
     adminId,
   ].filter(Boolean);
   await raw.auditLog.deleteMany({
@@ -124,6 +126,9 @@ afterAll(async () => {
   }
   if (createdCurrencyId) {
     await raw.currency.deleteMany({ where: { id: createdCurrencyId } });
+  }
+  if (createdServiceCodeId) {
+    await raw.serviceCode.deleteMany({ where: { id: createdServiceCodeId } });
   }
   await raw.user.deleteMany({
     where: { email: { in: [ADMIN_EMAIL, TECH_EMAIL] } },
@@ -421,6 +426,116 @@ describe('config tables (THE SPEC FLOW: add a fault code)', () => {
     createdCurrencyId = body.id;
     expect(body.code).toBe('USD');
     expect(body.is_base).toBe(false);
+  });
+});
+
+describe('service codes (Samsung GSPN vocabulary, §4.7)', () => {
+  it('POST /service-codes creates one; PATCH edits; DELETE soft-deletes', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/service-codes')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        kind: 'SYMPTOM',
+        code: 'T07-TESTSYM',
+        label: `${TEST_PREFIX} Test symptom`,
+        category: 'HHP',
+        sort_order: 99,
+      })
+      .expect(201);
+    const body = res.body as {
+      id: string;
+      kind: string;
+      category: string | null;
+      sort_order: number;
+    };
+    createdServiceCodeId = body.id;
+    expect(body.kind).toBe('SYMPTOM');
+    expect(body.category).toBe('HHP');
+    expect(body.sort_order).toBe(99);
+
+    await request(app.getHttpServer())
+      .patch(`/api/v1/service-codes/${createdServiceCodeId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ label: `${TEST_PREFIX} Test symptom (edited)` })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/v1/service-codes/${createdServiceCodeId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(204);
+
+    const row = await raw.serviceCode.findUniqueOrThrow({
+      where: { id: createdServiceCodeId },
+    });
+    expect(row.deletedAt).not.toBeNull();
+  });
+
+  it('the SAME code under two kinds is allowed; a repeat within one kind is 409', async () => {
+    // GSPN really does reuse "03" across axes — uniqueness is per (kind, code),
+    // so the table must accept the collision that a flat code list would reject.
+    const seededDefect = await raw.serviceCode.findFirstOrThrow({
+      where: { companyId, kind: 'DEFECT', code: '03', deletedAt: null },
+    });
+    expect(seededDefect.label).toBe('Device Lock');
+
+    const asSymptom = await request(app.getHttpServer())
+      .post('/api/v1/service-codes')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        kind: 'SYMPTOM',
+        code: '03',
+        label: `${TEST_PREFIX} Device Password`,
+      })
+      .expect(201);
+    const symptomId = (asSymptom.body as { id: string }).id;
+
+    try {
+      await request(app.getHttpServer())
+        .post('/api/v1/service-codes')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ kind: 'SYMPTOM', code: '03', label: 'duplicate within kind' })
+        .expect(409);
+    } finally {
+      await raw.auditLog.deleteMany({ where: { entityId: symptomId } });
+      await raw.serviceCode.deleteMany({ where: { id: symptomId } });
+    }
+  });
+
+  it('GET /service-codes?kind= filters to one axis, and seeded GSPN codes are present', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/service-codes?kind=REPAIR')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const body = res.body as {
+      data: Array<{ kind: string; code: string; label: string }>;
+    };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.every((c) => c.kind === 'REPAIR')).toBe(true);
+    expect(body.data).toContainEqual(
+      expect.objectContaining({
+        code: 'A01',
+        label: 'Electrical parts replacement',
+      }),
+    );
+  });
+
+  it('GET /service-codes/active is readable with only job.read (the pickers must resolve for a technician)', async () => {
+    const techToken = await login(TECH_EMAIL);
+    // The same technician is refused the config.read management list…
+    await request(app.getHttpServer())
+      .get('/api/v1/service-codes')
+      .set('Authorization', `Bearer ${techToken}`)
+      .expect(403);
+    // …but can still populate the job form's code pickers.
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/service-codes/active?kind=SYMPTOM')
+      .set('Authorization', `Bearer ${techToken}`)
+      .expect(200);
+    const body = res.body as {
+      data: Array<{ kind: string; active: boolean }>;
+    };
+    expect(body.data.length).toBeGreaterThan(0);
+    expect(body.data.every((c) => c.kind === 'SYMPTOM' && c.active)).toBe(true);
   });
 });
 

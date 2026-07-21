@@ -92,6 +92,54 @@ enum WarrantyStatus {
   UNKNOWN
 }
 
+/// How the device reached us (Samsung SO "Service Type"). CARRY_IN is the
+/// front-desk default; ADH is Accidental Damage Handling.
+enum ServiceType {
+  CARRY_IN
+  PICKUP
+  IN_HOME
+  INITIAL_INSTALL
+  INSPECTION
+  INSURANCE
+  PRODUCT_RETURN
+  RETURN_HANDLING
+  STOCK_REPAIR
+  ADH
+}
+
+/// What the warranty actually PAYS FOR — the billing consequence of
+/// `WarrantyStatus`, mirroring the four boxes on Samsung's job card.
+/// Invoicing reads THIS, never `warrantyStatus`: LABOUR_ONLY still bills the
+/// customer for parts, PARTS_ONLY still bills them for labour.
+enum JobCoverage {
+  FULL
+  LABOUR_ONLY
+  PARTS_ONLY
+  NONE
+}
+
+/// WHY a job was ruled in/out of warranty — the evidence behind the decision,
+/// which is what an audit or a rejected claim turns on. REGISTRATION = matched
+/// a warranty_registration on serial; PURCHASE_DATE = derived from the device's
+/// purchase date; MANUAL = front desk asserted it; GOODWILL = out of warranty
+/// but repaired free as a favour (the shop absorbs the cost).
+enum WarrantySource {
+  REGISTRATION
+  PURCHASE_DATE
+  MANUAL
+  GOODWILL
+}
+
+/// The six GSPN diagnostic code axes sharing the `service_codes` table.
+enum ServiceCodeKind {
+  CONDITION
+  SYMPTOM
+  DEFECT
+  DEFECT_TYPE
+  DEFECT_BLOCK
+  REPAIR
+}
+
 /// Account classes of the chart of accounts (§4.9 / E1).
 enum AccountType {
   ASSET
@@ -144,6 +192,7 @@ model Company {
   paymentMethods PaymentMethod[]
   faultCodes     FaultCode[]
   repairActions  RepairAction[]
+  serviceCodes   ServiceCode[]
   taxRates       TaxRate[]
   approvals      Approval[]
   approvalRules  ApprovalRule[]
@@ -180,6 +229,7 @@ model Company {
   payments              Payment[]
   // Task 4.1 (§4.7): warranty claims to Samsung.
   warrantyClaims        WarrantyClaim[]
+  warrantyClaimLines    WarrantyClaimLine[]
   warrantyRegistrations WarrantyRegistration[]
   products              Product[]
   // E17: per-company overrides of the default role × permission matrix.
@@ -283,6 +333,8 @@ model User {
   updatedFaultCodes     FaultCode[]     @relation("FaultCodeUpdatedBy")
   createdRepairActions  RepairAction[]  @relation("RepairActionCreatedBy")
   updatedRepairActions  RepairAction[]  @relation("RepairActionUpdatedBy")
+  createdServiceCodes   ServiceCode[]   @relation("ServiceCodeCreatedBy")
+  updatedServiceCodes   ServiceCode[]   @relation("ServiceCodeUpdatedBy")
   createdTaxRates       TaxRate[]       @relation("TaxRateCreatedBy")
   updatedTaxRates       TaxRate[]       @relation("TaxRateUpdatedBy")
   createdCustomers      Customer[]      @relation("CustomerCreatedBy")
@@ -303,11 +355,13 @@ model User {
   postedJournalEntries JournalEntry[] @relation("JournalEntryPostedBy")
 
   // Task 1.3 (§4.3): the several actor roles a user plays on a job.
-  bookedJobs     Job[] @relation("JobBookedBy")
-  engineerJobs   Job[] @relation("JobAssignedEngineer")
-  dispatchedJobs Job[] @relation("JobDispatchedBy")
-  createdJobs    Job[] @relation("JobCreatedBy")
-  updatedJobs    Job[] @relation("JobUpdatedBy")
+  bookedJobs          Job[] @relation("JobBookedBy")
+  engineerJobs        Job[] @relation("JobAssignedEngineer")
+  dispatchedJobs      Job[] @relation("JobDispatchedBy")
+  createdJobs         Job[] @relation("JobCreatedBy")
+  updatedJobs         Job[] @relation("JobUpdatedBy")
+  /// §4.7: who ruled this job in/out of warranty.
+  warrantyDecidedJobs Job[] @relation("JobWarrantyDecidedBy")
 
   // Task 1.4 (§4.12): who uploaded a file.
   uploadedAttachments Attachment[] @relation("AttachmentUploadedBy")
@@ -352,6 +406,8 @@ model User {
   // Task 4.1 (§4.7): warranty claims created/updated by this user.
   createdWarrantyClaims        WarrantyClaim[]        @relation("WarrantyClaimCreatedBy")
   updatedWarrantyClaims        WarrantyClaim[]        @relation("WarrantyClaimUpdatedBy")
+  createdWarrantyClaimLines    WarrantyClaimLine[]    @relation("WarrantyClaimLineCreatedBy")
+  updatedWarrantyClaimLines    WarrantyClaimLine[]    @relation("WarrantyClaimLineUpdatedBy")
   createdWarrantyRegistrations WarrantyRegistration[] @relation("WarrantyRegCreatedBy")
   updatedWarrantyRegistrations WarrantyRegistration[] @relation("WarrantyRegUpdatedBy")
   createdProducts              Product[]              @relation("ProductCreatedBy")
@@ -728,22 +784,25 @@ model Customer {
 /// `model` stays free-text (legacy data is messy); `model_id` is the
 /// normalised link to `models` when resolvable.
 model Device {
-  id         String         @id @default(uuid()) @db.Char(36)
-  companyId  String         @map("company_id") @db.Char(36)
-  customerId String         @map("customer_id") @db.Char(36)
-  brand      String         @default("Samsung") @db.VarChar(100)
-  model      String?        @db.VarChar(150)
-  modelId    String?        @map("model_id") @db.Char(36)
-  category   DeviceCategory
+  id           String         @id @default(uuid()) @db.Char(36)
+  companyId    String         @map("company_id") @db.Char(36)
+  customerId   String         @map("customer_id") @db.Char(36)
+  brand        String         @default("Samsung") @db.VarChar(100)
+  model        String?        @db.VarChar(150)
+  modelId      String?        @map("model_id") @db.Char(36)
+  category     DeviceCategory
   /// Flexible retail TYPE label (any brand/product): "Mobile", "Watch", "TV",
   /// "Laptop", "AC", "Two-Wheeler"… `category` stays the Samsung-repair grouping
   /// (HHP/CE/AC/REF/OTHER); device_type is the free display type for the register.
-  deviceType String?        @map("device_type") @db.VarChar(50)
+  deviceType   String?        @map("device_type") @db.VarChar(50)
   /// IMEI or serial number; nullable (some CE/AC units lack one). Stored
   /// cleaned (scientific-notation legacy values expanded, separators
   /// stripped, uppercased) — see normalizeImeiSerial().
-  imeiSerial String?        @map("imei_serial") @db.VarChar(100)
-  color      String?        @db.VarChar(50)
+  imeiSerial   String?        @map("imei_serial") @db.VarChar(100)
+  color        String?        @db.VarChar(50)
+  /// When the customer bought it (Samsung prints this on the job card). The
+  /// primary input to the IW/OW ruling when no warranty_registration matches.
+  purchaseDate DateTime?      @map("purchase_date") @db.Date
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -928,6 +987,51 @@ model RepairAction {
   @@map("repair_actions")
 }
 
+/// Samsung GSPN diagnostic vocabulary (§4.7) — six code axes in one table,
+/// discriminated by `kind`, because GSPN rejects a warranty claim that is
+/// missing any of them (Condition, Symptom, Defect, Defect Type, Defect Block,
+/// Repair).
+///
+/// Deliberately SEPARATE from `fault_codes` / `repair_actions`: those are the
+/// customer-facing complaint vocabulary the front desk picks from and the job
+/// card prints, priced in local currency. These are the Samsung-facing
+/// engineering codes that travel on the claim. Same shape, different readers,
+/// different lifecycles — merging them would force one list to serve both.
+///
+/// `category` optionally narrows a code to one device grouping; NULL applies
+/// to all.
+model ServiceCode {
+  id        String          @id @default(uuid()) @db.Char(36)
+  companyId String          @map("company_id") @db.Char(36)
+  kind      ServiceCodeKind
+  code      String          @db.VarChar(30)
+  label     String          @db.VarChar(255)
+  category  DeviceCategory?
+  sortOrder Int             @default(0) @map("sort_order")
+  active    Boolean         @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+  createdBy   User?     @relation("ServiceCodeCreatedBy", fields: [createdById], references: [id])
+  updatedBy   User?     @relation("ServiceCodeUpdatedBy", fields: [updatedById], references: [id])
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  conditionJobs   Job[] @relation("JobConditionCode")
+  symptomJobs     Job[] @relation("JobSymptomCode")
+  defectJobs      Job[] @relation("JobDefectCode")
+  defectTypeJobs  Job[] @relation("JobDefectType")
+  defectBlockJobs Job[] @relation("JobDefectBlock")
+  repairJobs      Job[] @relation("JobRepairCode")
+
+  @@unique([companyId, kind, code])
+  @@index([companyId, kind, active])
+  @@map("service_codes")
+}
+
 model TaxRate {
   id        String  @id @default(uuid()) @db.Char(36)
   companyId String  @map("company_id") @db.Char(36)
@@ -966,34 +1070,66 @@ model TaxRate {
 // (warranty_claims / invoices tables don't exist yet) — plain CHAR(36) with
 // NO FK, mirroring how those links are backfilled once those modules land.
 model Job {
-  id                 String         @id @default(uuid()) @db.Char(36)
-  companyId          String         @map("company_id") @db.Char(36)
+  id                     String          @id @default(uuid()) @db.Char(36)
+  companyId              String          @map("company_id") @db.Char(36)
   /// Human-friendly, branch-prefixed, unique per company: `DAR-2026-000123`.
-  jobNo              String         @map("job_no") @db.VarChar(50)
+  jobNo                  String          @map("job_no") @db.VarChar(50)
   /// Samsung SO / job-card number — stored as a CLEAN string (Excel
   /// scientific-notation like `4.29260291E9` is expanded on intake).
-  soNumber           String?        @map("so_number") @db.VarChar(100)
-  branchId           String         @map("branch_id") @db.Char(36)
-  customerId         String         @map("customer_id") @db.Char(36)
-  deviceId           String         @map("device_id") @db.Char(36)
-  bookedById         String         @map("booked_by") @db.Char(36)
-  assignedEngineerId String?        @map("assigned_engineer_id") @db.Char(36)
-  warrantyStatus     WarrantyStatus @default(UNKNOWN) @map("warranty_status")
-  faultReported      String?        @map("fault_reported") @db.Text
-  faultCodeId        String?        @map("fault_code_id") @db.Char(36)
-  techReport         String?        @map("tech_report") @db.Text
+  soNumber               String?         @map("so_number") @db.VarChar(100)
+  branchId               String          @map("branch_id") @db.Char(36)
+  customerId             String          @map("customer_id") @db.Char(36)
+  deviceId               String          @map("device_id") @db.Char(36)
+  bookedById             String          @map("booked_by") @db.Char(36)
+  assignedEngineerId     String?         @map("assigned_engineer_id") @db.Char(36)
+  warrantyStatus         WarrantyStatus  @default(UNKNOWN) @map("warranty_status")
+  serviceType            ServiceType     @default(CARRY_IN) @map("service_type")
+  /// The BILLING consequence of the warranty ruling — see {@link JobCoverage}.
+  /// Invoicing and the `ow_quote_approved` workflow guard read this field.
+  coverage               JobCoverage     @default(NONE)
+  /// Evidence behind the ruling, plus who made it and when. A bare dropdown
+  /// pick is indistinguishable from a registration match without this.
+  warrantySource         WarrantySource? @map("warranty_source")
+  warrantyRegistrationId String?         @map("warranty_registration_id") @db.Char(36)
+  warrantyDecidedById    String?         @map("warranty_decided_by") @db.Char(36)
+  warrantyDecidedAt      DateTime?       @map("warranty_decided_at") @db.DateTime(3)
+  faultReported          String?         @map("fault_reported") @db.Text
+  faultCodeId            String?         @map("fault_code_id") @db.Char(36)
+  techReport             String?         @map("tech_report") @db.Text
+
+  /// GSPN diagnostic codes (§4.7) — all six are required to file a claim.
+  /// FKs → service_codes; `repairDescription` is the free-text counterpart to
+  /// `repairCode` that GSPN prints as "Repair Description".
+  conditionCodeId   String? @map("condition_code_id") @db.Char(36)
+  symptomCodeId     String? @map("symptom_code_id") @db.Char(36)
+  defectCodeId      String? @map("defect_code_id") @db.Char(36)
+  defectTypeId      String? @map("defect_type_id") @db.Char(36)
+  defectBlockId     String? @map("defect_block_id") @db.Char(36)
+  repairCodeId      String? @map("repair_code_id") @db.Char(36)
+  repairDescription String? @map("repair_description") @db.Text
+
+  /// Accessories handed in WITH the device (e.g. "SIM TRAY") — job-card T&C 2
+  /// makes these a custody liability, so they are recorded at intake.
+  accessoriesHeld     String?   @map("accessories_held") @db.VarChar(500)
+  /// Booked slot for PICKUP / IN_HOME service types.
+  appointmentAt       DateTime? @map("appointment_at") @db.DateTime(3)
+  /// Promised return date shown to the customer on the job card.
+  returnByDate        DateTime? @map("return_by_date") @db.Date
+  /// Our own 90-day guarantee on the repair (job-card T&C 10) — completion
+  /// + 90d. Makes a return visit recognisable as rework, not a fresh paid job.
+  repairWarrantyUntil DateTime? @map("repair_warranty_until") @db.Date
   /// FK → workflow_states — the job's current lifecycle status (§4.10).
-  stateId            String         @map("state_id") @db.Char(36)
-  receivedAt         DateTime       @map("received_at") @db.DateTime(3)
-  readyAt            DateTime?      @map("ready_at") @db.DateTime(3)
-  dispatchedAt       DateTime?      @map("dispatched_at") @db.DateTime(3)
-  dispatchedById     String?        @map("dispatched_by") @db.Char(36)
-  receivedByCustomer String?        @map("received_by_customer") @db.VarChar(255)
-  waybillNo          String?        @map("waybill_no") @db.VarChar(100)
+  stateId             String    @map("state_id") @db.Char(36)
+  receivedAt          DateTime  @map("received_at") @db.DateTime(3)
+  readyAt             DateTime? @map("ready_at") @db.DateTime(3)
+  dispatchedAt        DateTime? @map("dispatched_at") @db.DateTime(3)
+  dispatchedById      String?   @map("dispatched_by") @db.Char(36)
+  receivedByCustomer  String?   @map("received_by_customer") @db.VarChar(255)
+  waybillNo           String?   @map("waybill_no") @db.VarChar(100)
   /// Reserved for later phases (no FK — target tables don't exist yet).
-  claimId            String?        @map("claim_id") @db.Char(36)
-  invoiceId          String?        @map("invoice_id") @db.Char(36)
-  notes              String?        @db.Text
+  claimId             String?   @map("claim_id") @db.Char(36)
+  invoiceId           String?   @map("invoice_id") @db.Char(36)
+  notes               String?   @db.Text
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -1013,6 +1149,16 @@ model Job {
   createdBy        User?         @relation("JobCreatedBy", fields: [createdById], references: [id])
   updatedBy        User?         @relation("JobUpdatedBy", fields: [updatedById], references: [id])
 
+  warrantyRegistration WarrantyRegistration? @relation(fields: [warrantyRegistrationId], references: [id])
+  warrantyDecidedBy    User?                 @relation("JobWarrantyDecidedBy", fields: [warrantyDecidedById], references: [id])
+
+  conditionCode ServiceCode? @relation("JobConditionCode", fields: [conditionCodeId], references: [id])
+  symptomCode   ServiceCode? @relation("JobSymptomCode", fields: [symptomCodeId], references: [id])
+  defectCode    ServiceCode? @relation("JobDefectCode", fields: [defectCodeId], references: [id])
+  defectType    ServiceCode? @relation("JobDefectType", fields: [defectTypeId], references: [id])
+  defectBlock   ServiceCode? @relation("JobDefectBlock", fields: [defectBlockId], references: [id])
+  repairCode    ServiceCode? @relation("JobRepairCode", fields: [repairCodeId], references: [id])
+
   // Task 2.2 (§4.5): parts reserved/consumed on this job.
   parts          JobPart[]
   // Task 3.1 (§4.6): invoices for this repair.
@@ -1024,8 +1170,10 @@ model Job {
   @@index([companyId, branchId, stateId])
   @@index([companyId, assignedEngineerId])
   @@index([companyId, receivedAt])
+  @@index([companyId, coverage])
   @@index([customerId])
   @@index([deviceId])
+  @@index([warrantyRegistrationId])
   @@map("jobs")
 }
 
@@ -1219,16 +1367,17 @@ model Part {
   createdBy   User?     @relation("PartCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("PartUpdatedBy", fields: [updatedById], references: [id])
 
-  company           Company             @relation(fields: [companyId], references: [id])
-  preferredSupplier Supplier?           @relation(fields: [preferredSupplierId], references: [id])
-  inventory         Inventory[]
-  movements         StockMovement[]
-  jobParts          JobPart[]
-  transferLines     StockTransferLine[]
-  poLines           PurchaseOrderLine[]
-  grnLines          GrnLine[]
-  units             PartUnit[]
-  invoiceLines      InvoiceLine[]
+  company            Company             @relation(fields: [companyId], references: [id])
+  preferredSupplier  Supplier?           @relation(fields: [preferredSupplierId], references: [id])
+  inventory          Inventory[]
+  movements          StockMovement[]
+  jobParts           JobPart[]
+  transferLines      StockTransferLine[]
+  poLines            PurchaseOrderLine[]
+  grnLines           GrnLine[]
+  warrantyClaimLines WarrantyClaimLine[]
+  units              PartUnit[]
+  invoiceLines       InvoiceLine[]
 
   @@unique([companyId, partNumber])
   @@index([companyId, category])
@@ -1962,13 +2111,40 @@ model WarrantyClaim {
 
   /// Samsung claim number (e.g. `691010338615`) — unknown until submitted, so
   /// nullable; unique per company once set (MySQL allows multiple NULLs).
-  claimNo    String?     @map("claim_no") @db.VarChar(100)
-  labourCode LabourCode? @map("labour_code")
+  claimNo      String?     @map("claim_no") @db.VarChar(100)
+  /// GSPN's other two identifiers for the same claim: `samsungRefNo` is the
+  /// Samsung-side reference and `ticketNo` the inbound tracking ticket. Both
+  /// appear on the Warranty Claim Detail and are how Samsung's remittance
+  /// advice is matched back to a claim.
+  samsungRefNo String?     @map("samsung_ref_no") @db.VarChar(100)
+  ticketNo     String?     @map("ticket_no") @db.VarChar(100)
+  /// GSPN's own status string, verbatim (e.g. "20-Data closed") — kept raw
+  /// alongside our normalised `status` because Samsung revises this vocabulary
+  /// without notice and support queries quote it exactly.
+  gspnStatus   String?     @map("gspn_status") @db.VarChar(50)
+  labourCode   LabourCode? @map("labour_code")
 
   /// BIGINT USD minor units (cents). `reimbursedAmountUsd` is the reconciled
   /// value Samsung actually paid (may differ from the claim), set on PAID.
   claimAmountUsd      BigInt  @map("claim_amount_usd") @db.BigInt
   reimbursedAmountUsd BigInt? @map("reimbursed_amount_usd") @db.BigInt
+
+  /// The claim total broken out as GSPN settles it (Labour + Part + Shipping +
+  /// Tax). `claimAmountUsd` stays authoritative; these exist so a short payment
+  /// is diagnosable — without them a reimbursement gap has no attributable
+  /// cause. Claims migrated from before this split carry all-zero components.
+  labourAmountUsd   BigInt @default(0) @map("labour_amount_usd") @db.BigInt
+  partsAmountUsd    BigInt @default(0) @map("parts_amount_usd") @db.BigInt
+  shippingAmountUsd BigInt @default(0) @map("shipping_amount_usd") @db.BigInt
+  taxAmountUsd      BigInt @default(0) @map("tax_amount_usd") @db.BigInt
+
+  /// GSPN's own repair milestones. These duplicate the job's receivedAt /
+  /// readyAt / dispatchedAt by design: Samsung validates a claim against the
+  /// dates AS FILED, which can be corrected on the portal after the fact
+  /// without rewriting the job's actual history.
+  repairReceivedAt DateTime? @map("repair_received_at") @db.DateTime(3)
+  completedAt      DateTime? @map("completed_at") @db.DateTime(3)
+  deliveredAt      DateTime? @map("delivered_at") @db.DateTime(3)
 
   status      WarrantyClaimStatus @default(DRAFT)
   submittedAt DateTime?           @map("submitted_at") @db.DateTime(3)
@@ -1987,11 +2163,66 @@ model WarrantyClaim {
   createdBy User?   @relation("WarrantyClaimCreatedBy", fields: [createdById], references: [id])
   updatedBy User?   @relation("WarrantyClaimUpdatedBy", fields: [updatedById], references: [id])
 
+  lines WarrantyClaimLine[]
+
   @@unique([companyId, claimNo])
   @@index([companyId, status])
   @@index([companyId, branchId, status])
+  @@index([companyId, samsungRefNo])
   @@index([jobId])
   @@map("warranty_claims")
+}
+
+/// One part claimed against Samsung on a warranty claim (§4.7).
+///
+/// NOT `job_parts`: that table records what was physically reserved/consumed
+/// from OUR stock at OUR sell price in TZS. This records what Samsung agreed to
+/// REIMBURSE, in USD minor units, at their part numbering — the two diverge
+/// routinely (a part fitted may be claimed at a different price, or not at all).
+///
+/// `partNo` is denormalised alongside `partId` on purpose: a filed claim must
+/// stay legible years later even if the local catalogue renames or delists the
+/// part, and Samsung part numbers are theirs to change, not ours.
+model WarrantyClaimLine {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  claimId   String @map("claim_id") @db.Char(36)
+  /// 1-based position as it appears on the GSPN claim detail.
+  lineNo    Int    @map("line_no")
+
+  /// Link to our catalogue when the part is one we stock; NULL for parts
+  /// claimed that never passed through our inventory.
+  partId      String? @map("part_id") @db.Char(36)
+  partNo      String  @map("part_no") @db.VarChar(100)
+  description String? @db.VarChar(500)
+  location    String? @db.VarChar(100)
+
+  qty          Int    @default(1)
+  /// USD minor units (cents), like every other figure on the claim.
+  unitPriceUsd BigInt @map("unit_price_usd") @db.BigInt
+  amountUsd    BigInt @map("amount_usd") @db.BigInt
+
+  /// Serial of the specific unit fitted, where the part is serialised.
+  partSerialNo String? @map("part_serial_no") @db.VarChar(100)
+  /// Samsung's invoice reference for the part, once billed.
+  invoiceNo    String? @map("invoice_no") @db.VarChar(100)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company       @relation(fields: [companyId], references: [id])
+  claim     WarrantyClaim @relation(fields: [claimId], references: [id])
+  part      Part?         @relation(fields: [partId], references: [id])
+  createdBy User?         @relation("WarrantyClaimLineCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?         @relation("WarrantyClaimLineUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([claimId, lineNo])
+  @@index([companyId])
+  @@index([partId])
+  @@map("warranty_claim_lines")
 }
 
 // ---------------------------------------------------------------------------
@@ -2052,6 +2283,9 @@ model WarrantyRegistration {
   invoice   Invoice?  @relation(fields: [invoiceId], references: [id])
   createdBy User?     @relation("WarrantyRegCreatedBy", fields: [createdById], references: [id])
   updatedBy User?     @relation("WarrantyRegUpdatedBy", fields: [updatedById], references: [id])
+
+  /// Repair jobs whose warranty ruling was justified by THIS registration.
+  jobs Job[]
 
   @@index([companyId, serialNo])
   @@index([companyId, status])

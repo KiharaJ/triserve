@@ -5,6 +5,7 @@ import {
   FaultCodesController,
   PaymentMethodsController,
   RepairActionsController,
+  ServiceCodesController,
   TaxRatesController,
 } from './config-tables.controller';
 import { ConfigTablesService } from './config-tables.service';
@@ -19,6 +20,7 @@ import { ConfigTablesService } from './config-tables.service';
   controllers: [
     PaymentMethodsController,
     FaultCodesController,
+    ServiceCodesController,
     RepairActionsController,
     TaxRatesController,
     CurrenciesController,

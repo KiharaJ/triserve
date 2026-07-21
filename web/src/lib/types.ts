@@ -179,6 +179,74 @@ export interface AuditLogEntry {
 
 export type DeviceCategory = 'HHP' | 'CE' | 'AC' | 'REF' | 'OTHER'
 export type WarrantyStatus = 'IW' | 'OW' | 'GOODWILL' | 'UNKNOWN'
+
+/** How the device reached us — Samsung's "Service Type" (§4.7). */
+export type ServiceType =
+  | 'CARRY_IN'
+  | 'PICKUP'
+  | 'IN_HOME'
+  | 'INITIAL_INSTALL'
+  | 'INSPECTION'
+  | 'INSURANCE'
+  | 'PRODUCT_RETURN'
+  | 'RETURN_HANDLING'
+  | 'STOCK_REPAIR'
+  | 'ADH'
+
+/**
+ * What the warranty PAYS FOR — the four boxes on Samsung's job card, and the
+ * field that decides who is billed. Distinct from `WarrantyStatus`, which is
+ * only the IW/OW fact.
+ */
+export type JobCoverage = 'FULL' | 'LABOUR_ONLY' | 'PARTS_ONLY' | 'NONE'
+
+/** The evidence behind a warranty ruling (§4.7). */
+export type WarrantySource = 'REGISTRATION' | 'PURCHASE_DATE' | 'MANUAL' | 'GOODWILL'
+
+/** The six GSPN diagnostic code axes. */
+export type ServiceCodeKind =
+  | 'CONDITION'
+  | 'SYMPTOM'
+  | 'DEFECT'
+  | 'DEFECT_TYPE'
+  | 'DEFECT_BLOCK'
+  | 'REPAIR'
+
+export const SERVICE_TYPES: { value: ServiceType; label: string }[] = [
+  { value: 'CARRY_IN', label: 'Carry In' },
+  { value: 'PICKUP', label: 'Pickup Service' },
+  { value: 'IN_HOME', label: 'In Home' },
+  { value: 'INITIAL_INSTALL', label: 'Initial Installation' },
+  { value: 'INSPECTION', label: 'Inspection' },
+  { value: 'INSURANCE', label: 'Insurance Service' },
+  { value: 'PRODUCT_RETURN', label: 'Product Return' },
+  { value: 'RETURN_HANDLING', label: 'Return Handling' },
+  { value: 'STOCK_REPAIR', label: 'Stock Repair' },
+  { value: 'ADH', label: 'Accidental Damage Handling' },
+]
+
+/** Labels spell out WHO PAYS — "Labour only" alone reads ambiguously. */
+export const JOB_COVERAGES: { value: JobCoverage; label: string }[] = [
+  { value: 'FULL', label: 'Full warranty — customer pays nothing' },
+  { value: 'LABOUR_ONLY', label: 'Labour only — customer pays for parts' },
+  { value: 'PARTS_ONLY', label: 'Parts only — customer pays for labour' },
+  { value: 'NONE', label: 'Out of warranty — customer pays' },
+]
+
+export const coverageLabel = (c: JobCoverage): string =>
+  JOB_COVERAGES.find((o) => o.value === c)?.label ?? c
+
+export const serviceTypeLabel = (t: ServiceType): string =>
+  SERVICE_TYPES.find((o) => o.value === t)?.label ?? t
+
+/**
+ * The coverage implied by a warranty ruling, mirroring the API's
+ * `defaultCoverage()` (api/src/modules/jobs/jobs.service.ts) so the form shows
+ * the same answer the server would pick.
+ */
+export function defaultCoverageFor(status: WarrantyStatus): JobCoverage {
+  return status === 'IW' || status === 'GOODWILL' ? 'FULL' : 'NONE'
+}
 export type PreferredLanguageCode = 'EN' | 'SW'
 
 export type CustomerType = 'INDIVIDUAL' | 'BUSINESS' | 'DEALER'
@@ -245,6 +313,13 @@ export interface FaultCodeWire {
   updated_at: string
 }
 
+/** One Samsung GSPN diagnostic code — `kind` disambiguates the shared table. */
+export interface ServiceCodeWire extends FaultCodeWire {
+  kind: ServiceCodeKind
+  category: DeviceCategory | null
+  sort_order: number
+}
+
 /** GET /jobs list item — no nested relations (ids only); see JobDetailWire. */
 export interface JobWire {
   id: string
@@ -256,9 +331,26 @@ export interface JobWire {
   booked_by: string
   assigned_engineer_id: string | null
   warranty_status: WarrantyStatus
+  service_type: ServiceType
+  coverage: JobCoverage
+  warranty_source: WarrantySource | null
+  warranty_registration_id: string | null
+  warranty_decided_by: string | null
+  warranty_decided_at: string | null
   fault_reported: string | null
   fault_code_id: string | null
   tech_report: string | null
+  condition_code_id: string | null
+  symptom_code_id: string | null
+  defect_code_id: string | null
+  defect_type_id: string | null
+  defect_block_id: string | null
+  repair_code_id: string | null
+  repair_description: string | null
+  accessories_held: string | null
+  appointment_at: string | null
+  return_by_date: string | null
+  repair_warranty_until: string | null
   state_id: string
   state_code: string
   state_label: string
@@ -299,6 +391,7 @@ export interface JobDeviceSummary {
   category: string
   imei_serial: string | null
   color: string | null
+  purchase_date: string | null
 }
 
 /** GET /jobs/{id} — full detail incl. relations + legal next moves. */

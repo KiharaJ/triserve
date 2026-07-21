@@ -18,6 +18,7 @@ import {
   PrismaClient,
   type AccountType,
   type ApprovalType,
+  type ServiceCodeKind,
 } from '@prisma/client';
 import {
   ROLE_DESCRIPTIONS,
@@ -92,6 +93,46 @@ const CHART_OF_ACCOUNTS: Array<{
   { code: '4000', name: 'Repair Revenue', type: 'REVENUE' },
   { code: '4010', name: 'Warranty Revenue', type: 'REVENUE' },
   { code: '5000', name: 'COGS', type: 'EXPENSE' },
+];
+
+/**
+ * Samsung GSPN diagnostic codes (§4.7) — a STARTER set, not the full list.
+ *
+ * Every code here is one observed on a real Samsung document (the GSPN
+ * Warranty Claim Detail and Service Order sheet for SM-A065F). Samsung's
+ * complete code list is far larger and is theirs to publish — it is imported
+ * per company via the service-codes admin endpoints rather than invented here,
+ * because a wrong code does not fail loudly: GSPN rejects the claim weeks
+ * later, after the repair is already given away.
+ *
+ * DEFECT_BLOCK has no entries: both source documents left it unselected, so
+ * there is nothing to seed that would not be a guess.
+ *
+ * All are `HHP` — both documents are handsets.
+ */
+const SERVICE_CODES: Array<{
+  kind: ServiceCodeKind;
+  code: string;
+  label: string;
+  sortOrder: number;
+}> = [
+  { kind: 'CONDITION', code: '1', label: 'Defect', sortOrder: 10 },
+  {
+    kind: 'SYMPTOM',
+    code: 'T83',
+    label: 'USB connectivity problem',
+    sortOrder: 10,
+  },
+  { kind: 'SYMPTOM', code: 'L3', label: 'Lock', sortOrder: 20 },
+  { kind: 'DEFECT', code: 'Q', label: 'Short', sortOrder: 10 },
+  { kind: 'DEFECT', code: '03', label: 'Device Lock', sortOrder: 20 },
+  { kind: 'DEFECT_TYPE', code: 'L2', label: 'Level 2 Service', sortOrder: 10 },
+  {
+    kind: 'REPAIR',
+    code: 'A01',
+    label: 'Electrical parts replacement',
+    sortOrder: 10,
+  },
 ];
 
 /**
@@ -298,6 +339,36 @@ async function main(): Promise<void> {
       },
     });
     console.log(`account:        ${account.code} — ${account.name} [${account.type}]`);
+  }
+
+  // --- Samsung GSPN diagnostic codes (upsert by company_id + kind + code,
+  // --- §4.7) ----------------------------------------------------------------
+  for (const c of SERVICE_CODES) {
+    const sc = await prisma.serviceCode.upsert({
+      where: {
+        companyId_kind_code: {
+          companyId: company.id,
+          kind: c.kind,
+          code: c.code,
+        },
+      },
+      update: {
+        label: c.label,
+        category: 'HHP',
+        sortOrder: c.sortOrder,
+        active: true,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        kind: c.kind,
+        code: c.code,
+        label: c.label,
+        category: 'HHP',
+        sortOrder: c.sortOrder,
+      },
+    });
+    console.log(`service code:   ${sc.kind} ${sc.code} — ${sc.label}`);
   }
 
   // --- Default workflow (upsert states by company_id + code, then edges by

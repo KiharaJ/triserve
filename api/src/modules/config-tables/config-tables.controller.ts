@@ -24,6 +24,7 @@ import {
   type FaultCodeWire,
   type PaymentMethodWire,
   type RepairActionWire,
+  type ServiceCodeWire,
   type TaxRateWire,
 } from './config-tables.service';
 import {
@@ -32,11 +33,14 @@ import {
   CreateFaultCodeDto,
   CreatePaymentMethodDto,
   CreateRepairActionDto,
+  CreateServiceCodeDto,
   CreateTaxRateDto,
+  ServiceCodeListQueryDto,
   UpdateCurrencyDto,
   UpdateFaultCodeDto,
   UpdatePaymentMethodDto,
   UpdateRepairActionDto,
+  UpdateServiceCodeDto,
   UpdateTaxRateDto,
 } from './dto/config-tables.dto';
 
@@ -137,6 +141,78 @@ export class FaultCodesController {
     @CurrentUser() user: AuthUser,
   ): Promise<void> {
     return this.config.removeFaultCode(id, user);
+  }
+}
+
+/**
+ * Samsung GSPN diagnostic codes (§4.7). Managed like any config table, with
+ * one addition: `GET /service-codes/active` is readable by anyone who can read
+ * a job, because the job form's six code pickers must resolve for technicians
+ * and front desk — neither of whom holds `config.read`.
+ */
+@Controller('service-codes')
+@UseGuards(AuthGuard, PermissionsGuard)
+export class ServiceCodesController {
+  constructor(private readonly config: ConfigTablesService) {}
+
+  @Get()
+  @RequirePermissions('config.read')
+  list(
+    @Query() query: ServiceCodeListQueryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCodeWire>> {
+    return this.config.listServiceCodes(query, user);
+  }
+
+  /**
+   * Active codes for the job form's pickers, optionally narrowed to one kind
+   * and/or device category. The page size is deliberately generous: a client
+   * fetches the vocabulary once and groups it by kind, rather than paging.
+   */
+  @Get('active')
+  @RequirePermissions('job.read')
+  active(
+    @Query() query: ServiceCodeListQueryDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCodeWire>> {
+    return this.config.listServiceCodes(
+      {
+        ...query,
+        active: true,
+        page: query.page ?? 1,
+        page_size: query.page_size ?? 500,
+      },
+      user,
+    );
+  }
+
+  @Post()
+  @RequirePermissions('config.manage')
+  create(
+    @Body() dto: CreateServiceCodeDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ServiceCodeWire> {
+    return this.config.createServiceCode(dto, user);
+  }
+
+  @Patch(':id')
+  @RequirePermissions('config.manage')
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateServiceCodeDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ServiceCodeWire> {
+    return this.config.updateServiceCode(id, dto, user);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions('config.manage')
+  remove(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<void> {
+    return this.config.removeServiceCode(id, user);
   }
 }
 

@@ -459,24 +459,54 @@ describe('guard registry (§4.10 — pluggable business rules)', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('consults the ow_quote_approved stub on AWAITING_CUSTOMER_APPROVAL→IN_REPAIR', async () => {
+  it('consults ow_quote_approved on AWAITING_CUSTOMER_APPROVAL→IN_REPAIR and lets a FULLY covered job through', async () => {
     const spy = jest.spyOn(guards, 'ow_quote_approved');
+    const job = {
+      id: 'job-ctx-passthrough',
+      companyId,
+      coverage: 'FULL' as const,
+    };
     const check = await workflow.canTransition(
       companyId,
       'AWAITING_CUSTOMER_APPROVAL',
       'IN_REPAIR',
       techUser,
-      { job: { id: 'job-ctx-passthrough' } },
+      { job },
     );
-    expect(check.allowed).toBe(true); // stub always passes until POS lands
+    // FULL coverage = nothing to bill the customer, so no quote is required.
+    expect(check.allowed).toBe(true);
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        companyId,
-        user: techUser,
-        job: { id: 'job-ctx-passthrough' },
-      }),
+      expect.objectContaining({ companyId, user: techUser, job }),
     );
+  });
+
+  it('blocks a job the customer pays for until a REPAIR_OW quote exists', async () => {
+    // No invoice was raised against this job id, so the quote gate holds —
+    // this is job-card T&C 5/9: no unquoted chargeable work.
+    for (const coverage of ['NONE', 'LABOUR_ONLY', 'PARTS_ONLY'] as const) {
+      const check = await workflow.canTransition(
+        companyId,
+        'AWAITING_CUSTOMER_APPROVAL',
+        'IN_REPAIR',
+        techUser,
+        { job: { id: `job-unquoted-${coverage}`, companyId, coverage } },
+      );
+      expect(check.allowed).toBe(false);
+      expect(check.reason).toBe(
+        "Transition condition 'ow_quote_approved' not satisfied for AWAITING_CUSTOMER_APPROVAL → IN_REPAIR",
+      );
+    }
+  });
+
+  it('fails closed when the job context is missing entirely', async () => {
+    const check = await workflow.canTransition(
+      companyId,
+      'AWAITING_CUSTOMER_APPROVAL',
+      'IN_REPAIR',
+      techUser,
+    );
+    expect(check.allowed).toBe(false);
   });
 
   it('a failing guard blocks the move with a clear reason', async () => {

@@ -45,6 +45,9 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.PaymentMethod,
   Prisma.ModelName.FaultCode,
   Prisma.ModelName.RepairAction,
+  // §4.7: the Samsung GSPN diagnostic code vocabulary — company-level config
+  // like fault codes, shared by every branch.
+  Prisma.ModelName.ServiceCode,
   Prisma.ModelName.TaxRate,
   Prisma.ModelName.AuditLog,
   Prisma.ModelName.Approval,
@@ -115,6 +118,10 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // Task 4.1 (§4.7): warranty claims are company- AND branch-scoped (branch_id
   // = the filing branch, like jobs/invoices).
   Prisma.ModelName.WarrantyClaim,
+  // §4.7: claim part lines. Company-scoped for defense in depth; NOT
+  // branch-scoped (no branch_id — access is gated through the branch-scoped
+  // parent claim, exactly like JobPart through its job).
+  Prisma.ModelName.WarrantyClaimLine,
   // Retail: warranty registrations belong to the selling branch.
   Prisma.ModelName.WarrantyRegistration,
   // Retail catalogue: products are company-level master data (like parts).

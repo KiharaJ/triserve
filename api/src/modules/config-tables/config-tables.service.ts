@@ -7,9 +7,12 @@ import {
 import {
   Prisma,
   type Currency,
+  type DeviceCategory,
   type FaultCode,
   type PaymentMethod,
   type RepairAction,
+  type ServiceCode,
+  type ServiceCodeKind,
   type TaxRate,
 } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
@@ -21,11 +24,14 @@ import type {
   CreateFaultCodeDto,
   CreatePaymentMethodDto,
   CreateRepairActionDto,
+  CreateServiceCodeDto,
   CreateTaxRateDto,
+  ServiceCodeListQueryDto,
   UpdateCurrencyDto,
   UpdateFaultCodeDto,
   UpdatePaymentMethodDto,
   UpdateRepairActionDto,
+  UpdateServiceCodeDto,
   UpdateTaxRateDto,
 } from './dto/config-tables.dto';
 
@@ -50,6 +56,13 @@ export interface PaymentMethodWire {
 }
 
 export type FaultCodeWire = PaymentMethodWire;
+
+/** One GSPN diagnostic code (§4.7). `kind` is what disambiguates the table. */
+export interface ServiceCodeWire extends PaymentMethodWire {
+  kind: ServiceCodeKind;
+  category: DeviceCategory | null;
+  sort_order: number;
+}
 
 export interface RepairActionWire extends PaymentMethodWire {
   default_labour_price: string | null;
@@ -89,6 +102,20 @@ function pageArgs(query: ConfigListQueryDto): ListArgs {
 function mapUniqueCode(e: unknown, what: string): unknown {
   if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
     return new ConflictException(`A ${what} with this code already exists`);
+  }
+  return e;
+}
+
+/**
+ * Service codes are unique per (company, KIND, code), so the clash message
+ * must name the kind — the same code legitimately exists under two kinds
+ * (GSPN uses "03" for both a symptom and a defect).
+ */
+function mapUniqueServiceCode(e: unknown): unknown {
+  if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+    return new ConflictException(
+      'A service code with this kind and code already exists',
+    );
   }
   return e;
 }
@@ -272,6 +299,119 @@ export class ConfigTablesService {
   async removeFaultCode(id: string, user: AuthUser): Promise<void> {
     await this.mustExist(this.prisma.faultCode, id, 'Fault code');
     await this.prisma.faultCode.update({
+      where: { id },
+      data: { deletedAt: new Date(), active: false, updatedById: user.userId },
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Service codes (Samsung GSPN diagnostic vocabulary, §4.7)
+  // -------------------------------------------------------------------------
+
+  async listServiceCodes(
+    query: ServiceCodeListQueryDto,
+    user: AuthUser,
+  ): Promise<PaginatedResponse<ServiceCodeWire>> {
+    const { page, pageSize } = pageArgs(query);
+    const where: Prisma.ServiceCodeWhereInput = {
+      companyId: user.companyId,
+      deletedAt: null,
+      ...(query.kind !== undefined ? { kind: query.kind } : {}),
+      // A code with category NULL applies to every device grouping, so a
+      // category filter must INCLUDE the universal codes, not just the
+      // grouping-specific ones.
+      ...(query.category !== undefined
+        ? { OR: [{ category: query.category }, { category: null }] }
+        : {}),
+      ...(query.active !== undefined ? { active: query.active } : {}),
+      ...(query.q
+        ? {
+            AND: [
+              {
+                OR: [
+                  { code: { contains: query.q } },
+                  { label: { contains: query.q } },
+                ],
+              },
+            ],
+          }
+        : {}),
+    };
+    const [total, rows] = await Promise.all([
+      this.prisma.serviceCode.count({ where }),
+      this.prisma.serviceCode.findMany({
+        where,
+        // Grouped by kind so a mixed list stays readable, then by the
+        // curator's ordering, then code as a stable tiebreak.
+        orderBy: [{ kind: 'asc' }, { sortOrder: 'asc' }, { code: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      data: rows.map(serviceCodeToWire),
+      page,
+      page_size: pageSize,
+      total,
+    };
+  }
+
+  async createServiceCode(
+    dto: CreateServiceCodeDto,
+    user: AuthUser,
+  ): Promise<ServiceCodeWire> {
+    try {
+      const row = await this.prisma.serviceCode.create({
+        data: {
+          companyId: user.companyId,
+          kind: dto.kind,
+          // Samsung codes are case-significant as published (e.g. "T83", "Q",
+          // "A01") — stored verbatim, unlike our own uppercased config codes.
+          code: dto.code,
+          label: dto.label,
+          category: dto.category ?? null,
+          sortOrder: dto.sort_order ?? 0,
+          active: dto.active ?? true,
+          createdById: user.userId,
+          updatedById: user.userId,
+        },
+      });
+      return serviceCodeToWire(row);
+    } catch (e) {
+      throw mapUniqueServiceCode(e);
+    }
+  }
+
+  async updateServiceCode(
+    id: string,
+    dto: UpdateServiceCodeDto,
+    user: AuthUser,
+  ): Promise<ServiceCodeWire> {
+    await this.mustExist(this.prisma.serviceCode, id, 'Service code');
+    try {
+      const row = await this.prisma.serviceCode.update({
+        where: { id },
+        data: {
+          ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
+          ...(dto.code !== undefined ? { code: dto.code } : {}),
+          ...(dto.label !== undefined ? { label: dto.label } : {}),
+          ...(dto.category !== undefined ? { category: dto.category } : {}),
+          ...(dto.sort_order !== undefined
+            ? { sortOrder: dto.sort_order }
+            : {}),
+          ...(dto.active !== undefined ? { active: dto.active } : {}),
+          updatedById: user.userId,
+        },
+      });
+      return serviceCodeToWire(row);
+    } catch (e) {
+      throw mapUniqueServiceCode(e);
+    }
+  }
+
+  async removeServiceCode(id: string, user: AuthUser): Promise<void> {
+    await this.mustExist(this.prisma.serviceCode, id, 'Service code');
+    await this.prisma.serviceCode.update({
       where: { id },
       data: { deletedAt: new Date(), active: false, updatedById: user.userId },
     });
@@ -611,6 +751,20 @@ function faultCodeToWire(r: FaultCode): FaultCodeWire {
     id: r.id,
     code: r.code,
     label: r.label,
+    active: r.active,
+    created_at: r.createdAt.toISOString(),
+    updated_at: r.updatedAt.toISOString(),
+  };
+}
+
+function serviceCodeToWire(r: ServiceCode): ServiceCodeWire {
+  return {
+    id: r.id,
+    kind: r.kind,
+    code: r.code,
+    label: r.label,
+    category: r.category,
+    sort_order: r.sortOrder,
     active: r.active,
     created_at: r.createdAt.toISOString(),
     updated_at: r.updatedAt.toISOString(),

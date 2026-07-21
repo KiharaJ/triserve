@@ -1,4 +1,11 @@
-import { CustomerType, DeviceCategory, WarrantyStatus } from '@prisma/client';
+import {
+  CustomerType,
+  DeviceCategory,
+  JobCoverage,
+  ServiceType,
+  WarrantyStatus,
+  WarrantySource,
+} from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
   IsEmail,
@@ -42,6 +49,15 @@ export class JobListQueryDto extends ListQueryDto {
   @IsOptional()
   @IsEnum(WarrantyStatus)
   warranty_status?: WarrantyStatus;
+
+  /** Filter by who pays — e.g. every job the customer is billed for. */
+  @IsOptional()
+  @IsEnum(JobCoverage)
+  coverage?: JobCoverage;
+
+  @IsOptional()
+  @IsEnum(ServiceType)
+  service_type?: ServiceType;
 
   @IsOptional()
   @IsISO8601()
@@ -121,6 +137,11 @@ export class JobDeviceInput {
   @IsString()
   @MaxLength(50)
   color?: string;
+
+  /** When the customer bought it — the input to the IW/OW ruling (§4.7). */
+  @IsOptional()
+  @IsISO8601()
+  purchase_date?: string;
 }
 
 /**
@@ -162,6 +183,27 @@ export class CreateJobDto {
   warranty_status?: WarrantyStatus;
 
   @IsOptional()
+  @IsEnum(ServiceType)
+  service_type?: ServiceType;
+
+  /**
+   * What the warranty pays for. Omit and it derives from `warranty_status`
+   * (IW/GOODWILL → FULL, else NONE) — send it explicitly for the partial
+   * cases the Samsung job card allows (labour-only / parts-only).
+   */
+  @IsOptional()
+  @IsEnum(JobCoverage)
+  coverage?: JobCoverage;
+
+  @IsOptional()
+  @IsEnum(WarrantySource)
+  warranty_source?: WarrantySource;
+
+  @IsOptional()
+  @IsUUID()
+  warranty_registration_id?: string;
+
+  @IsOptional()
   @IsString()
   @MaxLength(5000)
   fault_reported?: string;
@@ -170,9 +212,53 @@ export class CreateJobDto {
   @IsUUID()
   fault_code_id?: string;
 
+  /**
+   * GSPN diagnostic codes (§4.7). Only the customer-reported symptom is
+   * normally known at the counter — the rest are diagnosis outputs set later
+   * via PATCH — but all six are accepted so a migrated or back-dated job can
+   * be opened complete. Each is validated against its KIND.
+   */
+  @IsOptional()
+  @IsUUID()
+  condition_code_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  symptom_code_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  defect_code_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  defect_type_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  defect_block_id?: string;
+
+  @IsOptional()
+  @IsUUID()
+  repair_code_id?: string;
+
   @IsOptional()
   @IsUUID()
   assigned_engineer_id?: string;
+
+  /** Accessories handed in with the device — job-card T&C 2 custody record. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  accessories_held?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  appointment_at?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  return_by_date?: string;
 
   @IsOptional()
   @IsString()
@@ -205,8 +291,75 @@ export class UpdateJobDto {
   warranty_status?: WarrantyStatus;
 
   @IsOptional()
+  @IsEnum(ServiceType)
+  service_type?: ServiceType;
+
+  @IsOptional()
+  @IsEnum(JobCoverage)
+  coverage?: JobCoverage;
+
+  @IsOptional()
+  @IsEnum(WarrantySource)
+  warranty_source?: WarrantySource;
+
+  @IsOptional()
+  @IsUUID()
+  warranty_registration_id?: string | null;
+
+  @IsOptional()
   @IsUUID()
   fault_code_id?: string | null;
+
+  /**
+   * GSPN diagnostic codes (§4.7). Each is validated to be a service code of
+   * the matching KIND — the ids are interchangeable UUIDs, so nothing else
+   * stops a REPAIR code landing in `symptom_code_id`. `null` clears one.
+   */
+  @IsOptional()
+  @IsUUID()
+  condition_code_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  symptom_code_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  defect_code_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  defect_type_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  defect_block_id?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  repair_code_id?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(5000)
+  repair_description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  accessories_held?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  appointment_at?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
+  return_by_date?: string | null;
+
+  @IsOptional()
+  @IsISO8601()
+  repair_warranty_until?: string | null;
 
   @IsOptional()
   @IsString()

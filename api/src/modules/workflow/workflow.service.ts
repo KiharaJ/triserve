@@ -403,8 +403,15 @@ export class WorkflowService {
           transition: wire,
         };
       }
-      const ctx: WorkflowGuardContext = { companyId, user, ...guardContext };
-      if (!guard(ctx)) {
+      const ctx: WorkflowGuardContext = {
+        companyId,
+        user,
+        ...guardContext,
+        // Supplied last: a guard's repository handle is ours to hand out, not
+        // the caller's to override.
+        prisma: this.prisma,
+      };
+      if (!(await guard(ctx))) {
         return {
           allowed: false,
           reason: `Transition condition '${transition.guardCode}' not satisfied for ${fromState.code} → ${toState.code}`,
