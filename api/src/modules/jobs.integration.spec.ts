@@ -56,6 +56,8 @@ const tokens: Record<string, string> = {};
 const createdJobIds: string[] = [];
 /** Warranty registrations created as fixtures — removed AFTER jobs (FK). */
 const createdRegistrationIds: string[] = [];
+/** Approvals raised by the override tests — removed in teardown. */
+const createdApprovalIds: string[] = [];
 
 async function login(email: string): Promise<string> {
   const res = await request(app.getHttpServer())
@@ -209,6 +211,22 @@ afterAll(async () => {
   await raw.job.deleteMany({
     where: { OR: [{ companyId: companyBId }, { id: { in: createdJobIds } }] },
   });
+  // Approvals reference the requester, so they must go before the users —
+  // and they hang off this suite's jobs.
+  const suiteApprovals = await raw.approval.findMany({
+    where: {
+      OR: [
+        { id: { in: createdApprovalIds } },
+        { refType: 'Job', refId: { in: createdJobIds } },
+      ],
+    },
+    select: { id: true },
+  });
+  const approvalIds = suiteApprovals.map((a) => a.id);
+  await raw.auditLog.deleteMany({
+    where: { entityType: 'Approval', entityId: { in: approvalIds } },
+  });
+  await raw.approval.deleteMany({ where: { id: { in: approvalIds } } });
   await raw.jobCounter.deleteMany({ where: { companyId: companyBId } });
   // After jobs: jobs.warranty_registration_id FKs into this table.
   await raw.warrantyRegistration.deleteMany({
@@ -927,5 +945,172 @@ describe('seed stays pristine', () => {
     });
     expect(jobCount).toBe(createdJobIds.length);
     expect(jobCount).toBeGreaterThan(0);
+  });
+});
+
+describe('Admin overrides of the job guards (§4.11)', () => {
+  async function approve(approvalId: string): Promise<void> {
+    createdApprovalIds.push(approvalId);
+    await request(app.getHttpServer())
+      .post(`/api/v1/approvals/${approvalId}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({})
+      .expect(200);
+  }
+
+  /** A chargeable job parked at AWAITING_CUSTOMER_APPROVAL with no quote. */
+  async function jobAwaitingQuote(
+    phone: string,
+    imei: string,
+  ): Promise<string> {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'OW',
+      // TECHNICIANs only see jobs assigned to them, and only they hold
+      // job.transition.repair — so the bench move needs an assignee.
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Override`, phone },
+      device: { category: 'HHP', imei_serial: imei },
+    });
+    await transition(tokens.advisorDar, job.id, 'DIAGNOSING');
+    await transition(tokens.advisorDar, job.id, 'AWAITING_CUSTOMER_APPROVAL');
+    return job.id;
+  }
+
+  it('OW quote gate: blocked → requested → approved → retried, single use', async () => {
+    const jobId = await jobAwaitingQuote('0765880001', '357000000000010');
+
+    // Blocked: the customer pays and no REPAIR_OW invoice exists (T&C 5/9).
+    await transition(tokens.tech1, jobId, 'IN_REPAIR', 422);
+
+    const held = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/transition`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({
+        to_state_code: 'IN_REPAIR',
+        request_override: true,
+        override_reason: 'Customer accepted verbally, invoice to follow',
+      })
+      .expect(201);
+    const body = held.body as {
+      held: boolean;
+      job: JobBody;
+      pending_approval: { id: string; type: string };
+    };
+    expect(body.held).toBe(true);
+    expect(body.pending_approval.type).toBe('OW_REPAIR_WITHOUT_QUOTE');
+    // Nothing moved.
+    expect(body.job.state_code).toBe('AWAITING_CUSTOMER_APPROVAL');
+
+    await approve(body.pending_approval.id);
+
+    const applied = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/transition`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({
+        to_state_code: 'IN_REPAIR',
+        override_approval_id: body.pending_approval.id,
+      })
+      .expect(201);
+    expect((applied.body as { job: JobBody }).job.state_code).toBe('IN_REPAIR');
+
+    // Spent: the same approval cannot open the gate on another job.
+    const second = await jobAwaitingQuote('0765880002', '357000000000028');
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${second}/transition`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({
+        to_state_code: 'IN_REPAIR',
+        override_approval_id: body.pending_approval.id,
+      })
+      .expect(409);
+  });
+
+  it('a FULLY covered job needs no override at all', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'IW',
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Covered`, phone: '0765880003' },
+      device: { category: 'HHP', imei_serial: '357000000000036' },
+    });
+    await transition(tokens.advisorDar, job.id, 'DIAGNOSING');
+    await transition(tokens.advisorDar, job.id, 'AWAITING_CUSTOMER_APPROVAL');
+    // Nothing to bill → the quote gate does not apply.
+    const res = await transition(tokens.tech1, job.id, 'IN_REPAIR');
+    expect(res.job.state_code).toBe('IN_REPAIR');
+  });
+
+  it('coverage is locked once a claim exists, and an override unlocks it once', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'IW',
+      customer: { name: `${TEST_PREFIX} Locked`, phone: '0765880004' },
+      device: { category: 'HHP', imei_serial: '357000000000044' },
+    });
+    // Commit money against it.
+    const claim = await raw.warrantyClaim.create({
+      data: {
+        companyId,
+        branchId: branchDar,
+        jobId: job.id,
+        claimAmountUsd: 1000n,
+        status: 'DRAFT',
+      },
+    });
+
+    // Re-ruling now contradicts a document that has already gone out.
+    await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ warranty_status: 'OW' })
+      .expect(409);
+
+    const held = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({
+        warranty_status: 'OW',
+        request_override: true,
+        override_reason: 'Samsung rejected the claim — customer now pays',
+      })
+      .expect(200);
+    const body = held.body as {
+      held: boolean;
+      pending_approval: { id: string; type: string };
+    };
+    expect(body.pending_approval.type).toBe('JOB_COVERAGE_CHANGE');
+    // Unchanged until approved.
+    const stillIw = await raw.job.findUniqueOrThrow({ where: { id: job.id } });
+    expect(stillIw.coverage).toBe('FULL');
+
+    await approve(body.pending_approval.id);
+    const patched = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({
+        warranty_status: 'OW',
+        override_approval_id: body.pending_approval.id,
+      })
+      .expect(200);
+    expect((patched.body as JobBody).coverage).toBe('NONE');
+
+    await raw.warrantyClaim.deleteMany({ where: { id: claim.id } });
+  });
+
+  it('coverage stays freely editable while nothing is committed', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      warranty_status: 'UNKNOWN',
+      customer: { name: `${TEST_PREFIX} Open`, phone: '0765880005' },
+      device: { category: 'HHP', imei_serial: '357000000000051' },
+    });
+    // Diagnosis routinely revises the ruling — no approval needed.
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ warranty_status: 'IW' })
+      .expect(200);
+    expect((res.body as JobBody).coverage).toBe('FULL');
   });
 });

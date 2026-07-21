@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -112,6 +113,27 @@ export class CreateWarrantyClaimDto {
   @ValidateNested({ each: true })
   @Type(() => WarrantyClaimLineInput)
   lines?: WarrantyClaimLineInput[];
+
+  /**
+   * Admin overrides (§4.11). A blocked create returns the guard's own error;
+   * to get past it the operator asks for an override with
+   * `request_override` + `override_reason` (which creates a PENDING approval
+   * and performs NOTHING), and once it is approved retries this same request
+   * with `override_approval_id`. One approval, one use.
+   */
+  @IsOptional()
+  @IsBoolean()
+  request_override?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  override_reason?: string;
+
+  @IsOptional()
+  @IsUUID()
+  override_approval_id?: string;
 
   @IsOptional()
   @IsString()

@@ -33,6 +33,7 @@ import {
   type JobDetailWire,
   type JobWire,
   type TransitionResult,
+  type UpdateJobResult,
 } from './jobs.service';
 
 /**
@@ -109,11 +110,16 @@ export class JobsController {
 
   @Patch(':id')
   @RequirePermissions('job.update')
+  /**
+   * Returns the updated job, OR `{ held: true, pending_approval }` when a
+   * coverage change was blocked and an override was requested — nothing is
+   * changed then; retry with `override_approval_id` once approved.
+   */
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateJobDto,
     @CurrentUser() user: AuthUser,
-  ): Promise<JobDetailWire> {
+  ): Promise<UpdateJobResult> {
     return this.jobs.update(id, dto, user);
   }
 

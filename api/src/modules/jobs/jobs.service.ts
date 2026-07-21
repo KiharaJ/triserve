@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import {
   Prisma,
+  type ApprovalType,
   type JobCoverage,
   type ServiceCodeKind,
   type ServiceType,
@@ -131,6 +133,19 @@ export interface JobDetailWire extends JobWire {
   allowed_next_transitions: AllowedTransition[];
 }
 
+/**
+ * Returned INSTEAD of the job when a coverage change was blocked and an
+ * override was requested: nothing changed, and the caller retries the PATCH
+ * with `override_approval_id` once the approval is decided.
+ */
+export interface JobOverridePending {
+  held: true;
+  pending_approval: ApprovalEntry;
+}
+
+/** An updated job, or a held override request — discriminate on `held`. */
+export type UpdateJobResult = JobDetailWire | JobOverridePending;
+
 /** Result of a transition/dispatch — either applied, or HELD for approval. */
 export interface TransitionResult {
   /** true when the move requires_approval: state is unchanged, approval PENDING. */
@@ -141,6 +156,22 @@ export interface TransitionResult {
 }
 
 const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * Which workflow guards an admin can override, and the approval type that
+ * authorises it. A guard absent from this map is NOT overridable — it fails
+ * the normal way, which is the right default for anything safety-critical.
+ */
+const GUARD_OVERRIDE_TYPE: Readonly<Record<string, ApprovalType>> = {
+  ow_quote_approved: 'OW_REPAIR_WITHOUT_QUOTE',
+};
+
+/** The three-field override protocol shared by every guarded action. */
+interface OverrideInput {
+  request?: boolean;
+  reason?: string;
+  approvalId?: string;
+}
 
 /** `%PDF-` — checked against the actual bytes, not the declared mimetype. */
 const PDF_MAGIC_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
@@ -380,7 +411,7 @@ export class JobsService {
     id: string,
     dto: UpdateJobDto,
     user: AuthUser,
-  ): Promise<JobDetailWire> {
+  ): Promise<UpdateJobResult> {
     await this.getRow(id, user); // clean 404 + technician restriction
 
     if (dto.assigned_engineer_id) {
@@ -401,6 +432,27 @@ export class JobsService {
       dto.warranty_status !== undefined ||
       dto.coverage !== undefined ||
       dto.warranty_source !== undefined;
+
+    // Coverage is locked once money has been COMMITTED against the job.
+    //
+    // The lock is deliberately keyed on financial commitment, not on a
+    // workflow state code: states are per-company configuration, so any code
+    // we hardcoded would be wrong for a company that renamed its board. Until
+    // an invoice or a claim exists, coverage is only a plan and diagnosis
+    // routinely revises it; after that, changing who pays contradicts a
+    // document that has already gone out.
+    if (reruled) {
+      const committed = await this.findFinancialCommitment(id);
+      if (committed) {
+        const held = await this.resolveCoverageOverride(
+          id,
+          committed,
+          dto,
+          user,
+        );
+        if (held) return held;
+      }
+    }
 
     await this.prisma.job.update({
       where: { id },
@@ -507,6 +559,11 @@ export class JobsService {
       user,
       dto.note ?? null,
       {},
+      {
+        request: dto.request_override,
+        reason: dto.override_reason,
+        approvalId: dto.override_approval_id,
+      },
     );
   }
 
@@ -546,14 +603,67 @@ export class JobsService {
     user: AuthUser,
     note: string | null,
     extra: Prisma.JobUncheckedUpdateInput,
+    override?: OverrideInput,
   ): Promise<TransitionResult> {
     const fromCode = job.state.code;
-    const check = await this.workflow.assertTransition(
+
+    // A guard-blocked move is recoverable: probe first so we can offer the
+    // matching override rather than just failing. Only guards with a mapped
+    // approval type are overridable — anything else falls through to the
+    // normal 422.
+    const overriddenGuards: string[] = [];
+    const probe = await this.workflow.canTransition(
       user.companyId,
       fromCode,
       toStateCode,
       user,
       { job },
+    );
+    const overrideType = probe.blocked_guard
+      ? GUARD_OVERRIDE_TYPE[probe.blocked_guard]
+      : undefined;
+
+    if (!probe.allowed && overrideType) {
+      if (override?.approvalId) {
+        await this.approvals.consumeOverride(
+          overrideType,
+          override.approvalId,
+          user,
+          { refType: 'Job', refId: job.id },
+        );
+        overriddenGuards.push(probe.blocked_guard as string);
+      } else if (override?.request) {
+        if (!override.reason?.trim()) {
+          throw new BadRequestException(
+            'override_reason is required when requesting an override',
+          );
+        }
+        const approval = await this.approvals.request(overrideType, {
+          branchId: job.branchId,
+          refType: 'Job',
+          refId: job.id,
+          payload: {
+            from_state_code: fromCode,
+            to_state_code: toStateCode,
+            blocked_by: probe.blocked_guard,
+            coverage: job.coverage,
+          },
+          reason: override.reason.trim(),
+        });
+        return {
+          held: true,
+          job: await this.get(job.id, user),
+          pending_approval: approval,
+        };
+      }
+    }
+
+    const check = await this.workflow.assertTransition(
+      user.companyId,
+      fromCode,
+      toStateCode,
+      user,
+      { job, overriddenGuards },
     );
 
     const to = await this.prisma.workflowState.findFirst({
@@ -886,6 +996,78 @@ export class JobsService {
         'fault_code_id does not match a fault code of your company',
       );
     }
+  }
+
+  /**
+   * Has money already been committed against this job? Returns what did it,
+   * for the approval payload — "there is an invoice" is far more useful to an
+   * approver than a bare refusal.
+   */
+  private async findFinancialCommitment(
+    jobId: string,
+  ): Promise<{ kind: 'invoice' | 'claim'; id: string; ref: string } | null> {
+    const invoice = await this.prisma.invoice.findFirst({
+      where: { jobId, deletedAt: null, status: { not: 'VOID' } },
+      select: { id: true, invoiceNo: true },
+    });
+    if (invoice) {
+      return { kind: 'invoice', id: invoice.id, ref: invoice.invoiceNo };
+    }
+    const claim = await this.prisma.warrantyClaim.findFirst({
+      where: {
+        jobId,
+        deletedAt: null,
+        status: { notIn: ['CANCELLED', 'REJECTED'] },
+      },
+      select: { id: true, claimNo: true },
+    });
+    if (claim) {
+      return { kind: 'claim', id: claim.id, ref: claim.claimNo ?? 'draft' };
+    }
+    return null;
+  }
+
+  /** Block / hold / allow a coverage change on a financially committed job. */
+  private async resolveCoverageOverride(
+    jobId: string,
+    committed: { kind: string; id: string; ref: string },
+    dto: UpdateJobDto,
+    user: AuthUser,
+  ): Promise<JobOverridePending | null> {
+    if (dto.override_approval_id) {
+      await this.approvals.consumeOverride(
+        'JOB_COVERAGE_CHANGE',
+        dto.override_approval_id,
+        user,
+        { refType: 'Job', refId: jobId },
+      );
+      return null;
+    }
+    if (dto.request_override) {
+      if (!dto.override_reason?.trim()) {
+        throw new BadRequestException(
+          'override_reason is required when requesting an override',
+        );
+      }
+      const job = await this.getRow(jobId, user);
+      const approval = await this.approvals.request('JOB_COVERAGE_CHANGE', {
+        branchId: job.branchId,
+        refType: 'Job',
+        refId: jobId,
+        payload: {
+          from_coverage: job.coverage,
+          to_coverage: dto.coverage ?? null,
+          to_warranty_status: dto.warranty_status ?? null,
+          committed_by: committed.kind,
+          committed_ref: committed.ref,
+        },
+        reason: dto.override_reason.trim(),
+      });
+      return { held: true, pending_approval: approval };
+    }
+    throw new ConflictException(
+      `Who pays is locked: this job already has a ${committed.kind} (${committed.ref}). Request an override to change it.`,
+    );
   }
 
   private async assertWarrantyRegistrationInCompany(id: string): Promise<void> {

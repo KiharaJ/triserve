@@ -37,6 +37,9 @@ export interface ApprovalEntry {
   reason: string;
   requested_at: string;
   decided_at: string | null;
+  /** Set once the override has been spent — it cannot be used again. */
+  consumed_at: string | null;
+  consumed_by: string | null;
 }
 
 /** Input to {@link ApprovalsService.request}. */
@@ -257,6 +260,100 @@ export class ApprovalsService {
   }
 
   /**
+   * Spend an APPROVED override on the action it was raised for (§4.11).
+   *
+   * The approvals framework has no execute-on-approve step by design — the
+   * documented flow is request → decide → RETRY the original action carrying
+   * the approval id. This is the retry half: it validates the approval and
+   * marks it spent, or explains precisely why it cannot be used.
+   *
+   * SINGLE USE is the point. Without `consumed_at`, an approved override
+   * would be a permanent key: the same id replayed on every later attempt
+   * would turn one "yes" into standing permission. The conditional UPDATE
+   * (status APPROVED **and** consumed_at NULL) also closes the race where two
+   * concurrent retries both read it as unspent.
+   *
+   * `refId` is checked when the approval carries one, so an override raised
+   * for job A cannot be spent on job B.
+   */
+  async consumeOverride(
+    type: ApprovalType,
+    approvalId: string,
+    user: AuthUser,
+    ref?: { refType?: string; refId?: string },
+  ): Promise<ApprovalEntry> {
+    const approval = await this.prisma.approval.findFirst({
+      where: { id: approvalId },
+    });
+    if (!approval) throw new NotFoundException('Approval not found');
+    if (approval.type !== type) {
+      throw new BadRequestException(
+        `That approval is for ${approval.type}, not ${type}`,
+      );
+    }
+    if (approval.status !== 'APPROVED') {
+      throw new ConflictException(
+        approval.status === 'PENDING'
+          ? 'That override has not been approved yet'
+          : 'That override was rejected',
+      );
+    }
+    if (approval.consumedAt) {
+      throw new ConflictException(
+        'That override has already been used — request a new one',
+      );
+    }
+    // An override raised against one entity must not be spent on another.
+    if (approval.refId && ref?.refId && approval.refId !== ref.refId) {
+      throw new BadRequestException(
+        'That override was raised for a different record',
+      );
+    }
+    assertBranchAccess(user, approval.branchId);
+
+    let consumed: Approval;
+    try {
+      consumed = await this.prisma.approval.update({
+        // The WHERE is the lock: a concurrent retry that got here first makes
+        // this throw P2025 rather than double-spending the override.
+        where: {
+          id: approvalId,
+          status: 'APPROVED' as const,
+          consumedAt: null,
+        },
+        data: {
+          consumedAt: new Date(),
+          consumedById: user.userId,
+          // Backfill the entity when the approval predated it.
+          ...(approval.refId
+            ? {}
+            : { refType: ref?.refType ?? null, refId: ref?.refId ?? null }),
+        },
+      });
+    } catch (e) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2025'
+      ) {
+        throw new ConflictException('That override has already been used');
+      }
+      throw e;
+    }
+
+    await this.audit.record({
+      entityType: 'Approval',
+      entityId: consumed.id,
+      action: 'OVERRIDE_USED',
+      before: approval,
+      after: consumed,
+      companyId: consumed.companyId,
+      branchId: consumed.branchId,
+      actorUserId: user.userId,
+    });
+    return toEntry(consumed);
+  }
+
+  /**
    * Does an action of `type` need approval for this company? Reads the
    * (company, type) approval_rules row — thresholds are compared by the
    * pure {@link ruleRequiresApproval}. No rule / disabled ⇒ not required.
@@ -327,5 +424,7 @@ function toEntry(a: Approval): ApprovalEntry {
     reason: a.reason,
     requested_at: a.requestedAt.toISOString(),
     decided_at: a.decidedAt?.toISOString() ?? null,
+    consumed_at: a.consumedAt?.toISOString() ?? null,
+    consumed_by: a.consumedById,
   };
 }

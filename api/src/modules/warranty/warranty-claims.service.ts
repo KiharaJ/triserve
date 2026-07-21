@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  type ApprovalType,
   type JobCoverage,
   type LabourCode,
   type WarrantyClaimStatus,
@@ -18,6 +19,10 @@ import {
 import { normalizeImeiSerial } from '../../common/util/phone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PostingService } from '../accounting/posting.service';
+import {
+  ApprovalsService,
+  type ApprovalEntry,
+} from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import type {
@@ -78,6 +83,29 @@ export interface WarrantyClaimLineWire {
   invoice_no: string | null;
 }
 
+/**
+ * A guard that blocked a create, and how to report it if no override is used.
+ * `error` is a factory so each guard keeps its own natural status code.
+ */
+interface GuardBreach {
+  type: ApprovalType;
+  payload: Record<string, unknown>;
+  error: () => Error;
+}
+
+/**
+ * Returned INSTEAD of a claim when an override was requested: nothing was
+ * created, and the caller must wait for the approval to be decided and then
+ * retry with `override_approval_id`.
+ */
+export interface ClaimOverridePending {
+  held: true;
+  pending_approval: ApprovalEntry;
+}
+
+/** A created claim, or a held override request — discriminate on `held`. */
+export type CreateClaimResult = WarrantyClaimWire | ClaimOverridePending;
+
 /** A job a GSPN claim might belong to — see {@link matchJobsBySerial}. */
 export interface ClaimJobMatch {
   job_id: string;
@@ -119,6 +147,7 @@ export class WarrantyClaimsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly posting: PostingService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   // ------------------------------------------------------------------ queries
@@ -165,7 +194,7 @@ export class WarrantyClaimsService {
   async create(
     dto: CreateWarrantyClaimDto,
     user: AuthUser,
-  ): Promise<WarrantyClaimWire> {
+  ): Promise<CreateClaimResult> {
     const job = await this.loadJob(dto.job_id);
     const branchId = dto.branch_id ?? job.branchId;
     assertBranchAccess(user, branchId);
@@ -180,9 +209,72 @@ export class WarrantyClaimsService {
     if (dto.claim_no)
       await this.assertClaimNoFree(user.companyId, dto.claim_no);
 
-    const components = splitOrThrow(dto, amount);
     const lines = (dto.lines ?? []).map((l, i) => buildLine(l, i + 1));
     await this.assertPartsInCompany(lines);
+
+    // ---- guards, each overridable by an approved override (§4.11) ----------
+    //
+    // Both are recoverable business rules rather than data errors, so the
+    // shape is the same: describe the problem, let an operator ask for an
+    // override, and let an APPROVED one through exactly once.
+    const duplicate = await this.prisma.warrantyClaim.findFirst({
+      where: {
+        jobId: job.id,
+        deletedAt: null,
+        status: { notIn: ['CANCELLED', 'REJECTED'] },
+      },
+      select: { id: true, claimNo: true },
+    });
+    const split = computeSplit(dto);
+    const splitMismatch =
+      split !== null &&
+      split.labour + split.parts + split.shipping + split.tax !== amount;
+
+    let breach: GuardBreach | null = null;
+    if (duplicate) {
+      breach = {
+        type: 'DUPLICATE_WARRANTY_CLAIM',
+        payload: { job_id: job.id, existing_claim_id: duplicate.id },
+        error: () =>
+          new ConflictException(
+            `This job already has a claim (${duplicate.claimNo ?? 'a draft'}). Filing a second one is usually a mistake — request an override if it is deliberate.`,
+          ),
+      };
+    } else if (splitMismatch && split) {
+      const sum = split.labour + split.parts + split.shipping + split.tax;
+      breach = {
+        type: 'CLAIM_SPLIT_MISMATCH',
+        payload: {
+          job_id: job.id,
+          claim_amount_usd: amount.toString(),
+          component_sum: sum.toString(),
+          labour_amount_usd: split.labour.toString(),
+          parts_amount_usd: split.parts.toString(),
+          shipping_amount_usd: split.shipping.toString(),
+          tax_amount_usd: split.tax.toString(),
+        },
+        error: () =>
+          new BadRequestException(
+            `labour + parts + shipping + tax (${sum}) must equal claim_amount_usd (${amount})`,
+          ),
+      };
+    }
+
+    const held = await this.resolveOverride(
+      breach,
+      dto,
+      branchId,
+      job.id,
+      user,
+    );
+    if (held) return held;
+
+    const components = {
+      labourAmountUsd: split?.labour ?? 0n,
+      partsAmountUsd: split?.parts ?? 0n,
+      shippingAmountUsd: split?.shipping ?? 0n,
+      taxAmountUsd: split?.tax ?? 0n,
+    };
 
     const claim = await this.prisma.warrantyClaim.create({
       data: {
@@ -484,6 +576,67 @@ export class WarrantyClaimsService {
   }
 
   /**
+   * The one place a guard breach turns into "blocked", "held" or "allowed".
+   *
+   * Three outcomes, and the order matters:
+   *   - an APPROVED override supplied → spend it (single use) and proceed;
+   *   - an override REQUESTED → raise a PENDING approval and do NOTHING;
+   *   - neither → the guard's own error, unchanged from before overrides.
+   *
+   * Returning `null` means "carry on"; a held result means the caller must
+   * stop and hand the pending approval back.
+   */
+  private async resolveOverride(
+    breach: GuardBreach | null,
+    dto: Pick<
+      CreateWarrantyClaimDto,
+      'request_override' | 'override_reason' | 'override_approval_id'
+    >,
+    branchId: string,
+    jobId: string,
+    user: AuthUser,
+  ): Promise<ClaimOverridePending | null> {
+    if (!breach) {
+      // Nothing was blocking. Spending an override here would burn it for
+      // nothing, so refuse rather than silently consume it.
+      if (dto.override_approval_id) {
+        throw new BadRequestException(
+          'No override is needed for this claim — remove override_approval_id',
+        );
+      }
+      return null;
+    }
+
+    if (dto.override_approval_id) {
+      await this.approvals.consumeOverride(
+        breach.type,
+        dto.override_approval_id,
+        user,
+        { refType: 'Job', refId: jobId },
+      );
+      return null;
+    }
+
+    if (dto.request_override) {
+      if (!dto.override_reason?.trim()) {
+        throw new BadRequestException(
+          'override_reason is required when requesting an override',
+        );
+      }
+      const approval = await this.approvals.request(breach.type, {
+        branchId,
+        refType: 'Job',
+        refId: jobId,
+        payload: { ...breach.payload, blocked_by: breach.type },
+        reason: dto.override_reason.trim(),
+      });
+      return { held: true, pending_approval: approval };
+    }
+
+    throw breach.error();
+  }
+
+  /**
    * Any `part_id` on a line must be one of OUR parts. The id is a bare UUID,
    * so nothing structural stops a claim line pointing at another tenant's
    * catalogue row; the company-scope extension filters the lookup.
@@ -592,46 +745,31 @@ function toDate(s: string | undefined): Date | null {
 }
 
 /**
- * Validate the cost split against the total and return it as Prisma data.
+ * The cost split, or null when the caller stated only a total.
  *
- * A claim may state only a total (a hand-raised one does). But if ANY
- * component is given, the four must sum to `claim_amount_usd` — a total that
- * disagrees with its own parts makes a short payment un-attributable, which
- * defeats the point of storing the split at all.
+ * A hand-raised claim gives no components at all, which is legal — the
+ * components then read as zero. Supplying SOME of them means the claim is
+ * describing its own breakdown, and the caller (or an approver) has to stand
+ * behind it summing to the total.
  */
-function splitOrThrow(
-  dto: CreateWarrantyClaimDto,
-  total: bigint,
-): {
-  labourAmountUsd: bigint;
-  partsAmountUsd: bigint;
-  shippingAmountUsd: bigint;
-  taxAmountUsd: bigint;
-} {
+function computeSplit(dto: CreateWarrantyClaimDto): {
+  labour: bigint;
+  parts: bigint;
+  shipping: bigint;
+  tax: bigint;
+} | null {
   const given = [
     dto.labour_amount_usd,
     dto.parts_amount_usd,
     dto.shipping_amount_usd,
     dto.tax_amount_usd,
   ];
-  const labour = BigInt(dto.labour_amount_usd ?? '0');
-  const parts = BigInt(dto.parts_amount_usd ?? '0');
-  const shipping = BigInt(dto.shipping_amount_usd ?? '0');
-  const tax = BigInt(dto.tax_amount_usd ?? '0');
-
-  if (given.some((v) => v !== undefined)) {
-    const sum = labour + parts + shipping + tax;
-    if (sum !== total) {
-      throw new BadRequestException(
-        `labour + parts + shipping + tax (${sum}) must equal claim_amount_usd (${total})`,
-      );
-    }
-  }
+  if (given.every((v) => v === undefined)) return null;
   return {
-    labourAmountUsd: labour,
-    partsAmountUsd: parts,
-    shippingAmountUsd: shipping,
-    taxAmountUsd: tax,
+    labour: BigInt(dto.labour_amount_usd ?? '0'),
+    parts: BigInt(dto.parts_amount_usd ?? '0'),
+    shipping: BigInt(dto.shipping_amount_usd ?? '0'),
+    tax: BigInt(dto.tax_amount_usd ?? '0'),
   };
 }
 

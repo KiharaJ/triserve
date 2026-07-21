@@ -42,6 +42,11 @@ let companyId: string;
 let branchDar: string;
 let branchKrk: string;
 let jobDar: string;
+/** Extra jobs made by freshJob() — removed in teardown. */
+const extraJobIds: string[] = [];
+/** Approvals raised by the override tests — removed in teardown. */
+const extraApprovalIds: string[] = [];
+let initialStateId: string;
 let customerId: string;
 let deviceId: string;
 
@@ -138,10 +143,35 @@ function entriesFor(claimId: string) {
   });
 }
 
+/**
+ * A NEW job on the same customer/device.
+ *
+ * A job may carry only one live claim (the DUPLICATE_WARRANTY_CLAIM guard),
+ * so every test that opens a claim needs its own job. Same device on purpose,
+ * so serial matching still sees them all.
+ */
+async function freshJob(): Promise<string> {
+  const job = await raw.job.create({
+    data: {
+      companyId,
+      jobNo: `${TEST_PREFIX}-DAR-${extraJobIds.length + 2}`,
+      branchId: branchDar,
+      customerId,
+      deviceId,
+      bookedById: ids.clerkDar,
+      warrantyStatus: 'IW',
+      stateId: initialStateId,
+      receivedAt: new Date(),
+    },
+  });
+  extraJobIds.push(job.id);
+  return job.id;
+}
+
 /** Create a claim and drive it to SUBMITTED. */
 async function submittedClaim(amountUsd: string): Promise<string> {
   const claim = await createClaim(tokens.clerkDar, {
-    job_id: jobDar,
+    job_id: await freshJob(),
     claim_amount_usd: amountUsd,
     labour_code: 'LEM',
   });
@@ -220,6 +250,7 @@ beforeAll(async () => {
   const initial = await raw.workflowState.findFirstOrThrow({
     where: { isInitial: true, active: true, deletedAt: null },
   });
+  initialStateId = initial.id;
   jobDar = (
     await raw.job.create({
       data: {
@@ -262,6 +293,22 @@ afterAll(async () => {
   const entryIds = entries.map((e) => e.id);
   await raw.journalLine.deleteMany({ where: { entryId: { in: entryIds } } });
   await raw.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
+  // Every approval this suite raised — including the PENDING ones that were
+  // deliberately never decided — hangs off one of its jobs.
+  const suiteApprovals = await raw.approval.findMany({
+    where: {
+      OR: [
+        { id: { in: extraApprovalIds } },
+        { refType: 'Job', refId: { in: [jobDar, ...extraJobIds] } },
+      ],
+    },
+    select: { id: true },
+  });
+  const approvalIds = suiteApprovals.map((a) => a.id);
+  await raw.auditLog.deleteMany({
+    where: { entityType: 'Approval', entityId: { in: approvalIds } },
+  });
+  await raw.approval.deleteMany({ where: { id: { in: approvalIds } } });
   // Lines first: warranty_claim_lines.claim_id FKs into the claims.
   await raw.warrantyClaimLine.deleteMany({
     where: { claimId: { in: createdClaimIds } },
@@ -272,7 +319,7 @@ afterAll(async () => {
   await raw.auditLog.deleteMany({
     where: { entityType: 'WarrantyClaim', entityId: { in: createdClaimIds } },
   });
-  await raw.job.deleteMany({ where: { id: jobDar } });
+  await raw.job.deleteMany({ where: { id: { in: [jobDar, ...extraJobIds] } } });
   await raw.device.deleteMany({ where: { id: deviceId } });
   await raw.customer.deleteMany({ where: { id: customerId } });
   await raw.session.deleteMany({ where: { userId: { in: testUserIds } } });
@@ -286,7 +333,7 @@ afterAll(async () => {
 describe('Create + edit', () => {
   it('opens a DRAFT claim against a job (USD, branch from job)', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '5768', // $57.68
       labour_code: 'LEM',
     });
@@ -294,7 +341,8 @@ describe('Create + edit', () => {
     expect(claim.currency).toBe('USD');
     expect(claim.claim_amount_usd).toBe('5768');
     expect(claim.branch_id).toBe(branchDar); // defaulted from the job
-    expect(claim.job_no).toBe(`${TEST_PREFIX}-DAR-1`);
+    // freshJob() numbers sequentially from -2; the exact number is incidental.
+    expect(claim.job_no).toMatch(new RegExp(`^${TEST_PREFIX}-DAR-\\d+$`));
     expect(claim.labour_code).toBe('LEM');
 
     // Edit the DRAFT: change amount + assign a Samsung claim number.
@@ -311,7 +359,7 @@ describe('Create + edit', () => {
   it('rejects a zero amount and an unknown job', async () => {
     await createClaim(
       tokens.clerkDar,
-      { job_id: jobDar, claim_amount_usd: '0' },
+      { job_id: await freshJob(), claim_amount_usd: '0' },
       400,
     );
     await createClaim(
@@ -326,14 +374,14 @@ describe('Create + edit', () => {
 
   it('rejects a duplicate Samsung claim number (409)', async () => {
     await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '1000',
       claim_no: `${TEST_PREFIX}-DUP`,
     });
     await createClaim(
       tokens.clerkDar,
       {
-        job_id: jobDar,
+        job_id: await freshJob(),
         claim_amount_usd: '2000',
         claim_no: `${TEST_PREFIX}-DUP`,
       },
@@ -346,7 +394,7 @@ describe('Authorization + scoping', () => {
   it('needs warranty.claim.create — a SERVICE_ADVISOR is 403', async () => {
     await createClaim(
       tokens.advisorDar,
-      { job_id: jobDar, claim_amount_usd: '1000' },
+      { job_id: await freshJob(), claim_amount_usd: '1000' },
       403,
     );
   });
@@ -360,7 +408,7 @@ describe('Authorization + scoping', () => {
 
   it("a KRK clerk can't see a DAR claim (404)", async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '1234',
     });
     await request(app.getHttpServer())
@@ -376,7 +424,7 @@ describe('Authorization + scoping', () => {
 
   it('writes a CREATE audit row', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '4200',
     });
     const audit = await raw.auditLog.findFirst({
@@ -394,7 +442,7 @@ describe('Authorization + scoping', () => {
 describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
   it('submits a DRAFT with a claim number → SUBMITTED', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '8607',
       labour_code: 'FEM',
     });
@@ -408,7 +456,7 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
 
   it('refuses to submit a DRAFT with no claim number (400)', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '1000',
     });
     await submit(tokens.clerkDar, claim.id, {}, 400);
@@ -467,7 +515,7 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
     await reconcile(tokens.clerkDar, id, { outcome: 'PAID' }, 409);
     // reconcile a DRAFT.
     const draft = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '5000',
     });
     await reconcile(tokens.clerkDar, draft.id, { outcome: 'APPROVED' }, 409);
@@ -477,7 +525,7 @@ describe('Submit → reconcile lifecycle + postings (Task 4.2)', () => {
     const id = await submittedClaim('5000');
     await reconcile(tokens.advisorDar, id, { outcome: 'APPROVED' }, 403);
     const draft = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '5000',
     });
     await submit(tokens.advisorDar, draft.id, { claim_no: 'X-1' }, 403);
@@ -656,7 +704,7 @@ describe('GSPN claim-detail PDF import (§4.7)', () => {
 describe('Claim detail: the cost split + part lines (§4.7)', () => {
   it('persists the GSPN references, the split and the part lines', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '4030',
       labour_amount_usd: '1652',
       parts_amount_usd: '1283',
@@ -703,7 +751,7 @@ describe('Claim detail: the cost split + part lines (§4.7)', () => {
     await createClaim(
       tokens.clerkDar,
       {
-        job_id: jobDar,
+        job_id: await freshJob(),
         claim_amount_usd: '4030',
         labour_amount_usd: '9999',
         parts_amount_usd: '1283',
@@ -714,7 +762,7 @@ describe('Claim detail: the cost split + part lines (§4.7)', () => {
 
   it('still accepts a claim stating only a total (hand-raised)', async () => {
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: await freshJob(),
       claim_amount_usd: '5000',
     });
     // Unsplit is legal; the components read as zero.
@@ -726,7 +774,7 @@ describe('Claim detail: the cost split + part lines (§4.7)', () => {
     await createClaim(
       tokens.clerkDar,
       {
-        job_id: jobDar,
+        job_id: await freshJob(),
         claim_amount_usd: '1000',
         lines: [
           {
@@ -743,8 +791,9 @@ describe('Claim detail: the cost split + part lines (§4.7)', () => {
 
 describe('GET /warranty-claims/match — find the job a claim belongs to', () => {
   it('matches on serial and reports jobs already claimed', async () => {
+    const jobId = await freshJob();
     const claim = await createClaim(tokens.clerkDar, {
-      job_id: jobDar,
+      job_id: jobId,
       claim_amount_usd: '1500',
     });
     const res = await request(app.getHttpServer())
@@ -759,7 +808,7 @@ describe('GET /warranty-claims/match — find the job a claim belongs to', () =>
       existing_claim_ids: string[];
       coverage: string;
     }>;
-    const hit = body.find((m) => m.job_id === jobDar);
+    const hit = body.find((m) => m.job_id === jobId);
     expect(hit).toBeDefined();
     // Filing a second claim on an already-claimed job is nearly always a
     // mistake — the caller has to be able to see that.
@@ -791,5 +840,212 @@ describe('GET /warranty-claims/match — find the job a claim belongs to', () =>
       .set('Authorization', `Bearer ${tokens.clerkDar}`)
       .expect(200);
     expect(res.body).toEqual([]);
+  });
+});
+
+describe('Admin overrides of the claim guards (§4.11)', () => {
+  /** Approve a PENDING approval as the group admin. */
+  async function approve(approvalId: string): Promise<void> {
+    extraApprovalIds.push(approvalId);
+    await request(app.getHttpServer())
+      .post(`/api/v1/approvals/${approvalId}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({})
+      .expect(200);
+  }
+
+  it('duplicate claim: blocked → requested → approved → retried → single use', async () => {
+    const jobId = await freshJob();
+    await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '1000',
+    });
+
+    // 1. Blocked, with no override asked for.
+    await createClaim(
+      tokens.clerkDar,
+      { job_id: jobId, claim_amount_usd: '2000' },
+      409,
+    );
+
+    // 2. Ask for an override — nothing is created.
+    const before = await raw.warrantyClaim.count({ where: { jobId } });
+    const held = (await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '2000',
+        request_override: true,
+        override_reason: 'Samsung split this repair across two claims',
+      },
+      201,
+    )) as unknown as {
+      held: boolean;
+      pending_approval: { id: string; type: string };
+    };
+    expect(held.held).toBe(true);
+    expect(held.pending_approval.type).toBe('DUPLICATE_WARRANTY_CLAIM');
+    expect(await raw.warrantyClaim.count({ where: { jobId } })).toBe(before);
+
+    // 3. Approve, then retry the SAME request carrying the approval.
+    await approve(held.pending_approval.id);
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '2000',
+      override_approval_id: held.pending_approval.id,
+    });
+    expect(claim.id).toBeTruthy();
+
+    // 4. The override is SPENT — replaying it would turn one "yes" into
+    //    standing permission.
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '3000',
+        override_approval_id: held.pending_approval.id,
+      },
+      409,
+    );
+  });
+
+  it('split mismatch: an approved override lets the odd split through', async () => {
+    const jobId = await freshJob();
+    const held = (await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '4030',
+        labour_amount_usd: '1652',
+        parts_amount_usd: '1283',
+        // Deliberately short — Samsung's own paperwork disagreed.
+        shipping_amount_usd: '1000',
+        request_override: true,
+        override_reason: 'GSPN printed a shipping figure that does not add up',
+      },
+      201,
+    )) as unknown as { pending_approval: { id: string; type: string } };
+    expect(held.pending_approval.type).toBe('CLAIM_SPLIT_MISMATCH');
+
+    await approve(held.pending_approval.id);
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '4030',
+      labour_amount_usd: '1652',
+      parts_amount_usd: '1283',
+      shipping_amount_usd: '1000',
+      override_approval_id: held.pending_approval.id,
+    });
+    // Stored as filed, mismatch and all — the approver owns that decision.
+    expect(claim.claim_amount_usd).toBe('4030');
+    expect(claim.shipping_amount_usd).toBe('1000');
+  });
+
+  it('a PENDING override cannot be spent', async () => {
+    const jobId = await freshJob();
+    await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '1000',
+    });
+    const held = (await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '2000',
+        request_override: true,
+        override_reason: 'second claim needed',
+      },
+      201,
+    )) as unknown as { pending_approval: { id: string } };
+
+    // Not decided yet → refused.
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '2000',
+        override_approval_id: held.pending_approval.id,
+      },
+      409,
+    );
+  });
+
+  it('an override for one guard cannot be spent on another', async () => {
+    const jobId = await freshJob();
+    await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '1000',
+    });
+    const held = (await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '2000',
+        request_override: true,
+        override_reason: 'duplicate is intended',
+      },
+      201,
+    )) as unknown as { pending_approval: { id: string } };
+    await approve(held.pending_approval.id);
+
+    // That approval authorises a DUPLICATE, not a bad split — and the split
+    // guard is what a fresh job would hit.
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: await freshJob(),
+        claim_amount_usd: '4030',
+        labour_amount_usd: '1',
+        override_approval_id: held.pending_approval.id,
+      },
+      400,
+    );
+  });
+
+  it('requesting an override without a reason is refused', async () => {
+    const jobId = await freshJob();
+    await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '1000',
+    });
+    await createClaim(
+      tokens.clerkDar,
+      { job_id: jobId, claim_amount_usd: '2000', request_override: true },
+      400,
+    );
+  });
+
+  it('an override offered when nothing is blocking is refused, not burned', async () => {
+    const jobId = await freshJob();
+    await createClaim(tokens.clerkDar, {
+      job_id: jobId,
+      claim_amount_usd: '1000',
+    });
+    const held = (await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobId,
+        claim_amount_usd: '2000',
+        request_override: true,
+        override_reason: 'deliberate second claim',
+      },
+      201,
+    )) as unknown as { pending_approval: { id: string } };
+    await approve(held.pending_approval.id);
+
+    // A clean job needs no override — spending one here would waste it.
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: await freshJob(),
+        claim_amount_usd: '1000',
+        override_approval_id: held.pending_approval.id,
+      },
+      400,
+    );
+    const row = await raw.approval.findUniqueOrThrow({
+      where: { id: held.pending_approval.id },
+    });
+    expect(row.consumedAt).toBeNull();
   });
 });

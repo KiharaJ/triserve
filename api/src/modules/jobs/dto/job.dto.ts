@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsISO8601,
@@ -370,6 +371,26 @@ export class UpdateJobDto {
   @IsString()
   @MaxLength(5000)
   notes?: string;
+
+  /**
+   * Admin overrides (§4.11). When a guard blocks this request, ask for an
+   * override with `request_override` + `override_reason` (which raises a
+   * PENDING approval and changes NOTHING), then retry the same request with
+   * `override_approval_id` once it is approved. One approval, one use.
+   */
+  @IsOptional()
+  @IsBoolean()
+  request_override?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  override_reason?: string;
+
+  @IsOptional()
+  @IsUUID()
+  override_approval_id?: string;
 }
 
 /**
@@ -387,6 +408,26 @@ export class TransitionJobDto {
   @IsString()
   @MaxLength(2000)
   note?: string;
+
+  /**
+   * Admin overrides (§4.11). When a guard blocks this request, ask for an
+   * override with `request_override` + `override_reason` (which raises a
+   * PENDING approval and changes NOTHING), then retry the same request with
+   * `override_approval_id` once it is approved. One approval, one use.
+   */
+  @IsOptional()
+  @IsBoolean()
+  request_override?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(5)
+  @MaxLength(500)
+  override_reason?: string;
+
+  @IsOptional()
+  @IsUUID()
+  override_approval_id?: string;
 }
 
 /**

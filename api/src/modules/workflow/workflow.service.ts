@@ -65,6 +65,12 @@ export interface TransitionCheck {
   /** The matched edge (present whenever the edge exists), so callers
    *  (Task 1.3) can route `requires_approval` through §4.11 approvals. */
   transition?: WorkflowTransitionWire;
+  /**
+   * The `guard_code` that blocked this move, when one did. Machine-readable
+   * (unlike `reason`) so a caller can offer the matching override instead of
+   * string-matching an error message.
+   */
+  blocked_guard?: string;
 }
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -393,7 +399,14 @@ export class WorkflowService {
       };
     }
 
-    if (transition.guardCode) {
+    // An APPROVED override lets a named guard through for THIS call only.
+    // Generic on purpose: every guard becomes overridable the moment a caller
+    // knows how to obtain approval for it, with no change here.
+    const overridden = (
+      guardContext?.overriddenGuards as string[] | undefined
+    )?.includes(transition.guardCode ?? '');
+
+    if (transition.guardCode && !overridden) {
       const guard = WORKFLOW_GUARDS[transition.guardCode];
       if (!guard) {
         // Fail CLOSED: an edge naming an unregistered guard never opens.
@@ -401,6 +414,7 @@ export class WorkflowService {
           allowed: false,
           reason: `Transition guard '${transition.guardCode}' is not registered — transition blocked`,
           transition: wire,
+          blocked_guard: transition.guardCode,
         };
       }
       const ctx: WorkflowGuardContext = {
@@ -416,6 +430,8 @@ export class WorkflowService {
           allowed: false,
           reason: `Transition condition '${transition.guardCode}' not satisfied for ${fromState.code} → ${toState.code}`,
           transition: wire,
+          // Machine-readable so a caller can offer the right override.
+          blocked_guard: transition.guardCode,
         };
       }
     }

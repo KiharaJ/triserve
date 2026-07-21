@@ -48,6 +48,14 @@ enum ApprovalType {
   REOPEN_JOB
   LARGE_CASH_REFUND
   MANUAL_JOURNAL
+  /// Admin overrides of the warranty/repair guards (§4.7). Each is requested
+  /// when a guard blocks an action, and — once APPROVED — is spent by
+  /// RETRYING that action with the approval id. See the approvals framework
+  /// doc comment for the request → decide → retry pattern.
+  CLAIM_SPLIT_MISMATCH
+  OW_REPAIR_WITHOUT_QUOTE
+  DUPLICATE_WARRANTY_CLAIM
+  JOB_COVERAGE_CHANGE
 }
 
 enum ApprovalStatus {
@@ -352,6 +360,7 @@ model User {
   sessions             Session[]
   requestedApprovals   Approval[]     @relation("ApprovalRequestedBy")
   decidedApprovals     Approval[]     @relation("ApprovalApprovedBy")
+  consumedApprovals    Approval[]     @relation("ApprovalConsumedBy")
   postedJournalEntries JournalEntry[] @relation("JournalEntryPostedBy")
 
   // Task 1.3 (§4.3): the several actor roles a user plays on a job.
@@ -511,6 +520,11 @@ model Approval {
   requestedAt   DateTime       @default(now()) @map("requested_at") @db.DateTime(3)
   decidedAt     DateTime?      @map("decided_at") @db.DateTime(3)
 
+  /// An APPROVED approval is SINGLE USE. Stamped by the action that spends
+  /// it, so a one-off "yes" cannot be replayed into standing permission.
+  consumedAt   DateTime? @map("consumed_at") @db.DateTime(3)
+  consumedById String?   @map("consumed_by") @db.Char(36)
+
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
@@ -518,8 +532,10 @@ model Approval {
   branch      Branch  @relation(fields: [branchId], references: [id])
   requestedBy User    @relation("ApprovalRequestedBy", fields: [requestedById], references: [id])
   approvedBy  User?   @relation("ApprovalApprovedBy", fields: [approvedById], references: [id])
+  consumedBy  User?   @relation("ApprovalConsumedBy", fields: [consumedById], references: [id])
 
   @@index([companyId, status, type])
+  @@index([companyId, type, status, consumedAt])
   @@index([companyId, branchId, status])
   @@index([refType, refId])
   @@map("approvals")
@@ -559,6 +575,9 @@ enum AuditAction {
   LOGIN
   APPROVE
   REJECT
+  /// An APPROVED override was SPENT on the action it gated. Distinct from
+  /// APPROVE: the decision and its use can be days apart, by different people.
+  OVERRIDE_USED
 }
 
 /// Append-only. Written automatically by the audit Prisma extension

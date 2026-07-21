@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module';
+import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { GspnBridgeService } from './gspn-bridge.service';
@@ -15,9 +16,13 @@ import { WarrantyRegistrationsService } from './warranty-registrations.service';
  * the semantic lifecycle rows.
  */
 @Module({
-  imports: [AuthModule, AuditModule, AccountingModule],
+  imports: [AuthModule, AuditModule, AccountingModule, ApprovalsModule],
   controllers: [WarrantyClaimsController, WarrantyRegistrationsController],
-  providers: [WarrantyClaimsService, GspnBridgeService, WarrantyRegistrationsService],
+  providers: [
+    WarrantyClaimsService,
+    GspnBridgeService,
+    WarrantyRegistrationsService,
+  ],
   exports: [WarrantyClaimsService],
 })
 export class WarrantyModule {}

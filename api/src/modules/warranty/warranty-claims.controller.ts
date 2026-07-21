@@ -37,6 +37,7 @@ import type { ParsedClaim } from './gspn-claim.parser';
 import {
   WarrantyClaimsService,
   type ClaimJobMatch,
+  type CreateClaimResult,
   type WarrantyClaimWire,
 } from './warranty-claims.service';
 
@@ -143,10 +144,15 @@ export class WarrantyClaimsController {
 
   @Post()
   @RequirePermissions('warranty.claim.create')
+  /**
+   * Returns the created claim, OR `{ held: true, pending_approval }` when the
+   * caller asked for an override of a guard — nothing is created then, and the
+   * request is retried with `override_approval_id` once approved.
+   */
   create(
     @Body() dto: CreateWarrantyClaimDto,
     @CurrentUser() user: AuthUser,
-  ): Promise<WarrantyClaimWire> {
+  ): Promise<CreateClaimResult> {
     return this.claims.create(dto, user);
   }
 
