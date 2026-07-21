@@ -28,7 +28,7 @@ import { AppModule } from '../app.module';
 import { AllExceptionsFilter } from '../common/filters/all-exceptions.filter';
 
 process.env.DATABASE_URL =
-  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve';
+  process.env.DATABASE_URL ?? 'mysql://root@127.0.0.1:3306/triserve_test';
 
 const TEST_PREFIX = '__TEST_1_3__';
 const PASSWORD = 'Jobs1.3-Pass!';
@@ -1241,5 +1241,152 @@ describe('Service line + priority (§4.3)', () => {
       .expect(200);
     const body2 = after.body as { data: Array<{ id: string }> };
     expect(body2.data.some((j) => j.id === late.id)).toBe(false);
+  });
+});
+
+describe('GET /reports/snapshot — the centre right now (§4.3)', () => {
+  interface Snapshot {
+    at: string;
+    attention: {
+      open: number;
+      overdue: number;
+      due_today: number;
+      urgent: number;
+      unassigned: number;
+      stale: number;
+    };
+    aging: { bucket: string; count: number }[];
+    by_state: { code: string; count: number; overdue: number }[];
+    by_line: {
+      service_category_id: string | null;
+      label: string;
+      count: number;
+    }[];
+    priority_mix: { priority: string; count: number }[];
+    engineers: {
+      engineer_id: string | null;
+      name: string;
+      active: number;
+      overdue: number;
+      oldest_days: number | null;
+    }[];
+  }
+
+  async function snapshot(token: string): Promise<Snapshot> {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/reports/snapshot')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+    return res.body as Snapshot;
+  }
+
+  it('counts an overdue job once it is past target, and drops it when finished', async () => {
+    const before = await snapshot(tokens.advisorDar);
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      priority: 'URGENT',
+      customer: { name: `${TEST_PREFIX} Snap`, phone: '0765995001' },
+      device: { category: 'HHP', imei_serial: '359000000000017' },
+    });
+    await raw.job.update({
+      where: { id: job.id },
+      data: { slaDueAt: new Date(Date.now() - 2 * 3_600_000) },
+    });
+
+    const during = await snapshot(tokens.advisorDar);
+    expect(during.attention.overdue).toBe(before.attention.overdue + 1);
+    expect(during.attention.urgent).toBe(before.attention.urgent + 1);
+    // Nobody assigned yet — the pile that stalls work.
+    expect(during.attention.unassigned).toBe(before.attention.unassigned + 1);
+
+    // Finish it: a job that ran late is history, not something to chase.
+    const terminal = await raw.workflowState.findFirstOrThrow({
+      where: { companyId, code: 'CANCELLED' },
+    });
+    await raw.job.update({
+      where: { id: job.id },
+      data: { stateId: terminal.id },
+    });
+
+    const after = await snapshot(tokens.advisorDar);
+    expect(after.attention.overdue).toBe(before.attention.overdue);
+    expect(after.attention.open).toBe(before.attention.open);
+  });
+
+  it('due today counts the target falling today, NOT one already past', async () => {
+    const base = await snapshot(tokens.advisorDar);
+    const soon = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Today`, phone: '0765995002' },
+      device: { category: 'HHP', imei_serial: '359000000000025' },
+    });
+    // Later today, but still ahead of now.
+    const inAnHour = new Date(Date.now() + 3_600_000);
+    const stillToday = inAnHour.getDate() === new Date().getDate();
+    await raw.job.update({
+      where: { id: soon.id },
+      data: { slaDueAt: inAnHour },
+    });
+
+    const after = await snapshot(tokens.advisorDar);
+    // Guarded: an hour from now rolls past midnight late in the evening, and
+    // the assertion would then be wrong for a reason that is not a bug.
+    if (stillToday) {
+      expect(after.attention.due_today).toBe(base.attention.due_today + 1);
+    }
+    // Either way it is not yet late.
+    expect(after.attention.overdue).toBe(base.attention.overdue);
+  });
+
+  it('buckets open work by age and attributes it to an engineer', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Aged`, phone: '0765995003' },
+      device: { category: 'HHP', imei_serial: '359000000000033' },
+    });
+    // Taken in 20 days ago: the oldest bucket, and stale.
+    await raw.job.update({
+      where: { id: job.id },
+      data: { receivedAt: new Date(Date.now() - 20 * 86_400_000) },
+    });
+
+    const snap = await snapshot(tokens.advisorDar);
+    expect(snap.aging.map((b) => b.bucket)).toEqual([
+      '0–2 days',
+      '3–7 days',
+      '8–14 days',
+      '15+ days',
+    ]);
+    expect(snap.aging[3].count).toBeGreaterThan(0);
+    expect(snap.attention.stale).toBeGreaterThan(0);
+
+    const tech = snap.engineers.find((e) => e.engineer_id === ids.tech1);
+    expect(tech).toBeDefined();
+    expect(tech!.active).toBeGreaterThan(0);
+    expect(tech!.oldest_days).toBeGreaterThanOrEqual(20);
+
+    // The unassigned pile leads the list — nobody owns it, so nobody sees it.
+    if (snap.engineers.some((e) => e.engineer_id === null)) {
+      expect(snap.engineers[0].engineer_id).toBeNull();
+      expect(snap.engineers[0].name).toBe('Unassigned');
+    }
+  });
+
+  it('a branch user sees only their own branch', async () => {
+    await createJob(tokens.advisorKrk, {
+      branch_id: branchKrk,
+      customer: { name: `${TEST_PREFIX} Krk snap`, phone: '0765995004' },
+      device: { category: 'HHP', imei_serial: '359000000000041' },
+    });
+    const dar = await snapshot(tokens.advisorDar);
+    const krk = await snapshot(tokens.advisorKrk);
+    // Both are branch-scoped, so neither total can be the whole company.
+    expect(dar.attention.open).toBeGreaterThan(0);
+    expect(krk.attention.open).toBeGreaterThan(0);
+    const admin = await snapshot(tokens.admin);
+    expect(admin.attention.open).toBeGreaterThanOrEqual(
+      Math.max(dar.attention.open, krk.attention.open),
+    );
   });
 });

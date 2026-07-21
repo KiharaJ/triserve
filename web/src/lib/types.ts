@@ -225,6 +225,45 @@ export interface ServiceCategoryWire {
   updated_at: string
 }
 
+/**
+ * GET /reports/snapshot — the centre RIGHT NOW. No date range: every figure
+ * is as-of-now, and nothing is stored (overdue is a function of the clock).
+ */
+export interface FloorSnapshotWire {
+  at: string
+  attention: {
+    open: number
+    overdue: number
+    due_today: number
+    urgent: number
+    unassigned: number
+    stale: number
+  }
+  aging: { bucket: string; count: number }[]
+  by_state: {
+    code: string
+    label: string
+    sort_order: number
+    count: number
+    overdue: number
+  }[]
+  by_line: {
+    service_category_id: string | null
+    label: string
+    count: number
+    overdue: number
+  }[]
+  priority_mix: { priority: string; count: number }[]
+  engineers: {
+    engineer_id: string | null
+    name: string
+    initials: string | null
+    active: number
+    overdue: number
+    oldest_days: number | null
+  }[]
+}
+
 /** The evidence behind a warranty ruling (§4.7). */
 export type WarrantySource = 'REGISTRATION' | 'PURCHASE_DATE' | 'MANUAL' | 'GOODWILL'
 

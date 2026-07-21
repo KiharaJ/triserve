@@ -9,6 +9,7 @@ import {
   Factory,
   KeyRound,
   BookOpen,
+  Gauge,
   LayoutDashboard,
   LayoutGrid,
   PlusCircle,
@@ -176,6 +177,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     heading: 'Oversight',
     items: [
+      { to: '/workload', label: 'Right now', icon: Gauge, end: false, permission: 'job.read', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
       { to: '/operations', label: 'Operations', icon: Activity, end: false, permission: 'job.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: false, permission: 'approval.decide', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
       { to: '/audit', label: 'Audit log', icon: ScrollText, end: false, permission: 'audit.read', color: 'bg-slate-500/15 text-slate-600 dark:text-slate-300' },

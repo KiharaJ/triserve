@@ -14,6 +14,7 @@ import { CustomersListPage } from '@/pages/customers/list'
 import { DevicesListPage } from '@/pages/devices/list'
 import { DashboardPage } from '@/pages/dashboard'
 import { GuidePage } from '@/pages/guide'
+import { WorkloadPage } from '@/pages/workload'
 import { MovementsPage } from '@/pages/inventory/movements'
 import { PartsPage } from '@/pages/inventory/parts'
 import { ProductsPage } from '@/pages/inventory/products'
@@ -94,6 +95,7 @@ function App() {
         <Route path="warranty-claims" element={<WarrantyClaimsPage />} />
         <Route path="warranties" element={<WarrantyRegistrationsPage />} />
         <Route path="reports" element={<ReportsPage />} />
+        <Route path="workload" element={<WorkloadPage />} />
         <Route path="operations" element={<OperationsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />

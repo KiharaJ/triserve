@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Plus, Search } from 'lucide-react'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Link } from 'react-router-dom'
 import type { PaginatedResponse } from '@triserve/shared'
 import { Pager } from '@/components/shared/pager'
@@ -54,6 +55,12 @@ function warrantyBadge(status: WarrantyStatus) {
  */
 export function JobsListView() {
   const { user, can } = useAuth()
+  // Filters arriving in the URL, so a link from the "Right now" tiles lands on
+  // the work it names. Without this the list would silently show everything —
+  // a link that claims to filter and does not is worse than no link.
+  const [urlParams, setUrlParams] = useSearchParams()
+  const overdueOnly = urlParams.get('overdue') === 'true'
+  const urlPriority = urlParams.get('priority') ?? ''
   const [page, setPage] = useState(1)
   const [branchId, setBranchId] = useState('')
   const [engineerId, setEngineerId] = useState('')
@@ -77,6 +84,8 @@ export function JobsListView() {
       warrantyStatus,
       state,
       debouncedSearch,
+      overdueOnly,
+      urlPriority,
     ],
     queryFn: async () =>
       (
@@ -89,6 +98,8 @@ export function JobsListView() {
             ...(warrantyStatus ? { warranty_status: warrantyStatus } : {}),
             ...(state ? { state } : {}),
             ...(debouncedSearch ? { q: debouncedSearch } : {}),
+            ...(overdueOnly ? { overdue: true } : {}),
+            ...(urlPriority ? { priority: urlPriority } : {}),
           },
         })
       ).data,
@@ -131,8 +142,40 @@ export function JobsListView() {
 
   const states = (graph.data?.states ?? []).filter((s) => s.active)
 
+  /** Drop a URL-borne filter, keeping any others (e.g. the view toggle). */
+  function clearUrlFilter(key: string) {
+    urlParams.delete(key)
+    setUrlParams(urlParams, { replace: true })
+    setPage(1)
+  }
+
   return (
     <div className="flex flex-col gap-4">
+      {/* A filter that arrived by link must be VISIBLE and removable —
+          otherwise the list looks wrong rather than filtered. */}
+      {(overdueOnly || urlPriority) && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-muted-foreground">Filtered:</span>
+          {overdueOnly && (
+            <button
+              type="button"
+              onClick={() => clearUrlFilter('overdue')}
+              className="rounded-full border border-destructive/30 bg-destructive/10 px-2 py-0.5 font-medium hover:bg-destructive/20"
+            >
+              Overdue ×
+            </button>
+          )}
+          {urlPriority && (
+            <button
+              type="button"
+              onClick={() => clearUrlFilter('priority')}
+              className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 font-medium hover:bg-amber-500/20"
+            >
+              Priority {urlPriority} ×
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative w-56">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

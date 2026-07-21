@@ -9,6 +9,7 @@ import { JobPartsService } from './job-parts.service';
 import { JobsController } from './jobs.controller';
 import { JobsService } from './jobs.service';
 import { OperationsReportController } from './operations-report.controller';
+import { FloorSnapshotService } from './floor-snapshot.service';
 import { OperationsReportService } from './operations-report.service';
 
 /**
@@ -28,7 +29,12 @@ import { OperationsReportService } from './operations-report.service';
     InventoryModule,
   ],
   controllers: [JobsController, JobPartsController, OperationsReportController],
-  providers: [JobsService, JobPartsService, OperationsReportService],
+  providers: [
+    JobsService,
+    JobPartsService,
+    OperationsReportService,
+    FloorSnapshotService,
+  ],
   exports: [JobsService],
 })
 export class JobsModule {}

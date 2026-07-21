@@ -6,6 +6,10 @@ import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
 import {
+  FloorSnapshotService,
+  type FloorSnapshotWire,
+} from './floor-snapshot.service';
+import {
   OperationsReportService,
   type OperationsReportWire,
 } from './operations-report.service';
@@ -28,7 +32,23 @@ class RangeDto {
 @Controller('reports')
 @UseGuards(AuthGuard, PermissionsGuard)
 export class OperationsReportController {
-  constructor(private readonly ops: OperationsReportService) {}
+  constructor(
+    private readonly ops: OperationsReportService,
+    private readonly floor: FloorSnapshotService,
+  ) {}
+
+  /**
+   * GET /reports/snapshot — the centre RIGHT NOW: what is overdue, due today,
+   * unassigned or stale, where open work is sitting, and who is carrying it.
+   *
+   * No date range on purpose. This answers "what needs attention", which the
+   * operations report (historical BI over a range) cannot.
+   */
+  @Get('snapshot')
+  @RequirePermissions('job.read')
+  snapshot(@CurrentUser() user: AuthUser): Promise<FloorSnapshotWire> {
+    return this.floor.snapshot(user);
+  }
 
   @Get('operations')
   @RequirePermissions('job.read')
