@@ -1,12 +1,20 @@
 import { LabourCode } from '@prisma/client';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsEnum,
   IsIn,
+  IsInt,
+  IsISO8601,
   IsOptional,
   IsString,
   IsUUID,
   Matches,
   MaxLength,
+  Min,
+  MinLength,
+  ValidateNested,
 } from 'class-validator';
 import { ListQueryDto } from '../../../common/dto/list-query.dto';
 
@@ -41,10 +49,124 @@ export class CreateWarrantyClaimDto {
   @MaxLength(100)
   claim_no?: string;
 
+  /**
+   * GSPN's other two identifiers plus its raw status string. Known up front
+   * when the claim was read from a Warranty Claim Detail PDF; otherwise they
+   * arrive on reconciliation.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  samsung_ref_no?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  ticket_no?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  gspn_status?: string;
+
+  /**
+   * The cost breakdown GSPN settles on. Optional — a hand-raised claim states
+   * only a total — but when supplied the components must sum to
+   * `claim_amount_usd`, or the claim is rejected: a total that disagrees with
+   * its own parts makes a short payment un-attributable, which is the whole
+   * reason the split exists.
+   */
+  @IsOptional()
+  @Matches(MINOR_UNITS, { message: 'labour_amount_usd must be minor units' })
+  labour_amount_usd?: string;
+
+  @IsOptional()
+  @Matches(MINOR_UNITS, { message: 'parts_amount_usd must be minor units' })
+  parts_amount_usd?: string;
+
+  @IsOptional()
+  @Matches(MINOR_UNITS, { message: 'shipping_amount_usd must be minor units' })
+  shipping_amount_usd?: string;
+
+  @IsOptional()
+  @Matches(MINOR_UNITS, { message: 'tax_amount_usd must be minor units' })
+  tax_amount_usd?: string;
+
+  /** GSPN's own milestones, as filed — see the schema note on why they exist. */
+  @IsOptional()
+  @IsISO8601()
+  repair_received_at?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  completed_at?: string;
+
+  @IsOptional()
+  @IsISO8601()
+  delivered_at?: string;
+
+  /** The parts claimed against Samsung, at THEIR reimbursement prices. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => WarrantyClaimLineInput)
+  lines?: WarrantyClaimLineInput[];
+
   @IsOptional()
   @IsString()
   @MaxLength(2000)
   notes?: string;
+}
+
+/**
+ * One part line on a claim. Prices are Samsung's REIMBURSEMENT prices in USD
+ * minor units — deliberately not the job's sell price. `part_id` links to our
+ * catalogue when we stock the part; `part_no` is always kept so a filed claim
+ * stays legible after a rename or delisting.
+ */
+export class WarrantyClaimLineInput {
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  part_no!: string;
+
+  @IsOptional()
+  @IsUUID()
+  part_id?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  location?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  qty?: number;
+
+  @Matches(MINOR_UNITS, { message: 'unit_price_usd must be minor units' })
+  unit_price_usd!: string;
+
+  /** Omit and it is computed as qty × unit price. */
+  @IsOptional()
+  @Matches(MINOR_UNITS, { message: 'amount_usd must be minor units' })
+  amount_usd?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  part_serial_no?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  invoice_no?: string;
 }
 
 /** PATCH /warranty-claims/{id} — DRAFT only; every field optional. */

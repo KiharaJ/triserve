@@ -70,6 +70,21 @@ interface ClaimBody {
   submitted_at: string | null;
   paid_at: string | null;
   labour_code: string | null;
+  samsung_ref_no: string | null;
+  ticket_no: string | null;
+  gspn_status: string | null;
+  labour_amount_usd: string;
+  parts_amount_usd: string;
+  shipping_amount_usd: string;
+  tax_amount_usd: string;
+  lines: Array<{
+    line_no: number;
+    part_no: string;
+    qty: number;
+    unit_price_usd: string;
+    amount_usd: string;
+    description: string | null;
+  }>;
 }
 
 async function createClaim(
@@ -192,7 +207,14 @@ beforeAll(async () => {
   ).id;
   deviceId = (
     await raw.device.create({
-      data: { companyId, customerId, category: 'HHP', model: 'A55' },
+      data: {
+        companyId,
+        customerId,
+        category: 'HHP',
+        model: 'A55',
+        // Claims are matched to jobs on SERIAL (GSPN masks the IMEI).
+        imeiSerial: 'R83TESTSERIAL1',
+      },
     })
   ).id;
   const initial = await raw.workflowState.findFirstOrThrow({
@@ -240,6 +262,10 @@ afterAll(async () => {
   const entryIds = entries.map((e) => e.id);
   await raw.journalLine.deleteMany({ where: { entryId: { in: entryIds } } });
   await raw.journalEntry.deleteMany({ where: { id: { in: entryIds } } });
+  // Lines first: warranty_claim_lines.claim_id FKs into the claims.
+  await raw.warrantyClaimLine.deleteMany({
+    where: { claimId: { in: createdClaimIds } },
+  });
   await raw.warrantyClaim.deleteMany({
     where: { id: { in: createdClaimIds } },
   });
@@ -624,5 +650,146 @@ describe('GSPN claim-detail PDF import (§4.7)', () => {
         contentType: 'application/pdf',
       })
       .expect(403);
+  });
+});
+
+describe('Claim detail: the cost split + part lines (§4.7)', () => {
+  it('persists the GSPN references, the split and the part lines', async () => {
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '4030',
+      labour_amount_usd: '1652',
+      parts_amount_usd: '1283',
+      shipping_amount_usd: '1095',
+      tax_amount_usd: '0',
+      samsung_ref_no: '691010405931',
+      ticket_no: '4294486119',
+      gspn_status: '20-Data closed',
+      repair_received_at: '2026-05-21T00:00:00.000Z',
+      completed_at: '2026-05-25T00:00:00.000Z',
+      lines: [
+        {
+          part_no: 'GH81-26450A',
+          description: 'SVC JDM-ASSY SUB PBA_COMMON_A065;SM-A065',
+          qty: 1,
+          unit_price_usd: '1283',
+        },
+      ],
+    });
+
+    expect(claim.samsung_ref_no).toBe('691010405931');
+    expect(claim.gspn_status).toBe('20-Data closed');
+    expect(claim.labour_amount_usd).toBe('1652');
+    expect(claim.shipping_amount_usd).toBe('1095');
+    expect(claim.lines).toHaveLength(1);
+    expect(claim.lines[0]).toMatchObject({
+      line_no: 1,
+      part_no: 'GH81-26450A',
+      qty: 1,
+      // Omitted on input → qty × unit price.
+      amount_usd: '1283',
+    });
+
+    const rows = await raw.warrantyClaimLine.findMany({
+      where: { claimId: claim.id },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].companyId).toBe(companyId);
+  });
+
+  it('rejects a split that does not sum to the claim total', async () => {
+    // A total that disagrees with its own parts makes a short payment
+    // un-attributable, which is the entire reason the split is stored.
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobDar,
+        claim_amount_usd: '4030',
+        labour_amount_usd: '9999',
+        parts_amount_usd: '1283',
+      },
+      400,
+    );
+  });
+
+  it('still accepts a claim stating only a total (hand-raised)', async () => {
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '5000',
+    });
+    // Unsplit is legal; the components read as zero.
+    expect(claim.labour_amount_usd).toBe('0');
+    expect(claim.lines).toEqual([]);
+  });
+
+  it('rejects a line pointing at a part outside the catalogue', async () => {
+    await createClaim(
+      tokens.clerkDar,
+      {
+        job_id: jobDar,
+        claim_amount_usd: '1000',
+        lines: [
+          {
+            part_no: 'GH81-FAKE',
+            part_id: '00000000-0000-4000-8000-000000000000',
+            unit_price_usd: '1000',
+          },
+        ],
+      },
+      400,
+    );
+  });
+});
+
+describe('GET /warranty-claims/match — find the job a claim belongs to', () => {
+  it('matches on serial and reports jobs already claimed', async () => {
+    const claim = await createClaim(tokens.clerkDar, {
+      job_id: jobDar,
+      claim_amount_usd: '1500',
+    });
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/warranty-claims/match')
+      .query({ serial: 'R83TESTSERIAL1' })
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .expect(200);
+
+    const body = res.body as Array<{
+      job_id: string;
+      job_no: string;
+      existing_claim_ids: string[];
+      coverage: string;
+    }>;
+    const hit = body.find((m) => m.job_id === jobDar);
+    expect(hit).toBeDefined();
+    // Filing a second claim on an already-claimed job is nearly always a
+    // mistake — the caller has to be able to see that.
+    expect(hit?.existing_claim_ids).toContain(claim.id);
+  });
+
+  it('normalises a messily typed serial', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/warranty-claims/match')
+      .query({ serial: ' r83-test serial1 ' })
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .expect(200);
+    expect((res.body as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  it('hides jobs from another branch (a suggestion must respect scope)', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/warranty-claims/match')
+      .query({ serial: 'R83TESTSERIAL1' })
+      .set('Authorization', `Bearer ${tokens.clerkKrk}`)
+      .expect(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it('an unknown serial returns nothing rather than erroring', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/warranty-claims/match')
+      .query({ serial: 'NOSUCHSERIAL' })
+      .set('Authorization', `Bearer ${tokens.clerkDar}`)
+      .expect(200);
+    expect(res.body).toEqual([]);
   });
 });

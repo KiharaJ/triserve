@@ -36,6 +36,7 @@ import {
 import type { ParsedClaim } from './gspn-claim.parser';
 import {
   WarrantyClaimsService,
+  type ClaimJobMatch,
   type WarrantyClaimWire,
 } from './warranty-claims.service';
 
@@ -104,6 +105,22 @@ export class WarrantyClaimsController {
   )
   importPdf(@UploadedFile() file: Express.Multer.File): Promise<ParsedClaim> {
     return this.gspn.parseClaimPdf(file);
+  }
+
+  /**
+   * Candidate jobs for a claim, looked up by the handset's serial.
+   *
+   * A suggestion, never a binding: several jobs can share a serial (a repeat
+   * repair, a rework), so the operator picks. Matched on SERIAL because GSPN
+   * masks the IMEI on its documents.
+   */
+  @Get('match')
+  @RequirePermissions('warranty.claim.create')
+  match(
+    @Query('serial') serial: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<ClaimJobMatch[]> {
+    return this.claims.matchJobsBySerial(serial ?? '', user);
   }
 
   @Get()

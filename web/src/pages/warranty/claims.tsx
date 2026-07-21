@@ -30,6 +30,7 @@ import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { decimalToMinor, formatDate, formatMoney, minorToDecimal } from '@/lib/format'
 import type {
+  ClaimJobMatch,
   LabourCode,
   ParsedClaim,
   WarrantyClaimStatus,
@@ -118,6 +119,7 @@ export function WarrantyClaimsPage() {
     setClaimNo('')
     setNotes('')
     setPdfDraft(null)
+    setJobMatches([])
     setDialogOpen(true)
   }
 
@@ -155,8 +157,35 @@ export function WarrantyClaimsPage() {
       )
       setPdfDraft(draft)
       setDialogOpen(true)
+      // Suggest which job this claim belongs to. The PDF names the handset,
+      // never the job, so this is a lookup the operator confirms.
+      if (draft.serial) matchJobs.mutate(draft.serial)
+      else setJobMatches([])
     },
     onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const [jobMatches, setJobMatches] = useState<ClaimJobMatch[]>([])
+
+  const matchJobs = useMutation({
+    mutationFn: async (serial: string) =>
+      (
+        await api.get<ClaimJobMatch[]>('/warranty-claims/match', {
+          params: { serial },
+        })
+      ).data,
+    onSuccess: (matches) => {
+      setJobMatches(matches)
+      // Exactly one candidate and it has no claim yet — preselect it, but
+      // still show it so the operator can see what was chosen for them.
+      const only = matches.length === 1 ? matches[0] : null
+      if (only && only.existing_claim_ids.length === 0) {
+        setJobId(only.job_id)
+        setJobLabel(`${only.job_no} · ${only.customer_name}`)
+      }
+    },
+    // A failed suggestion is not a failed import — the operator can still pick.
+    onError: () => setJobMatches([]),
   })
 
   function openEdit(c: WarrantyClaimWire) {
@@ -185,16 +214,58 @@ export function WarrantyClaimsPage() {
         ).data
       }
       if (!jobId) throw new Error('Select a job')
+      // Everything the PDF gave us travels with the claim — the split and the
+      // part lines are what make a short payment attributable later, so they
+      // must not be dropped on save.
+      // The API requires the components to sum to the total. If the operator
+      // edited the amount away from what the PDF said, the split no longer
+      // describes it — send the total alone rather than a contradiction.
+      const splitStillApplies =
+        pdfDraft?.claim_amount_usd != null &&
+        pdfDraft.claim_amount_usd === amountMinor
+      const detail = pdfDraft
+        ? {
+            samsung_ref_no: pdfDraft.samsung_ref_no ?? undefined,
+            ticket_no: pdfDraft.ticket_no ?? undefined,
+            gspn_status: pdfDraft.gspn_status ?? undefined,
+            ...(splitStillApplies
+              ? {
+                  labour_amount_usd: pdfDraft.labour_amount_usd ?? undefined,
+                  parts_amount_usd: pdfDraft.parts_amount_usd ?? undefined,
+                  shipping_amount_usd: pdfDraft.shipping_amount_usd ?? undefined,
+                  tax_amount_usd: pdfDraft.tax_amount_usd ?? undefined,
+                }
+              : {}),
+            repair_received_at: pdfDraft.repair_received_at ?? undefined,
+            completed_at: pdfDraft.completed_at ?? undefined,
+            delivered_at: pdfDraft.delivered_at ?? undefined,
+            lines: pdfDraft.lines.length
+              ? pdfDraft.lines.map((l) => ({
+                  part_no: l.part_no,
+                  description: l.description ?? undefined,
+                  location: l.location ?? undefined,
+                  qty: l.qty,
+                  unit_price_usd: l.unit_price_usd ?? '0',
+                  amount_usd: l.amount_usd ?? undefined,
+                  part_serial_no: l.part_serial_no ?? undefined,
+                  invoice_no: l.invoice_no ?? undefined,
+                }))
+              : undefined,
+          }
+        : {}
       return (
         await api.post<WarrantyClaimWire>('/warranty-claims', {
           job_id: jobId,
           ...payload,
+          ...detail,
         })
       ).data
     },
     onSuccess: async () => {
       toast.success(editId ? 'Claim updated' : 'Claim created')
       setDialogOpen(false)
+      setPdfDraft(null)
+      setJobMatches([])
       await invalidate()
     },
     onError: (e) =>
@@ -513,11 +584,54 @@ export function WarrantyClaimsPage() {
                       .join(', ')}
                   </p>
                 )}
-                {/* The PDF identifies the handset, not the job — so the
-                    advisor still has to say which job this belongs to. */}
-                <p className="text-muted-foreground">
-                  Pick the job this claim belongs to below.
-                </p>
+                {/* The PDF identifies the handset, not the job — matched on
+                    serial, so several jobs can qualify. */}
+                {matchJobs.isPending && (
+                  <p className="text-muted-foreground">Looking for the job…</p>
+                )}
+                {!matchJobs.isPending && jobMatches.length === 0 && (
+                  <p className="text-muted-foreground">
+                    No job found for serial {pdfDraft.serial ?? '—'} — pick one below.
+                  </p>
+                )}
+                {jobMatches.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <p className="text-muted-foreground">
+                      {jobMatches.length === 1
+                        ? 'Matched this job by serial:'
+                        : `${jobMatches.length} jobs share this serial — pick one:`}
+                    </p>
+                    {jobMatches.map((m) => (
+                      <button
+                        key={m.job_id}
+                        type="button"
+                        className={
+                          'rounded-sm border px-2 py-1 text-left hover:bg-muted ' +
+                          (jobId === m.job_id ? 'border-primary bg-muted' : '')
+                        }
+                        onClick={() => {
+                          setJobId(m.job_id)
+                          setJobLabel(`${m.job_no} · ${m.customer_name}`)
+                        }}
+                      >
+                        <span className="font-medium">{m.job_no}</span>{' '}
+                        <span className="text-muted-foreground">
+                          {m.customer_name} · {m.state_label} · {m.branch_code} ·{' '}
+                          {formatDate(m.received_at)}
+                        </span>
+                        {/* Filing a second claim against an already-claimed
+                            job is nearly always a mistake. */}
+                        {m.existing_claim_ids.length > 0 && (
+                          <span className="text-amber-700 dark:text-amber-400">
+                            {' '}
+                            · already has {m.existing_claim_ids.length} claim
+                            {m.existing_claim_ids.length > 1 ? 's' : ''}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {pdfDraft.warnings.map((w) => (
                   <p key={w} className="text-amber-700 dark:text-amber-400">
                     {w}

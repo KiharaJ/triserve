@@ -1055,16 +1055,61 @@ export interface WarrantyClaimWire {
   job_id: string
   job_no: string
   claim_no: string | null
+  samsung_ref_no: string | null
+  ticket_no: string | null
+  gspn_status: string | null
   labour_code: LabourCode | null
   currency: 'USD'
   claim_amount_usd: string
+  /** The split GSPN settles on; all zero on claims raised before it existed. */
+  labour_amount_usd: string
+  parts_amount_usd: string
+  shipping_amount_usd: string
+  tax_amount_usd: string
   reimbursed_amount_usd: string | null
   status: WarrantyClaimStatus
   submitted_at: string | null
   paid_at: string | null
+  repair_received_at: string | null
+  completed_at: string | null
+  delivered_at: string | null
   notes: string | null
+  lines: WarrantyClaimLineWire[]
   created_at: string
   updated_at: string
+}
+
+/** One part claimed against Samsung, at THEIR reimbursement price. */
+export interface WarrantyClaimLineWire {
+  id: string
+  line_no: number
+  part_id: string | null
+  part_no: string
+  description: string | null
+  location: string | null
+  qty: number
+  unit_price_usd: string
+  amount_usd: string
+  part_serial_no: string | null
+  invoice_no: string | null
+}
+
+/**
+ * GET /warranty-claims/match?serial= — a job a claim might belong to.
+ * A suggestion, not a binding: several jobs can share a serial.
+ */
+export interface ClaimJobMatch {
+  job_id: string
+  job_no: string
+  branch_code: string
+  customer_name: string
+  model: string | null
+  imei_serial: string | null
+  state_code: string
+  state_label: string
+  received_at: string
+  coverage: JobCoverage
+  existing_claim_ids: string[]
 }
 
 // --- Dashboard summary (§8) — server-side analytics roll-up ------------------

@@ -6,17 +6,23 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  type JobCoverage,
   type LabourCode,
   type WarrantyClaimStatus,
 } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
-import { assertBranchAccess } from '../../common/authz/branch-access';
+import {
+  assertBranchAccess,
+  canSeeBranch,
+} from '../../common/authz/branch-access';
+import { normalizeImeiSerial } from '../../common/util/phone';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PostingService } from '../accounting/posting.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import type {
   CreateWarrantyClaimDto,
+  WarrantyClaimLineInput,
   ReconcileWarrantyClaimDto,
   SubmitWarrantyClaimDto,
   UpdateWarrantyClaimDto,
@@ -33,23 +39,69 @@ export interface WarrantyClaimWire {
   job_id: string;
   job_no: string;
   claim_no: string | null;
+  samsung_ref_no: string | null;
+  ticket_no: string | null;
+  gspn_status: string | null;
   labour_code: LabourCode | null;
   currency: 'USD';
   claim_amount_usd: string;
+  /** The split GSPN settles on; all zero on claims raised before it existed. */
+  labour_amount_usd: string;
+  parts_amount_usd: string;
+  shipping_amount_usd: string;
+  tax_amount_usd: string;
   reimbursed_amount_usd: string | null;
   status: WarrantyClaimStatus;
   submitted_at: string | null;
   paid_at: string | null;
+  repair_received_at: string | null;
+  completed_at: string | null;
+  delivered_at: string | null;
   notes: string | null;
+  lines: WarrantyClaimLineWire[];
   created_at: string;
   updated_at: string;
 }
 
+/** One part claimed against Samsung, at THEIR reimbursement price. */
+export interface WarrantyClaimLineWire {
+  id: string;
+  line_no: number;
+  part_id: string | null;
+  part_no: string;
+  description: string | null;
+  location: string | null;
+  qty: number;
+  unit_price_usd: string;
+  amount_usd: string;
+  part_serial_no: string | null;
+  invoice_no: string | null;
+}
+
+/** A job a GSPN claim might belong to — see {@link matchJobsBySerial}. */
+export interface ClaimJobMatch {
+  job_id: string;
+  job_no: string;
+  branch_code: string;
+  customer_name: string;
+  model: string | null;
+  imei_serial: string | null;
+  state_code: string;
+  state_label: string;
+  received_at: string;
+  coverage: JobCoverage;
+  existing_claim_ids: string[];
+}
+
 type ClaimFull = Prisma.WarrantyClaimGetPayload<{
-  include: { branch: true; job: true };
+  include: { branch: true; job: true; lines: true };
 }>;
 
-const FULL_INCLUDE = { branch: true, job: true } as const;
+const FULL_INCLUDE = {
+  branch: true,
+  job: true,
+  lines: { orderBy: { lineNo: 'asc' } },
+} as const satisfies Prisma.WarrantyClaimInclude;
 
 /**
  * Warranty claims (Task 4.1, DESIGN.md §4.7 / E13) — the In-Warranty side.
@@ -121,9 +173,16 @@ export class WarrantyClaimsService {
 
     const amount = BigInt(dto.claim_amount_usd);
     if (amount <= 0n) {
-      throw new BadRequestException('claim_amount_usd must be greater than zero');
+      throw new BadRequestException(
+        'claim_amount_usd must be greater than zero',
+      );
     }
-    if (dto.claim_no) await this.assertClaimNoFree(user.companyId, dto.claim_no);
+    if (dto.claim_no)
+      await this.assertClaimNoFree(user.companyId, dto.claim_no);
+
+    const components = splitOrThrow(dto, amount);
+    const lines = (dto.lines ?? []).map((l, i) => buildLine(l, i + 1));
+    await this.assertPartsInCompany(lines);
 
     const claim = await this.prisma.warrantyClaim.create({
       data: {
@@ -131,12 +190,29 @@ export class WarrantyClaimsService {
         branchId,
         jobId: job.id,
         claimNo: dto.claim_no ?? null,
+        samsungRefNo: dto.samsung_ref_no ?? null,
+        ticketNo: dto.ticket_no ?? null,
+        gspnStatus: dto.gspn_status ?? null,
         labourCode: dto.labour_code ?? null,
         claimAmountUsd: amount,
+        ...components,
+        repairReceivedAt: toDate(dto.repair_received_at),
+        completedAt: toDate(dto.completed_at),
+        deliveredAt: toDate(dto.delivered_at),
         status: 'DRAFT',
         notes: dto.notes ?? null,
         createdById: user.userId,
         updatedById: user.userId,
+        lines: lines.length
+          ? {
+              create: lines.map((l) => ({
+                companyId: user.companyId,
+                ...l,
+                createdById: user.userId,
+                updatedById: user.userId,
+              })),
+            }
+          : undefined,
       },
       include: FULL_INCLUDE,
     });
@@ -144,8 +220,66 @@ export class WarrantyClaimsService {
     await this.recordAudit(claim, 'CREATE', user, {
       job_no: claim.job.jobNo,
       claim_amount_usd: amount.toString(),
+      lines: lines.length,
     });
     return toWire(claim);
+  }
+
+  /**
+   * Suggest the job a GSPN claim belongs to, from the handset it names.
+   *
+   * A Warranty Claim Detail identifies the DEVICE (serial, masked IMEI), never
+   * the job, so this is a lookup — not an assertion. It returns candidates for
+   * a human to choose between: several jobs can share a serial (a repeat
+   * repair, or a rework), and silently binding a payout to the wrong one would
+   * be very hard to notice afterwards.
+   *
+   * Matched on serial, NOT IMEI: GSPN masks the IMEI on both documents
+   * (`********1778019`), so it cannot identify anything.
+   */
+  async matchJobsBySerial(
+    serial: string,
+    user: AuthUser,
+  ): Promise<ClaimJobMatch[]> {
+    const normalized = normalizeImeiSerial(serial);
+    if (!normalized) return [];
+
+    const jobs = await this.prisma.job.findMany({
+      where: {
+        deletedAt: null,
+        device: { imeiSerial: normalized, deletedAt: null },
+      },
+      include: {
+        branch: { select: { code: true } },
+        customer: { select: { name: true } },
+        device: { select: { imeiSerial: true, model: true } },
+        state: { select: { code: true, label: true } },
+        warrantyClaims: {
+          where: { deletedAt: null },
+          select: { id: true, claimNo: true },
+        },
+      },
+      orderBy: [{ receivedAt: 'desc' }],
+      take: 10,
+    });
+
+    return jobs
+      .filter((j) => canSeeBranch(user, j.branchId))
+      .map((j) => ({
+        job_id: j.id,
+        job_no: j.jobNo,
+        branch_code: j.branch.code,
+        customer_name: j.customer.name,
+        model: j.device.model,
+        imei_serial: j.device.imeiSerial,
+        state_code: j.state.code,
+        state_label: j.state.label,
+        received_at: j.receivedAt.toISOString(),
+        coverage: j.coverage,
+        // Surfaced so the operator can see a job that is ALREADY claimed —
+        // filing a second claim against it is almost always a mistake.
+        existing_claim_ids: j.warrantyClaims.map((c) => c.id),
+      }));
   }
 
   /** PATCH /warranty-claims/{id} — DRAFT only. */
@@ -217,7 +351,9 @@ export class WarrantyClaimsService {
       data: {
         status: 'SUBMITTED',
         claimNo,
-        ...(dto.labour_code !== undefined ? { labourCode: dto.labour_code } : {}),
+        ...(dto.labour_code !== undefined
+          ? { labourCode: dto.labour_code }
+          : {}),
         submittedAt: new Date(),
         updatedById: user.userId,
       },
@@ -321,13 +457,17 @@ export class WarrantyClaimsService {
     return claim;
   }
 
-  private async loadJob(jobId: string): Promise<{ id: string; branchId: string }> {
+  private async loadJob(
+    jobId: string,
+  ): Promise<{ id: string; branchId: string }> {
     const job = await this.prisma.job.findFirst({
       where: { id: jobId, deletedAt: null },
       select: { id: true, branchId: true },
     });
     if (!job) {
-      throw new BadRequestException('job_id does not match a job of your company');
+      throw new BadRequestException(
+        'job_id does not match a job of your company',
+      );
     }
     return job;
   }
@@ -339,6 +479,27 @@ export class WarrantyClaimsService {
     if (!branch) {
       throw new BadRequestException(
         'branch_id does not match a branch of your company',
+      );
+    }
+  }
+
+  /**
+   * Any `part_id` on a line must be one of OUR parts. The id is a bare UUID,
+   * so nothing structural stops a claim line pointing at another tenant's
+   * catalogue row; the company-scope extension filters the lookup.
+   */
+  private async assertPartsInCompany(
+    lines: Array<{ partId: string | null }>,
+  ): Promise<void> {
+    const ids = [...new Set(lines.map((l) => l.partId).filter(Boolean))];
+    if (ids.length === 0) return;
+    const found = await this.prisma.part.findMany({
+      where: { id: { in: ids as string[] }, deletedAt: null },
+      select: { id: true },
+    });
+    if (found.length !== ids.length) {
+      throw new BadRequestException(
+        'A claim line references a part that is not in your catalogue',
       );
     }
   }
@@ -389,15 +550,106 @@ function toWire(c: ClaimFull): WarrantyClaimWire {
     job_id: c.jobId,
     job_no: c.job.jobNo,
     claim_no: c.claimNo,
+    samsung_ref_no: c.samsungRefNo,
+    ticket_no: c.ticketNo,
+    gspn_status: c.gspnStatus,
     labour_code: c.labourCode,
     currency: 'USD',
     claim_amount_usd: c.claimAmountUsd.toString(),
+    labour_amount_usd: c.labourAmountUsd.toString(),
+    parts_amount_usd: c.partsAmountUsd.toString(),
+    shipping_amount_usd: c.shippingAmountUsd.toString(),
+    tax_amount_usd: c.taxAmountUsd.toString(),
     reimbursed_amount_usd: c.reimbursedAmountUsd?.toString() ?? null,
     status: c.status,
     submitted_at: c.submittedAt?.toISOString() ?? null,
     paid_at: c.paidAt?.toISOString() ?? null,
+    repair_received_at: c.repairReceivedAt?.toISOString() ?? null,
+    completed_at: c.completedAt?.toISOString() ?? null,
+    delivered_at: c.deliveredAt?.toISOString() ?? null,
     notes: c.notes,
+    lines: c.lines.map((l) => ({
+      id: l.id,
+      line_no: l.lineNo,
+      part_id: l.partId,
+      part_no: l.partNo,
+      description: l.description,
+      location: l.location,
+      qty: l.qty,
+      unit_price_usd: l.unitPriceUsd.toString(),
+      amount_usd: l.amountUsd.toString(),
+      part_serial_no: l.partSerialNo,
+      invoice_no: l.invoiceNo,
+    })),
     created_at: c.createdAt.toISOString(),
     updated_at: c.updatedAt.toISOString(),
+  };
+}
+
+/** ISO string → Date, tolerating the absent case. */
+function toDate(s: string | undefined): Date | null {
+  return s ? new Date(s) : null;
+}
+
+/**
+ * Validate the cost split against the total and return it as Prisma data.
+ *
+ * A claim may state only a total (a hand-raised one does). But if ANY
+ * component is given, the four must sum to `claim_amount_usd` — a total that
+ * disagrees with its own parts makes a short payment un-attributable, which
+ * defeats the point of storing the split at all.
+ */
+function splitOrThrow(
+  dto: CreateWarrantyClaimDto,
+  total: bigint,
+): {
+  labourAmountUsd: bigint;
+  partsAmountUsd: bigint;
+  shippingAmountUsd: bigint;
+  taxAmountUsd: bigint;
+} {
+  const given = [
+    dto.labour_amount_usd,
+    dto.parts_amount_usd,
+    dto.shipping_amount_usd,
+    dto.tax_amount_usd,
+  ];
+  const labour = BigInt(dto.labour_amount_usd ?? '0');
+  const parts = BigInt(dto.parts_amount_usd ?? '0');
+  const shipping = BigInt(dto.shipping_amount_usd ?? '0');
+  const tax = BigInt(dto.tax_amount_usd ?? '0');
+
+  if (given.some((v) => v !== undefined)) {
+    const sum = labour + parts + shipping + tax;
+    if (sum !== total) {
+      throw new BadRequestException(
+        `labour + parts + shipping + tax (${sum}) must equal claim_amount_usd (${total})`,
+      );
+    }
+  }
+  return {
+    labourAmountUsd: labour,
+    partsAmountUsd: parts,
+    shippingAmountUsd: shipping,
+    taxAmountUsd: tax,
+  };
+}
+
+/** Normalise one line input; amount defaults to qty × unit price. */
+function buildLine(l: WarrantyClaimLineInput, lineNo: number) {
+  const qty = l.qty ?? 1;
+  const unit = BigInt(l.unit_price_usd);
+  return {
+    lineNo,
+    partId: l.part_id ?? null,
+    partNo: l.part_no,
+    description: l.description ?? null,
+    location: l.location ?? null,
+    qty,
+    unitPriceUsd: unit,
+    amountUsd:
+      l.amount_usd !== undefined ? BigInt(l.amount_usd) : unit * BigInt(qty),
+    partSerialNo: l.part_serial_no ?? null,
+    invoiceNo: l.invoice_no ?? null,
   };
 }

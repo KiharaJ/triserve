@@ -16,7 +16,19 @@ export function assertBranchAccess(
   user: Pick<AuthUser, 'scope' | 'homeBranchId'>,
   branchId: string,
 ): void {
-  if (user.scope === 'group') return;
-  if (user.homeBranchId === branchId) return;
-  throw new ForbiddenException('You do not have access to this branch');
+  if (!canSeeBranch(user, branchId)) {
+    throw new ForbiddenException('You do not have access to this branch');
+  }
+}
+
+/**
+ * The same rule as a predicate, for FILTERING a list rather than rejecting a
+ * single target — a lookup that spans branches should hide what the caller
+ * cannot see, not 403 the whole request.
+ */
+export function canSeeBranch(
+  user: Pick<AuthUser, 'scope' | 'homeBranchId'>,
+  branchId: string,
+): boolean {
+  return user.scope === 'group' || user.homeBranchId === branchId;
 }
