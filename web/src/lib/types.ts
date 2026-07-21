@@ -313,6 +313,30 @@ export interface FaultCodeWire {
   updated_at: string
 }
 
+/**
+ * POST /jobs/import/gspn-jobcard — a DRAFT parsed from an uploaded Samsung
+ * job-card PDF. Nothing is created server-side; every field is a suggestion
+ * the advisor confirms. `coverage` is always null: the warranty tick box is a
+ * drawn mark, not text, so it cannot be read from the PDF.
+ */
+export interface ParsedJobCard {
+  so_number: string | null
+  customer_name: string | null
+  phone: string | null
+  address: string | null
+  model: string | null
+  serial: string | null
+  imei_masked: string | null
+  purchase_date: string | null
+  service_type: ServiceType | null
+  accessories_held: string | null
+  fault_reported: string | null
+  repair_description: string | null
+  appointment_at: string | null
+  coverage: null
+  warnings: string[]
+}
+
 /** One Samsung GSPN diagnostic code — `kind` disambiguates the shared table. */
 export interface ServiceCodeWire extends FaultCodeWire {
   kind: ServiceCodeKind

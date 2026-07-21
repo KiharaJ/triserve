@@ -29,6 +29,13 @@ import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import { resolveType } from '../customers/customers.service';
 import { WorkflowService } from '../workflow/workflow.service';
+import {
+  extractRows,
+  looksLikeJobCard,
+  parseJobCard,
+  JOBCARD_MARKER,
+  type ParsedJobCard,
+} from './gspn-jobcard.parser';
 import type {
   CreateJobDto,
   DispatchJobDto,
@@ -134,6 +141,9 @@ export interface TransitionResult {
 }
 
 const DEFAULT_PAGE_SIZE = 20;
+
+/** `%PDF-` — checked against the actual bytes, not the declared mimetype. */
+const PDF_MAGIC_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
 type JobWithState = Prisma.JobGetPayload<{ include: { state: true } }>;
 type JobDetail = Prisma.JobGetPayload<{
@@ -327,6 +337,42 @@ export class JobsService {
     });
 
     return this.get(job.id, user);
+  }
+
+  /**
+   * POST /jobs/import/gspn-jobcard — read a Samsung job-card PDF into a draft.
+   *
+   * Creates nothing and touches no tenant data: the upload is parsed in
+   * memory and thrown away. Everything it returns is a SUGGESTION for the
+   * intake form, which is why the warranty coverage it cannot read (see
+   * gspn-jobcard.parser.ts) is a warning rather than a guess.
+   */
+  async parseJobCardPdf(file?: Express.Multer.File): Promise<ParsedJobCard> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('A PDF file is required');
+    }
+    // Trust the bytes, not the client-declared mimetype.
+    if (!file.buffer.subarray(0, 5).equals(PDF_MAGIC_BYTES)) {
+      throw new BadRequestException('The uploaded file is not a PDF');
+    }
+
+    let rows;
+    try {
+      rows = await extractRows(new Uint8Array(file.buffer));
+    } catch {
+      // Encrypted, truncated or otherwise unreadable — a parser crash must
+      // not read as a server fault.
+      throw new UnprocessableEntityException(
+        'That PDF could not be read. If it is a scan or a photo, type the details in instead.',
+      );
+    }
+
+    if (!looksLikeJobCard(rows)) {
+      throw new UnprocessableEntityException(
+        `That does not look like a GSPN Service Order Sheet (no "${JOBCARD_MARKER}" heading found)`,
+      );
+    }
+    return parseJobCard(rows);
   }
 
   /** PATCH /jobs/{id} — mutable fields only (never status). */

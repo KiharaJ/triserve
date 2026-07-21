@@ -809,6 +809,103 @@ describe('warranty intake (§4.7 — the Samsung job card)', () => {
   });
 });
 
+describe('POST /jobs/import/gspn-jobcard — parse a Samsung job card', () => {
+  /** Minimal single-page PDF containing `lines` of text. */
+  function makePdf(lines: string[]): Buffer {
+    const content = lines
+      .map((t, i) => `BT /F1 10 Tf 34 ${700 - i * 20} Td (${t}) Tj ET`)
+      .join('\n');
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${i + 1} 0 obj\n${body}\nendobj\n`;
+    });
+    const xrefStart = pdf.length;
+    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+    for (const off of offsets) {
+      pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`;
+    return Buffer.from(pdf, 'latin1');
+  }
+
+  it('returns a DRAFT and creates nothing', async () => {
+    const before = await raw.job.count();
+    const res = await request(app.getHttpServer())
+      .post('/api/v1/jobs/import/gspn-jobcard')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .attach(
+        'file',
+        makePdf(['Service Order Sheet', 'Service Order No : 4295708333']),
+        {
+          filename: 'jobcard.pdf',
+          contentType: 'application/pdf',
+        },
+      )
+      .expect(201);
+
+    const body = res.body as {
+      so_number: string | null;
+      coverage: null;
+      warnings: string[];
+    };
+    expect(body.so_number).toBe('4295708333');
+    // The whole point of an import endpoint that parses only.
+    expect(await raw.job.count()).toBe(before);
+    // Coverage is never inferred — the tick box is a drawn mark, not text.
+    expect(body.coverage).toBeNull();
+    expect(body.warnings.join(' ')).toMatch(/coverage was not read/i);
+  });
+
+  it('rejects a non-PDF even when it claims to be one', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/jobs/import/gspn-jobcard')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .attach('file', Buffer.from('GIF89a totally not a pdf'), {
+        filename: 'evil.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(400);
+  });
+
+  it('rejects a valid PDF that is not a job card (422, not a 500)', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/jobs/import/gspn-jobcard')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .attach('file', makePdf(['Some entirely different document']), {
+        filename: 'other.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(422);
+  });
+
+  it('requires a file', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/jobs/import/gspn-jobcard')
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(400);
+  });
+
+  it('a TECHNICIAN cannot import (job.create)', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/jobs/import/gspn-jobcard')
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .attach('file', makePdf(['Service Order Sheet']), {
+        filename: 'jobcard.pdf',
+        contentType: 'application/pdf',
+      })
+      .expect(403);
+  });
+});
+
 describe('seed stays pristine', () => {
   it('seed intact; jobs/counters carry ONLY this suite fixtures (removed in teardown)', async () => {
     expect(

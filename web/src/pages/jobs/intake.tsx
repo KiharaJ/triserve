@@ -34,6 +34,7 @@ import {
   type FaultCodeWire,
   type JobDetailWire,
   type ModelWire,
+  type ParsedJobCard,
   type PreferredLanguageCode,
   type ServiceCodeWire,
   type UserWire,
@@ -264,6 +265,48 @@ export function JobIntakePage() {
       (await api.post<JobDetailWire>('/jobs', body)).data,
   })
 
+  // ---- GSPN job-card PDF import -------------------------------------------
+  const [importWarnings, setImportWarnings] = useState<string[]>([])
+
+  /**
+   * Prefill the form from a Samsung job-card PDF. The API only PARSES — the
+   * job is still created by submitting this form, so everything below is a
+   * suggestion the advisor reviews. Coverage is never prefilled (the PDF
+   * cannot express which warranty box is ticked).
+   */
+  const importJobCard = useMutation({
+    mutationFn: async (file: File) => {
+      const fd = new FormData()
+      fd.append('file', file)
+      return (await api.post<ParsedJobCard>('/jobs/import/gspn-jobcard', fd)).data
+    },
+    onSuccess: (draft) => {
+      if (draft.so_number) form.setValue('so_number', draft.so_number)
+      // The card's serial is complete; its IMEI is masked, so the serial is
+      // what can actually match a device or a warranty registration.
+      if (draft.serial) {
+        form.setValue('imei_serial', draft.serial, { shouldValidate: true })
+      }
+      if (draft.purchase_date) form.setValue('purchase_date', draft.purchase_date)
+      if (draft.service_type) form.setValue('service_type', draft.service_type)
+      if (draft.accessories_held) form.setValue('accessories_held', draft.accessories_held)
+      if (draft.fault_reported) {
+        form.setValue('fault_reported', draft.fault_reported, { shouldValidate: true })
+      }
+      if (draft.model) setModelQuery(draft.model)
+      // Customer: fill the new-customer branch only. An already-selected
+      // customer is a deliberate choice by the advisor — don't undo it.
+      if (!selectedCustomer) {
+        if (draft.phone) setCustomerQuery(draft.phone)
+        if (draft.customer_name) setNewCustomerName(draft.customer_name)
+        if (draft.address) setNewCustomerLocation(draft.address)
+      }
+      setImportWarnings(draft.warnings)
+      toast.success('Job card read — check the details, then set the warranty')
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
   const onSubmit = form.handleSubmit(async (values) => {
     if (user?.scope === 'group' && !values.branch_id) {
       toast.error('Select a branch for this job')
@@ -392,6 +435,7 @@ export function JobIntakePage() {
     setSelectedModel(null)
     setModelQuery('')
     setAppliedRegistrationId(null)
+    setImportWarnings([])
     setBeforePhotos([])
     photoPreviews.forEach((u) => URL.revokeObjectURL(u))
     setPhotoPreviews([])
@@ -462,6 +506,42 @@ export function JobIntakePage() {
 
   return (
     <form onSubmit={(e) => void onSubmit(e)} className="flex max-w-3xl flex-col gap-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Start from a Samsung job card</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <FormField
+            label="GSPN Service Order Sheet (PDF)"
+            htmlFor="jobcard-pdf"
+            hint="Optional — fills in the details below. Nothing is saved until you create the job."
+          >
+            <Input
+              id="jobcard-pdf"
+              type="file"
+              accept="application/pdf"
+              disabled={importJobCard.isPending}
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) importJobCard.mutate(file)
+                // Let the same file be picked again after a failed read.
+                e.target.value = ''
+              }}
+            />
+          </FormField>
+          {importJobCard.isPending && (
+            <p className="text-xs text-muted-foreground">Reading the job card…</p>
+          )}
+          {importWarnings.length > 0 && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+              {importWarnings.map((w) => (
+                <p key={w}>{w}</p>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle>Customer</CardTitle>
