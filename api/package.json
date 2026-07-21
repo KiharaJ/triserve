@@ -20,6 +20,7 @@
     "import:history": "ts-node --transpile-only scripts/import-history.ts",
     "fix:import-dates": "ts-node --transpile-only scripts/fix-import-dates.ts",
     "backfill:journal": "ts-node --transpile-only scripts/backfill-journal.ts",
+    "close:backlog": "ts-node --transpile-only scripts/close-imported-backlog.ts",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
