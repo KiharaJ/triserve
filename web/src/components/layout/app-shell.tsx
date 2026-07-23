@@ -5,6 +5,7 @@ import {
   BarChart3,
   Boxes,
   Building2,
+  ChevronDown,
   ClipboardCheck,
   Factory,
   KeyRound,
@@ -70,6 +71,23 @@ function isEntryActive(
   }
   // A plain entry yields to a sibling that pins the same key.
   return !current.get('view')
+}
+
+/** localStorage key for the user's collapsed sidebar sections. */
+const NAV_COLLAPSED_KEY = 'triserve.nav.collapsed'
+
+/**
+ * Does a section hold the page you're on? Used to tint a COLLAPSED section's
+ * heading, so folding a section away never hides where you are.
+ */
+function sectionHasActive(
+  items: { to: string; end?: boolean }[],
+  pathname: string,
+): boolean {
+  return items.some(({ to, end }) => {
+    const path = to.split('?')[0]
+    return end ? pathname === path : pathname === path || pathname.startsWith(`${path}/`)
+  })
 }
 
 /** Light/dark toggle for the topbar. */
@@ -223,6 +241,32 @@ export function AppShell() {
   /** Mobile drawer state — the sidebar is a static column from `lg` up. */
   const [navOpen, setNavOpen] = useState(false)
 
+  // Which sidebar sections the user has collapsed (by heading), persisted so
+  // the choice survives reloads. Optional and per-user: everything is expanded
+  // until you collapse it, which is how you make the whole nav fit without
+  // scrolling — hide the sections you don't use.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem(NAV_COLLAPSED_KEY)
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : [])
+    } catch {
+      return new Set()
+    }
+  })
+  function toggleSection(heading: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(heading)) next.delete(heading)
+      else next.add(heading)
+      try {
+        localStorage.setItem(NAV_COLLAPSED_KEY, JSON.stringify([...next]))
+      } catch {
+        // Storage unavailable (private mode) — the choice just won't persist.
+      }
+      return next
+    })
+  }
+
   // Close the drawer whenever the route changes (tap a link → navigate → close).
   useEffect(() => {
     setNavOpen(false)
@@ -278,45 +322,74 @@ export function AppShell() {
           </Button>
         </div>
         <nav className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 pb-3">
-          {sections.map((section, idx) => (
-            <div key={section.heading ?? idx} className="flex flex-col gap-0.5">
-              {section.heading && (
-                <span className="px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70">
-                  {section.heading}
-                </span>
-              )}
-              {section.items.map(({ to, label, icon: Icon, end, color }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  className={({ isActive }) =>
-                    navItemClass(isEntryActive(isActive, to, search))
-                  }
-                >
-                  {({ isActive }) => {
-                    const active = isEntryActive(isActive, to, search)
-                    return (
-                      <>
-                        {active && (
-                          <span className="absolute inset-y-1.5 -left-3 w-1 rounded-r-full bg-primary" />
-                        )}
-                        <span
-                          className={cn(
-                            'flex size-7 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105',
-                            color,
-                          )}
-                        >
-                          <Icon className="size-4" />
-                        </span>
-                        {label}
-                      </>
-                    )
-                  }}
-                </NavLink>
-              ))}
-            </div>
-          ))}
+          {sections.map((section, idx) => {
+            const isCollapsed = section.heading
+              ? collapsed.has(section.heading)
+              : false
+            // Tint a folded section's heading when the current page lives
+            // inside it, so collapsing never hides your location.
+            const hidesActive =
+              isCollapsed && sectionHasActive(section.items, pathname)
+            return (
+              <div key={section.heading ?? idx} className="flex flex-col gap-0.5">
+                {section.heading && (
+                  <button
+                    type="button"
+                    onClick={() => toggleSection(section.heading as string)}
+                    aria-expanded={!isCollapsed}
+                    className={cn(
+                      'flex items-center justify-between rounded-md px-3 pb-1 pt-4 text-[10px] font-semibold uppercase tracking-[0.12em] transition-colors hover:text-foreground',
+                      hidesActive ? 'text-primary' : 'text-muted-foreground/70',
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      {section.heading}
+                      {hidesActive && (
+                        <span className="size-1.5 rounded-full bg-primary" />
+                      )}
+                    </span>
+                    <ChevronDown
+                      className={cn(
+                        'size-3.5 transition-transform duration-200',
+                        isCollapsed && '-rotate-90',
+                      )}
+                    />
+                  </button>
+                )}
+                {!isCollapsed &&
+                  section.items.map(({ to, label, icon: Icon, end, color }) => (
+                    <NavLink
+                      key={to}
+                      to={to}
+                      end={end}
+                      className={({ isActive }) =>
+                        navItemClass(isEntryActive(isActive, to, search))
+                      }
+                    >
+                      {({ isActive }) => {
+                        const active = isEntryActive(isActive, to, search)
+                        return (
+                          <>
+                            {active && (
+                              <span className="absolute inset-y-1.5 -left-3 w-1 rounded-r-full bg-primary" />
+                            )}
+                            <span
+                              className={cn(
+                                'flex size-7 shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105',
+                                color,
+                              )}
+                            >
+                              <Icon className="size-4" />
+                            </span>
+                            {label}
+                          </>
+                        )
+                      }}
+                    </NavLink>
+                  ))}
+              </div>
+            )
+          })}
         </nav>
         <div className="flex flex-col gap-3 border-t p-4">
           {user && (
