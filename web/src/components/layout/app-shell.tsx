@@ -236,7 +236,10 @@ export function AppShell() {
   })).filter((section) => section.items.length > 0)
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    // Bounded to the viewport so the WINDOW never scrolls — the topbar and the
+    // sidebar stay put, and <main> below becomes the single scroll container.
+    // This is also what lets the kanban board's h-full layout resolve.
+    <div className="flex h-screen overflow-hidden bg-background text-foreground">
       {/* Backdrop — only on mobile, only while the drawer is open */}
       {navOpen && (
         <div
@@ -370,7 +373,9 @@ export function AppShell() {
             <ThemeToggle />
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto bg-muted/30 p-4 sm:p-6">
+        {/* min-h-0 lets flex-1 bound this box so it scrolls internally rather
+            than growing the page — the topbar and sidebar stay fixed above/beside it. */}
+        <main className="min-h-0 flex-1 overflow-y-auto bg-muted/30 p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

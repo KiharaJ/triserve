@@ -4,7 +4,14 @@ import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
-    <div data-slot="table-container" className="relative w-full overflow-x-auto">
+    // Bounded scroll box: long tables scroll INSIDE here (keeping the page's
+    // toolbar above them in place), and the sticky <thead> stays pinned to the
+    // top of this box. The max-height is a viewport-relative heuristic that
+    // leaves room for the fixed topbar, page padding, a toolbar row and a pager.
+    <div
+      data-slot="table-container"
+      className="relative max-h-[calc(100vh-13rem)] w-full overflow-auto"
+    >
       <table
         data-slot="table"
         className={cn("w-full caption-bottom text-sm", className)}
@@ -18,8 +25,10 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
+      // Sticky so the column labels stay visible while rows scroll. Needs a
+      // solid (non-translucent) background so rows don't show through.
       className={cn(
-        "bg-muted/60 [&_tr]:border-b [&_tr]:border-border [&_tr]:hover:bg-transparent",
+        "sticky top-0 z-20 bg-muted [&_tr]:border-b [&_tr]:border-border [&_tr]:hover:bg-transparent",
         className,
       )}
       {...props}
