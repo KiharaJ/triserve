@@ -71,6 +71,15 @@ export function refreshTokens(): Promise<AuthTokensResponse | null> {
 api.interceptors.request.use((config) => {
   const token = getAccessToken()
   if (token) config.headers.Authorization = `Bearer ${token}`
+  // The instance defaults Content-Type to application/json. For a FormData
+  // body that is wrong AND harmful: axios only adds the multipart boundary
+  // header when Content-Type is unset, so a preset value makes the browser
+  // send file uploads as JSON — the server's multer finds no file and every
+  // upload (job-card/claim PDF import, before-photos, signature) fails with
+  // "file required". Clearing it lets axios set the correct multipart header.
+  if (config.data instanceof FormData) {
+    delete config.headers['Content-Type']
+  }
   return config
 })
 
