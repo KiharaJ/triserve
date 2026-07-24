@@ -527,6 +527,30 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
     // From RECEIVED an advisor (job.transition) may go to DIAGNOSING/CANCELLED.
     expect(codes.sort()).toEqual(['CANCELLED', 'DIAGNOSING']);
   });
+
+  it('a wrong forward move can be STEPPED BACK one stage', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} StepBack`, phone: '0765440005' },
+      device: { category: 'HHP', imei_serial: '353000000000050' },
+    });
+    // Forward RECEIVED → DIAGNOSING, then step back DIAGNOSING → RECEIVED.
+    const fwd = await transition(tokens.advisorDar, job.id, 'DIAGNOSING');
+    expect(fwd.job.state_code).toBe('DIAGNOSING');
+    const back = await transition(tokens.advisorDar, job.id, 'RECEIVED');
+    expect(back.job.state_code).toBe('RECEIVED');
+
+    // DIAGNOSING now offers the reverse edge among its legal moves.
+    await transition(tokens.advisorDar, job.id, 'DIAGNOSING');
+    const res = await request(app.getHttpServer())
+      .get(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(200);
+    const codes = ((res.body as JobBody).allowed_next_transitions ?? []).map(
+      (t) => t.to_state_code,
+    )
+    expect(codes).toContain('RECEIVED');
+  });
 });
 
 describe('TECHNICIAN visibility (§3) + scoping (§4.3)', () => {
@@ -1047,7 +1071,7 @@ describe('seed stays pristine', () => {
     ).toBe(5);
     expect(await raw.workflowState.count({ where: { companyId } })).toBe(11);
     expect(await raw.workflowTransition.count({ where: { companyId } })).toBe(
-      16,
+      21,
     );
     // This suite's jobs exist exactly (scoped to fixtures so pre-existing real
     // data, e.g. imports, doesn't skew the count); cleaned in afterAll.

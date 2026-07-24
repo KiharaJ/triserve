@@ -300,6 +300,29 @@ const WORKFLOW_TRANSITIONS: Array<{
     to: 'CLOSED',
     requiredPermission: 'job.transition.dispatch',
   },
+  // "Step back one stage" — reverse edges so a wrong forward move can be
+  // walked back one step by the same person who made it (a technician holds
+  // 'job.transition' + 'job.transition.repair', not '.dispatch'). Scoped to
+  // the ACTIVE repair path only: reopening a terminal state (CLOSED/CANCELLED/
+  // RETURNED_UNREPAIRED) or reversing a dispatch is a bigger decision left out
+  // deliberately. QC→IN_REPAIR already exists above as rework.
+  { from: 'DIAGNOSING', to: 'RECEIVED', requiredPermission: 'job.transition' },
+  {
+    from: 'AWAITING_CUSTOMER_APPROVAL',
+    to: 'DIAGNOSING',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'AWAITING_PARTS',
+    to: 'DIAGNOSING',
+    requiredPermission: 'job.transition',
+  },
+  {
+    from: 'IN_REPAIR',
+    to: 'AWAITING_PARTS',
+    requiredPermission: 'job.transition.repair',
+  },
+  { from: 'READY', to: 'QC', requiredPermission: 'job.transition.repair' },
 ];
 
 async function main(): Promise<void> {

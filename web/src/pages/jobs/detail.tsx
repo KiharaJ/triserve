@@ -37,6 +37,10 @@ import type {
   WarrantyRegistrationWire,
   WarrantyStatus,
 } from '@/lib/types'
+import {
+  ConfirmTransitionDialog,
+  type PendingMove,
+} from '@/pages/jobs/confirm-transition-dialog'
 import { useJobTransition } from '@/pages/jobs/use-job-transition'
 
 const WARRANTY_STATUSES: WarrantyStatus[] = ['IW', 'OW', 'GOODWILL', 'UNKNOWN']
@@ -676,6 +680,7 @@ export function JobDetailPage() {
       : null
 
   const transition = useJobTransition()
+  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
 
   if (jobQuery.isPending) return <p className="text-sm text-muted-foreground">Loading job…</p>
   if (jobQuery.isError)
@@ -745,7 +750,15 @@ export function JobDetailPage() {
                   size="sm"
                   variant="outline"
                   disabled={transition.isPending}
-                  onClick={() => transition.mutate({ jobId: job.id, toStateCode: t.to_state_code })}
+                  onClick={() =>
+                    setPendingMove({
+                      jobId: job.id,
+                      toStateCode: t.to_state_code,
+                      fromLabel: job.state_label,
+                      toLabel: t.to_label,
+                      requiresApproval: t.requires_approval,
+                    })
+                  }
                 >
                   {t.to_label}
                   {t.requires_approval && (
@@ -794,6 +807,27 @@ export function JobDetailPage() {
           </p>
         </TabsContent>
       </Tabs>
+
+      <ConfirmTransitionDialog
+        move={pendingMove}
+        isPending={transition.isPending}
+        onOpenChange={(open) => {
+          if (!open) setPendingMove(null)
+        }}
+        onConfirm={(note) => {
+          if (!pendingMove) return
+          transition.mutate(
+            {
+              jobId: pendingMove.jobId,
+              toStateCode: pendingMove.toStateCode,
+              note: note || undefined,
+            },
+            // Keep the dialog open on error so the reason (toast) is visible
+            // and the user can retry or cancel; close only once it succeeds.
+            { onSuccess: () => setPendingMove(null) },
+          )
+        }}
+      />
     </div>
   )
 }

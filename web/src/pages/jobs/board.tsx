@@ -41,6 +41,10 @@ import { useAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { useByIds } from '@/lib/use-by-ids'
 import { useDebouncedValue } from '@/lib/use-debounced-value'
+import {
+  ConfirmTransitionDialog,
+  type PendingMove,
+} from '@/pages/jobs/confirm-transition-dialog'
 import { useJobTransition } from '@/pages/jobs/use-job-transition'
 import { formatAge } from '@/lib/format'
 import type {
@@ -378,6 +382,7 @@ export function JobsBoardPage() {
   const engineers = useByIds<UserWire>('users', engineerIds, can('user.read'))
 
   const transition = useJobTransition(jobsQueryKey)
+  const [pendingMove, setPendingMove] = useState<PendingMove | null>(null)
 
   function handleDragStart(event: DragStartEvent) {
     setActiveJobId(String(event.active.id))
@@ -391,7 +396,16 @@ export function JobsBoardPage() {
     const toStateCode = String(over.id)
     const job = jobs.find((j) => j.id === jobId)
     if (!job || job.state_code === toStateCode) return
-    transition.mutate({ jobId, toStateCode })
+    // Confirm before applying — a stray drop must not silently advance a job
+    // that usually can't be moved back.
+    setPendingMove({
+      jobId,
+      toStateCode,
+      fromLabel: job.state_label,
+      toLabel:
+        graph.data?.states.find((s) => s.code === toStateCode)?.label ??
+        toStateCode,
+    })
   }
 
   const activeJob = activeJobId ? jobs.find((j) => j.id === activeJobId) : undefined
@@ -528,6 +542,25 @@ export function JobsBoardPage() {
           </DragOverlay>
         </DndContext>
       )}
+
+      <ConfirmTransitionDialog
+        move={pendingMove}
+        isPending={transition.isPending}
+        onOpenChange={(open) => {
+          if (!open) setPendingMove(null)
+        }}
+        onConfirm={(note) => {
+          if (!pendingMove) return
+          transition.mutate(
+            {
+              jobId: pendingMove.jobId,
+              toStateCode: pendingMove.toStateCode,
+              note: note || undefined,
+            },
+            { onSuccess: () => setPendingMove(null) },
+          )
+        }}
+      />
     </div>
   )
 }
