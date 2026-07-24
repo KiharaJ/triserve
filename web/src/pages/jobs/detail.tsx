@@ -29,6 +29,7 @@ import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
 import type {
   AttachmentWire,
   AuditLogEntry,
+  BranchWire,
   JobDetailWire,
   JobPartWire,
   PartWire,
@@ -46,6 +47,7 @@ const WARRANTY_KIND_LABEL: Record<string, string> = {
 }
 
 const detailsSchema = z.object({
+  branch_id: z.string().optional(),
   fault_reported: z.string().max(5000).optional(),
   assigned_engineer_id: z.string().optional(),
   warranty_status: z.enum(['IW', 'OW', 'GOODWILL', 'UNKNOWN']),
@@ -68,22 +70,14 @@ function warrantyBadge(status: WarrantyStatus) {
 }
 
 function DetailsTab({ job }: { job: JobDetailWire }) {
-  const { can } = useAuth()
+  const { can, user } = useAuth()
   const queryClient = useQueryClient()
-  const engineers = useQuery({
-    queryKey: ['users', 'technicians'],
-    enabled: can('user.read'),
-    queryFn: async () =>
-      (
-        await api.get<PaginatedResponse<UserWire>>('/users', {
-          params: { role: 'TECHNICIAN', active: true, page_size: 100 },
-        })
-      ).data.data,
-  })
+  const isGroup = user?.scope === 'group'
 
   const form = useForm<DetailsValues>({
     resolver: zodResolver(detailsSchema),
     defaultValues: {
+      branch_id: job.branch_id,
       fault_reported: job.fault_reported ?? '',
       assigned_engineer_id: job.assigned_engineer_id ?? '',
       warranty_status: job.warranty_status,
@@ -92,8 +86,42 @@ function DetailsTab({ job }: { job: JobDetailWire }) {
     },
   })
 
+  // The engineer picker is SCOPED to the (possibly pending) branch — assigning
+  // an out-of-branch engineer makes the job invisible to them (jobs are
+  // branch-scoped). A group admin editing the branch follows the new selection.
+  const selectedBranch = form.watch('branch_id') || job.branch_id
+
+  const engineers = useQuery({
+    queryKey: ['users', 'technicians', selectedBranch],
+    enabled: can('user.read'),
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<UserWire>>('/users', {
+          params: {
+            role: 'TECHNICIAN',
+            active: true,
+            branch_id: selectedBranch,
+            page_size: 100,
+          },
+        })
+      ).data.data,
+  })
+
+  // Group users can MOVE a mis-booked job to another branch.
+  const branches = useQuery({
+    queryKey: ['branches', 'all'],
+    enabled: isGroup && can('config.read'),
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<BranchWire>>('/branches', {
+          params: { page_size: 100 },
+        })
+      ).data.data,
+  })
+
   useEffect(() => {
     form.reset({
+      branch_id: job.branch_id,
       fault_reported: job.fault_reported ?? '',
       assigned_engineer_id: job.assigned_engineer_id ?? '',
       warranty_status: job.warranty_status,
@@ -108,6 +136,10 @@ function DetailsTab({ job }: { job: JobDetailWire }) {
     mutationFn: async (values: DetailsValues) =>
       (
         await api.patch<JobDetailWire>(`/jobs/${job.id}`, {
+          branch_id:
+            isGroup && values.branch_id && values.branch_id !== job.branch_id
+              ? values.branch_id
+              : undefined,
           fault_reported: values.fault_reported || undefined,
           assigned_engineer_id: values.assigned_engineer_id || null,
           warranty_status: values.warranty_status,
@@ -132,6 +164,31 @@ function DetailsTab({ job }: { job: JobDetailWire }) {
       <FormField label="Fault reported" htmlFor="d-fault_reported">
         <Textarea id="d-fault_reported" rows={3} disabled={!canEdit} {...form.register('fault_reported')} />
       </FormField>
+      {isGroup && branches.data && (
+        <FormField
+          label="Branch"
+          htmlFor="d-branch"
+          hint="Move a mis-booked job to another branch. Reassign the engineer afterwards."
+        >
+          <Select
+            id="d-branch"
+            disabled={!canEdit}
+            {...form.register('branch_id')}
+            onChange={(e) => {
+              // A new branch invalidates the current engineer (out of branch),
+              // so clear it — the admin picks one from the new branch's list.
+              form.setValue('branch_id', e.target.value)
+              form.setValue('assigned_engineer_id', '')
+            }}
+          >
+            {branches.data.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.code} — {b.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <FormField label="Warranty status" htmlFor="d-warranty_status">
           <Select id="d-warranty_status" disabled={!canEdit} {...form.register('warranty_status')}>
@@ -154,8 +211,15 @@ function DetailsTab({ job }: { job: JobDetailWire }) {
             </Select>
           </FormField>
         ) : (
-          <FormField label="Assigned engineer" htmlFor="d-engineer-id">
-            <Input id="d-engineer-id" disabled {...form.register('assigned_engineer_id')} />
+          <FormField label="Assigned engineer" htmlFor="d-engineer-name">
+            {/* Technicians can't list users, so show the resolved name off the
+                job itself rather than the raw id. */}
+            <Input
+              id="d-engineer-name"
+              disabled
+              value={job.assigned_engineer_name ?? 'Unassigned'}
+              readOnly
+            />
           </FormField>
         )}
       </div>
@@ -634,6 +698,9 @@ export function JobDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Badge variant="outline" title={job.branch_name}>
+              {job.branch_code}
+            </Badge>
             {warrantyBadge(job.warranty_status)}
             <Badge>{job.state_label}</Badge>
           </div>

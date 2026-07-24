@@ -302,6 +302,15 @@ export class CreateJobDto {
  * assigned_engineer_id / fault_code_id unassigns.
  */
 export class UpdateJobDto {
+  /**
+   * Move a mis-booked job to another branch. Group-scoped users only (a
+   * branch-scoped user is 403'd by assertBranchAccess). `job_no` is NOT
+   * regenerated — it is the reference issued at intake.
+   */
+  @IsOptional()
+  @IsUUID()
+  branch_id?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(5000)

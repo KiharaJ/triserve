@@ -71,6 +71,9 @@ interface JobBody {
   id: string;
   job_no: string;
   so_number: string | null;
+  branch_id: string;
+  branch_code: string;
+  branch_name: string;
   state_code: string;
   received_at: string;
   ready_at: string | null;
@@ -79,6 +82,7 @@ interface JobBody {
   received_by_customer: string | null;
   waybill_no: string | null;
   assigned_engineer_id: string | null;
+  assigned_engineer_name: string | null;
   warranty_status: string;
   service_type: string;
   coverage: string;
@@ -624,6 +628,9 @@ describe('PATCH /jobs/{id} — mutable fields, never status', () => {
     const body = res.body as JobBody & { state_code: string };
     expect(body.state_code).toBe('RECEIVED'); // unchanged
     expect(body.assigned_engineer_id).toBe(ids.tech1);
+    // The resolved name rides on the wire so a technician (no user.read) can
+    // see WHO is assigned without a raw UUID.
+    expect(body.assigned_engineer_name).toBeTruthy();
 
     // A stray status field is stripped by the whitelist pipe → no effect.
     await request(app.getHttpServer())
@@ -631,6 +638,106 @@ describe('PATCH /jobs/{id} — mutable fields, never status', () => {
       .set('Authorization', `Bearer ${tokens.advisorDar}`)
       .send({ state_code: 'CLOSED' })
       .expect(400);
+  });
+});
+
+describe('branch guard — assignment & moving a mis-booked job', () => {
+  it('exposes the resolved branch identity on the wire', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} BranchWire`, phone: '0765990000' },
+      device: { category: 'HHP', imei_serial: '357000000000018' },
+    });
+    expect(job.branch_id).toBe(branchDar);
+    expect(job.branch_code).toBeTruthy();
+    expect(job.branch_name).toBeTruthy();
+    // The job_no prefix reflects the branch it was booked into.
+    expect(job.job_no.startsWith(`${job.branch_code}-`)).toBe(true);
+  });
+
+  it('rejects assigning an out-of-branch technician on CREATE', async () => {
+    // tech1 is home-branched to Dar → invisible on a Krk job.
+    await createJob(
+      tokens.admin,
+      {
+        branch_id: branchKrk,
+        assigned_engineer_id: ids.tech1,
+        customer: { name: `${TEST_PREFIX} XBranchCreate`, phone: '0765990001' },
+        device: { category: 'HHP', imei_serial: '357000000000026' },
+      },
+      400,
+    );
+  });
+
+  it('rejects assigning an out-of-branch technician on PATCH', async () => {
+    const job = await createJob(tokens.advisorKrk, {
+      branch_id: branchKrk,
+      customer: { name: `${TEST_PREFIX} XBranchPatch`, phone: '0765990002' },
+      device: { category: 'HHP', imei_serial: '357000000000034' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ assigned_engineer_id: ids.tech1 })
+      .expect(400);
+  });
+
+  it('a group admin can MOVE a job to another branch (job_no unchanged)', async () => {
+    const job = await createJob(tokens.admin, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Move`, phone: '0765990003' },
+      device: { category: 'HHP', imei_serial: '357000000000042' },
+    });
+    const originalNo = job.job_no;
+    const darCode = job.branch_code;
+
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ branch_id: branchKrk })
+      .expect(200);
+    const body = res.body as JobBody;
+    expect(body.branch_id).toBe(branchKrk);
+    expect(body.branch_code).not.toBe(darCode);
+    // The reference is issued at intake — a move does NOT renumber the job.
+    expect(body.job_no).toBe(originalNo);
+  });
+
+  it('a branch-scoped user cannot move a job to another branch (403)', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} NoMove`, phone: '0765990004' },
+      device: { category: 'HHP', imei_serial: '357000000000059' },
+    });
+    await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .send({ branch_id: branchKrk })
+      .expect(403);
+  });
+
+  it('moving a branch out from under an assigned engineer is rejected until reassigned', async () => {
+    const job = await createJob(tokens.admin, {
+      branch_id: branchDar,
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} MoveAssigned`, phone: '0765990005' },
+      device: { category: 'HHP', imei_serial: '357000000000067' },
+    });
+    // The Dar engineer would lose sight of the job in Krk → blocked.
+    await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ branch_id: branchKrk })
+      .expect(400);
+    // Moving AND clearing the assignment in the same call is allowed.
+    const res = await request(app.getHttpServer())
+      .patch(`/api/v1/jobs/${job.id}`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ branch_id: branchKrk, assigned_engineer_id: null })
+      .expect(200);
+    const body = res.body as JobBody;
+    expect(body.branch_id).toBe(branchKrk);
+    expect(body.assigned_engineer_id).toBeNull();
   });
 });
 

@@ -469,10 +469,13 @@ export interface JobWire {
   job_no: string
   so_number: string | null
   branch_id: string
+  branch_code: string
+  branch_name: string
   customer_id: string
   device_id: string
   booked_by: string
   assigned_engineer_id: string | null
+  assigned_engineer_name: string | null
   warranty_status: WarrantyStatus
   service_type: ServiceType
   service_category_id: string | null

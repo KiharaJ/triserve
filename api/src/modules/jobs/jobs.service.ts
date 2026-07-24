@@ -60,10 +60,17 @@ export interface JobWire {
   job_no: string;
   so_number: string | null;
   branch_id: string;
+  /** Resolved branch identity — so the UI can show WHERE a job lives without
+   * a second lookup (the `job_no` prefix only reflects the originating branch). */
+  branch_code: string;
+  branch_name: string;
   customer_id: string;
   device_id: string;
   booked_by: string;
   assigned_engineer_id: string | null;
+  /** Resolved engineer name — so the job card shows WHO without needing
+   * `user.read` (a technician can't list users but must see their own name). */
+  assigned_engineer_name: string | null;
   warranty_status: WarrantyStatus;
   service_type: ServiceType;
   /** The service line the customer asked for (§4.3). */
@@ -184,10 +191,14 @@ interface OverrideInput {
 /** `%PDF-` — checked against the actual bytes, not the declared mimetype. */
 const PDF_MAGIC_BYTES = Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d]);
 
-type JobWithState = Prisma.JobGetPayload<{ include: { state: true } }>;
+type JobWithState = Prisma.JobGetPayload<{
+  include: { state: true; branch: true; assignedEngineer: true };
+}>;
 type JobDetail = Prisma.JobGetPayload<{
   include: {
     state: true;
+    branch: true;
+    assignedEngineer: true;
     customer: true;
     device: { include: { deviceModel: true } };
   };
@@ -268,7 +279,7 @@ export class JobsService {
       this.prisma.job.count({ where }),
       this.prisma.job.findMany({
         where,
-        include: { state: true },
+        include: { state: true, branch: true, assignedEngineer: true },
         orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
@@ -284,6 +295,8 @@ export class JobsService {
       where: this.scopedIdWhere(id, user),
       include: {
         state: true,
+        branch: true,
+        assignedEngineer: true,
         customer: true,
         device: { include: { deviceModel: true } },
       },
@@ -305,7 +318,7 @@ export class JobsService {
     if (dto.fault_code_id)
       await this.assertFaultCodeInCompany(dto.fault_code_id);
     if (dto.assigned_engineer_id) {
-      await this.assertUserInCompany(dto.assigned_engineer_id);
+      await this.assertEngineerForBranch(dto.assigned_engineer_id, branch.id);
     }
     if (dto.warranty_registration_id) {
       await this.assertWarrantyRegistrationInCompany(
@@ -441,11 +454,30 @@ export class JobsService {
     dto: UpdateJobDto,
     user: AuthUser,
   ): Promise<UpdateJobResult> {
-    await this.getRow(id, user); // clean 404 + technician restriction
+    const current = await this.getRow(id, user); // clean 404 + technician restriction
 
-    if (dto.assigned_engineer_id) {
-      await this.assertUserInCompany(dto.assigned_engineer_id);
+    // A job can be MOVED to another branch (fixing a mis-booked job). Only a
+    // group-scoped user may cross branches — assertBranchAccess 403s a
+    // branch-scoped user trying to move a job off their home branch.
+    const movingBranch =
+      dto.branch_id !== undefined && dto.branch_id !== current.branchId;
+    if (movingBranch) {
+      assertBranchAccess(user, dto.branch_id!);
+      await this.assertBranchInCompany(dto.branch_id!);
     }
+    const targetBranchId = dto.branch_id ?? current.branchId;
+
+    // Whoever is assigned AFTER this update must be able to see the job in its
+    // (possibly new) branch — validate the new assignee, and re-validate the
+    // existing one when the branch moves out from under them.
+    const effectiveEngineerId =
+      dto.assigned_engineer_id !== undefined
+        ? dto.assigned_engineer_id
+        : current.assignedEngineerId;
+    if (effectiveEngineerId) {
+      await this.assertEngineerForBranch(effectiveEngineerId, targetBranchId);
+    }
+
     if (dto.fault_code_id)
       await this.assertFaultCodeInCompany(dto.fault_code_id);
     if (dto.warranty_registration_id) {
@@ -516,6 +548,10 @@ export class JobsService {
         ...(dto.assigned_engineer_id !== undefined
           ? { assignedEngineerId: dto.assigned_engineer_id }
           : {}),
+        // Branch move: job_no is left untouched — it is the reference issued at
+        // intake (like an invoice number), so its prefix reflects the
+        // ORIGINATING branch; the authoritative branch is `branch_id`.
+        ...(movingBranch ? { branchId: dto.branch_id } : {}),
         ...(dto.warranty_status !== undefined
           ? { warrantyStatus: dto.warranty_status }
           : {}),
@@ -796,7 +832,7 @@ export class JobsService {
   private async getRow(id: string, user: AuthUser): Promise<JobWithState> {
     const job = await this.prisma.job.findFirst({
       where: this.scopedIdWhere(id, user),
-      include: { state: true },
+      include: { state: true, branch: true, assignedEngineer: true },
     });
     if (!job) throw new NotFoundException('Job not found');
     return job;
@@ -1179,11 +1215,43 @@ export class JobsService {
     }
   }
 
-  private async assertUserInCompany(userId: string): Promise<void> {
-    const u = await this.prisma.user.findFirst({ where: { id: userId } });
+  /**
+   * An assigned engineer must be able to WORK the job's branch — otherwise the
+   * assignment is invisible to them: jobs are branch-scoped, and assignment is
+   * a per-user filter LAYERED ON TOP of branch scope, not a way around it (see
+   * company-scope.extension.ts / branch-access.ts). A group-scoped user works
+   * any branch; a branch-scoped user only their home branch. This is the guard
+   * that stops "assigned but can't see it" being created in the first place.
+   */
+  private async assertEngineerForBranch(
+    userId: string,
+    branchId: string,
+  ): Promise<void> {
+    const u = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { scope: true, homeBranchId: true },
+    });
     if (!u) {
       throw new BadRequestException(
         'assigned_engineer_id does not match a user of your company',
+      );
+    }
+    if (u.scope === 'branch' && u.homeBranchId !== branchId) {
+      throw new BadRequestException(
+        "assigned engineer's home branch is not this job's branch — pick an " +
+          "engineer from the job's branch, or move the job to their branch",
+      );
+    }
+  }
+
+  /** The target branch of a move must be a real branch of the company. */
+  private async assertBranchInCompany(branchId: string): Promise<void> {
+    const branch = await this.prisma.branch.findFirst({
+      where: { id: branchId, deletedAt: null },
+    });
+    if (!branch) {
+      throw new BadRequestException(
+        'branch_id does not match a branch of your company',
       );
     }
   }
@@ -1252,10 +1320,13 @@ function toWire(j: JobWithState): JobWire {
     job_no: j.jobNo,
     so_number: j.soNumber,
     branch_id: j.branchId,
+    branch_code: j.branch.code,
+    branch_name: j.branch.name,
     customer_id: j.customerId,
     device_id: j.deviceId,
     booked_by: j.bookedById,
     assigned_engineer_id: j.assignedEngineerId,
+    assigned_engineer_name: j.assignedEngineer?.fullName ?? null,
     warranty_status: j.warrantyStatus,
     service_type: j.serviceType,
     service_category_id: j.serviceCategoryId,
