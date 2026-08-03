@@ -56,6 +56,14 @@ enum ApprovalType {
   OW_REPAIR_WITHOUT_QUOTE
   DUPLICATE_WARRANTY_CLAIM
   JOB_COVERAGE_CHANGE
+  /// Proposal Module 4: a supervisor certifying a device Beyond Economic
+  /// Repair, and the commercial swap that follows. Certification writes off a
+  /// repair and can commit a replacement unit, so both are manager-gated.
+  BER_CERTIFICATION
+  DEVICE_SWAP
+  /// Proposal Module 5: a commercial write-off above the actor's role ceiling
+  /// (see `role_limits`) — the Centre Manager is the only approver.
+  WRITE_OFF
 }
 
 enum ApprovalStatus {
@@ -199,6 +207,17 @@ model Company {
   phone        String? @db.VarChar(50)
   active       Boolean @default(true)
 
+  /// Proposal Module 4: the Beyond-Economic-Repair trigger. A repair is
+  /// flagged BER when (estimated parts + labour) reaches this percentage of
+  /// the device's fair commercial market value. Per company because the
+  /// economics differ by market — the proposal's 70% is the default.
+  berThresholdPercent Int @default(70) @map("ber_threshold_percent")
+  /// Proposal Module 6: how long a collection OTP stays valid, in minutes.
+  otpTtlMinutes       Int @default(1440) @map("otp_ttl_minutes")
+  /// Proposal Module 6: how many wrong PIN entries before the OTP is burned
+  /// and must be re-issued (blocks brute-forcing a 6-digit code at the desk).
+  otpMaxAttempts      Int @default(5) @map("otp_max_attempts")
+
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
@@ -259,6 +278,26 @@ model Company {
   // E17b: the company's role registry (built-in + custom).
   roles                 Role[]
 
+  // -- SCMS proposal modules ------------------------------------------------
+  symptomNodes          SymptomNode[]           // M1 symptom tree
+  conditionZones        ConditionZone[]         // M1 condition-map hotspots
+  jobConditionMarks     JobConditionMark[]      // M1 recorded damage
+  userSkills            UserSkill[]             // M2 skill matrix
+  jobStateEvents        JobStateEvent[]         // M2 SLA/KPI clocks
+  qcChecklistItems      QcChecklistItem[]       // M2 calibration templates
+  jobQcChecks           JobQcCheck[]            // M2 calibration results
+  berAssessments        BerAssessment[]         // M4 BER
+  swapUnits             SwapUnit[]              // M4 swap buffer stock
+  deviceSwaps           DeviceSwap[]            // M4 replacements
+  roleLimits            RoleLimit[]             // M5 financial ceilings
+  collectionOtps        JobCollectionOtp[]      // M6 handover PINs
+  consignments          Consignment[]           // M6 totes/manifests
+  consignmentJobs       ConsignmentJob[]
+  consignmentScans      ConsignmentScan[]
+  csatSurveys           CsatSurvey[]            // M6 CSAT
+  notificationTemplates NotificationTemplate[]  // M7 templates
+  notifications         Notification[]          // M7 outbox + comms log
+
   @@map("companies")
 }
 
@@ -308,6 +347,17 @@ model Branch {
   // Task 4.1 (§4.7): warranty claims filed at this branch.
   warrantyClaims        WarrantyClaim[]
   warrantyRegistrations WarrantyRegistration[]
+
+  // -- SCMS proposal modules ------------------------------------------------
+  jobStateEvents        JobStateEvent[]    // M2 clocks (branch = job's branch)
+  berAssessments        BerAssessment[]    // M4
+  swapUnits             SwapUnit[]         // M4 swap buffer held here
+  deviceSwaps           DeviceSwap[]       // M4
+  collectionOtps        JobCollectionOtp[] // M6
+  consignmentsOut       Consignment[]      @relation("ConsignmentFromBranch")
+  consignmentsIn        Consignment[]      @relation("ConsignmentToBranch")
+  csatSurveys           CsatSurvey[]       // M6
+  notifications         Notification[]     // M7
 
   @@unique([companyId, code])
   @@map("branches")
@@ -437,6 +487,52 @@ model User {
   updatedWarrantyRegistrations WarrantyRegistration[] @relation("WarrantyRegUpdatedBy")
   createdProducts              Product[]              @relation("ProductCreatedBy")
   updatedProducts              Product[]              @relation("ProductUpdatedBy")
+
+  // -- SCMS proposal modules ------------------------------------------------
+  // M1 — intake evidence + the symptom/condition config behind it.
+  conditionCapturedJobs    Job[]                @relation("JobConditionCapturedBy")
+  createdSymptomNodes      SymptomNode[]        @relation("SymptomNodeCreatedBy")
+  updatedSymptomNodes      SymptomNode[]        @relation("SymptomNodeUpdatedBy")
+  createdConditionZones    ConditionZone[]      @relation("ConditionZoneCreatedBy")
+  updatedConditionZones    ConditionZone[]      @relation("ConditionZoneUpdatedBy")
+  createdConditionMarks    JobConditionMark[]   @relation("JobConditionMarkCreatedBy")
+  updatedConditionMarks    JobConditionMark[]   @relation("JobConditionMarkUpdatedBy")
+  // M2 — skills + QC authority.
+  skills                   UserSkill[]          @relation("UserSkillUser")
+  createdUserSkills        UserSkill[]          @relation("UserSkillCreatedBy")
+  updatedUserSkills        UserSkill[]          @relation("UserSkillUpdatedBy")
+  createdQcChecklistItems  QcChecklistItem[]    @relation("QcChecklistItemCreatedBy")
+  updatedQcChecklistItems  QcChecklistItem[]    @relation("QcChecklistItemUpdatedBy")
+  recordedQcChecks         JobQcCheck[]         @relation("JobQcCheckRecordedBy")
+  qcApprovedJobs           Job[]                @relation("JobQcApprovedBy")
+  // M3 — core exchange actors.
+  issuedJobParts           JobPart[]            @relation("JobPartIssuedBy")
+  coreReturnedJobParts     JobPart[]            @relation("JobPartCoreReturnedBy")
+  // M4 — BER + swaps.
+  reviewedBerAssessments   BerAssessment[]      @relation("BerAssessmentReviewedBy")
+  createdBerAssessments    BerAssessment[]      @relation("BerAssessmentCreatedBy")
+  updatedBerAssessments    BerAssessment[]      @relation("BerAssessmentUpdatedBy")
+  issuedSwapUnits          SwapUnit[]           @relation("SwapUnitIssuedBy")
+  createdSwapUnits         SwapUnit[]           @relation("SwapUnitCreatedBy")
+  updatedSwapUnits         SwapUnit[]           @relation("SwapUnitUpdatedBy")
+  authorizedDeviceSwaps    DeviceSwap[]         @relation("DeviceSwapAuthorizedBy")
+  createdDeviceSwaps       DeviceSwap[]         @relation("DeviceSwapCreatedBy")
+  // M5 — role ceilings.
+  createdRoleLimits        RoleLimit[]          @relation("RoleLimitCreatedBy")
+  updatedRoleLimits        RoleLimit[]          @relation("RoleLimitUpdatedBy")
+  // M6 — handover + logistics.
+  verifiedCollectionOtps   JobCollectionOtp[]   @relation("JobCollectionOtpVerifiedBy")
+  createdCollectionOtps    JobCollectionOtp[]   @relation("JobCollectionOtpCreatedBy")
+  dispatchedConsignments   Consignment[]        @relation("ConsignmentDispatchedBy")
+  arrivedConsignments      Consignment[]        @relation("ConsignmentArrivedBy")
+  createdConsignments      Consignment[]        @relation("ConsignmentCreatedBy")
+  updatedConsignments      Consignment[]        @relation("ConsignmentUpdatedBy")
+  addedConsignmentJobs     ConsignmentJob[]     @relation("ConsignmentJobAddedBy")
+  checkedInConsignmentJobs ConsignmentJob[]     @relation("ConsignmentJobCheckedInBy")
+  consignmentScans         ConsignmentScan[]    @relation("ConsignmentScanScannedBy")
+  // M7 — notification templates.
+  createdNotificationTemplates NotificationTemplate[] @relation("NotificationTemplateCreatedBy")
+  updatedNotificationTemplates NotificationTemplate[] @relation("NotificationTemplateUpdatedBy")
 
   @@map("users")
 }
@@ -751,6 +847,13 @@ model DeviceModel {
   brand     String         @default("Samsung") @db.VarChar(100)
   active    Boolean        @default(true)
 
+  /// Proposal Module 4: fair commercial market value of a unit of this model,
+  /// in BIGINT minor units of `market_value_currency`. The DENOMINATOR of the
+  /// BER ratio. A per-device override lives on `devices.market_value` for
+  /// units whose condition or age makes the model-level figure wrong.
+  marketValue         BigInt? @map("market_value") @db.BigInt
+  marketValueCurrency String? @map("market_value_currency") @db.Char(3)
+
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
@@ -759,8 +862,10 @@ model DeviceModel {
   createdBy   User?     @relation("DeviceModelCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("DeviceModelUpdatedBy", fields: [updatedById], references: [id])
 
-  company Company  @relation(fields: [companyId], references: [id])
-  devices Device[]
+  company   Company    @relation(fields: [companyId], references: [id])
+  devices   Device[]
+  // SCMS Module 4: replacement units of this model held in the swap buffer.
+  swapUnits SwapUnit[]
 
   @@unique([companyId, brand, modelCode])
   @@map("models")
@@ -805,6 +910,9 @@ model Customer {
   jobs                  Job[]
   invoices              Invoice[]
   warrantyRegistrations WarrantyRegistration[]
+  // SCMS Module 6/7: satisfaction surveys + the comms log (§4.13).
+  csatSurveys           CsatSurvey[]
+  notifications         Notification[]
 
   @@index([companyId, phone])
   @@index([companyId, phoneNormalized])
@@ -839,6 +947,23 @@ model Device {
   /// primary input to the IW/OW ruling when no warranty_registration matches.
   purchaseDate DateTime?      @map("purchase_date") @db.Date
 
+  /// Proposal Module 4 — per-unit override of `models.market_value` (minor
+  /// units of `market_value_currency`). Set when this particular device's
+  /// age/condition makes the model-level figure wrong.
+  marketValue         BigInt? @map("market_value") @db.BigInt
+  marketValueCurrency String? @map("market_value_currency") @db.Char(3)
+
+  /// Proposal Module 4, step 5 (Primary Identity Realignment). When a device
+  /// is swapped out, the ORIGINAL row is stamped `decommissioned_at` and
+  /// pointed at its replacement via `replaced_by_device_id`; the replacement
+  /// points BACK via `replaced_device_id`. Neither row is deleted — the
+  /// device history (E3) walks the chain so the customer's full service
+  /// record follows the IMEI change. Plain CHAR(36) self-references (no FK)
+  /// so a chain can be written in either order.
+  decommissionedAt   DateTime? @map("decommissioned_at") @db.DateTime(3)
+  replacedByDeviceId String?   @map("replaced_by_device_id") @db.Char(36)
+  replacedDeviceId   String?   @map("replaced_device_id") @db.Char(36)
+
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
@@ -852,9 +977,13 @@ model Device {
   deviceModel           DeviceModel?           @relation(fields: [modelId], references: [id])
   jobs                  Job[]
   warrantyRegistrations WarrantyRegistration[]
+  // SCMS Module 4: the swap rows this device is on either side of.
+  swappedOut            DeviceSwap[]           @relation("DeviceSwapOld")
+  swappedIn             DeviceSwap[]           @relation("DeviceSwapNew")
 
   @@index([companyId, imeiSerial])
   @@index([customerId])
+  @@index([replacedByDeviceId])
   @@map("devices")
 }
 
@@ -870,6 +999,33 @@ model Device {
 /// One job status (a Kanban column). Unique per (company, code);
 /// `is_initial` marks where new jobs start, `is_terminal` where they end,
 /// `sort_order` drives board column ordering.
+/// What a state MEANS to the clocks, independent of what a company calls it
+/// (proposal Module 2, "Time Tracking (KPI Metrics)"). Renaming DIAGNOSING to
+/// "Triage" must not break Clock-to-Diagnosis, so the metrics read `stage`,
+/// never the code.
+enum WorkflowStage {
+  INTAKE
+  DIAGNOSIS
+  /// Waiting on something outside the bench — see {@link HoldKind}.
+  HOLD
+  REPAIR
+  QC
+  READY
+  /// Terminal: dispatched, closed, cancelled, returned unrepaired.
+  DONE
+}
+
+/// WHY a HOLD state is holding. Hold-for-Parts (HFP) sums PARTS holds only;
+/// CUSTOMER holds are the "waiting for customer approval" pause. Both stop
+/// the customer-facing SLA countdown; neither stops the internal clock.
+enum HoldKind {
+  NONE
+  PARTS
+  CUSTOMER
+  /// Waiting on the manufacturer (warranty ruling, BER sign-off, swap unit).
+  EXTERNAL
+}
+
 model WorkflowState {
   id         String  @id @default(uuid()) @db.Char(36)
   companyId  String  @map("company_id") @db.Char(36)
@@ -879,6 +1035,17 @@ model WorkflowState {
   isTerminal Boolean @default(false) @map("is_terminal")
   sortOrder  Int     @default(0) @map("sort_order")
   active     Boolean @default(true)
+
+  /// Proposal Module 2: the semantic bucket this state falls in, driving the
+  /// CTD / HFP / TAT metrics and the SLA colour bands.
+  stage    WorkflowStage @default(INTAKE)
+  holdKind HoldKind      @default(NONE) @map("hold_kind")
+  /// When true, time spent here does NOT burn the customer-facing SLA (the
+  /// proposal's "any pause state halts customer SLA countdowns but runs an
+  /// internal secondary tracking clock"). Defaults from `stage = HOLD` at
+  /// seed time but is independently editable — a company may decide a
+  /// parts hold IS on their clock.
+  pausesSla Boolean      @default(false) @map("pauses_sla")
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -892,6 +1059,8 @@ model WorkflowState {
   transitionsFrom WorkflowTransition[] @relation("TransitionFromState")
   transitionsTo   WorkflowTransition[] @relation("TransitionToState")
   jobs            Job[]
+  /// SCMS Module 2: occupancy rows recorded against this state.
+  stateEvents     JobStateEvent[]      @relation("JobStateEventState")
 
   @@unique([companyId, code])
   @@map("workflow_states")
@@ -993,6 +1162,8 @@ model FaultCode {
 
   company Company @relation(fields: [companyId], references: [id])
   jobs    Job[]
+  /// SCMS Module 1: symptom-tree leaves that resolve to this fault code.
+  symptomNodes SymptomNode[]
 
   @@unique([companyId, code])
   @@map("fault_codes")
@@ -1052,6 +1223,10 @@ model ServiceCategory {
 
   company Company @relation(fields: [companyId], references: [id])
   jobs    Job[]
+  /// SCMS Module 1/2: symptom-tree branches and technician skills narrowed
+  /// to this service line.
+  symptomNodes SymptomNode[]
+  userSkills   UserSkill[]
 
   @@unique([companyId, code])
   @@index([companyId, active])
@@ -1177,6 +1352,56 @@ model Job {
   faultCodeId            String?         @map("fault_code_id") @db.Char(36)
   techReport             String?         @map("tech_report") @db.Text
 
+  // -- Proposal Module 1: structured intake ---------------------------------
+  /// The LEAF of the cascading symptom tree the agent picked
+  /// (Category → Sub-category → Symptom trigger). Replaces "phone broken" as
+  /// free text with data downstream routing and BI can actually use;
+  /// `fault_reported` survives as the customer's own words.
+  symptomNodeId          String?   @map("symptom_node_id") @db.Char(36)
+  /// Stamped once the agent has completed the visual condition map. NULL
+  /// means the damage walk-through never happened — the intake-evidence guard
+  /// refuses to let the job leave the counter.
+  conditionCapturedAt    DateTime? @map("condition_captured_at") @db.DateTime(3)
+  conditionCapturedById  String?   @map("condition_captured_by") @db.Char(36)
+  /// Liquid-damage indicator observed at intake. Tri-state on purpose: NULL =
+  /// not checked, false = checked and clean, true = tripped. "Not checked"
+  /// and "clean" must never look the same in a warranty dispute.
+  liquidIndicatorTripped Boolean?  @map("liquid_indicator_tripped")
+  /// Proposal Module 1, step 5: the preliminary OW estimate shown to the
+  /// customer BEFORE they signed, in minor units of `estimate_currency`.
+  /// Preserved separately from any later quote/invoice so "what were they
+  /// told at the counter" stays answerable.
+  estimateAmount         BigInt?   @map("estimate_amount") @db.BigInt
+  estimateCurrency       String?   @map("estimate_currency") @db.Char(3)
+  /// When the customer accepted the service terms, data-loss disclaimer and
+  /// disposal policy. The signature itself is an attachment (kind SIGNATURE).
+  termsAcceptedAt        DateTime? @map("terms_accepted_at") @db.DateTime(3)
+
+  // -- Proposal Module 2: bench clocks + QC ---------------------------------
+  /// First entry into a DIAGNOSIS-stage state — the end of Clock-to-Diagnosis
+  /// and the start of the SLA labour timer.
+  diagnosisStartedAt     DateTime? @map("diagnosis_started_at") @db.DateTime(3)
+  /// First entry into a REPAIR-stage state.
+  repairStartedAt        DateTime? @map("repair_started_at") @db.DateTime(3)
+  /// Most recent submission for verification (IN_REPAIR → QC).
+  qcSubmittedAt          DateTime? @map("qc_submitted_at") @db.DateTime(3)
+  /// Actual hands-on labour the technician declares when submitting for QC —
+  /// mandatory (guard `repair_work_declared`). DECIMAL, not money.
+  labourHours            Decimal?  @map("labour_hours") @db.Decimal(6, 2)
+  /// The Quality Assurer's mandatory reason on the most recent QC rejection.
+  qcFailureReason        String?   @map("qc_failure_reason") @db.Text
+  /// How many times QC has bounced this job — the first-time-fix metric.
+  qcRejectCount          Int       @default(0) @map("qc_reject_count")
+  qcApprovedById         String?   @map("qc_approved_by") @db.Char(36)
+  qcApprovedAt           DateTime? @map("qc_approved_at") @db.DateTime(3)
+
+  /// Proposal Modules 4 & 5: the bench is LOCKED OUT. Set when a BER review
+  /// transfers ownership to the supervisor, or when an OW job is holding for
+  /// the customer's quote decision. While true the technician may read the
+  /// job but not mutate it or move it forward.
+  techLocked             Boolean   @default(false) @map("tech_locked")
+  techLockReason         String?   @map("tech_lock_reason") @db.VarChar(255)
+
   /// GSPN diagnostic codes (§4.7) — all six are required to file a claim.
   /// FKs → service_codes; `repairDescription` is the free-text counterpart to
   /// `repairCode` that GSPN prints as "Repair Description".
@@ -1246,6 +1471,29 @@ model Job {
   invoices       Invoice[]
   // Task 4.1 (§4.7): warranty (IW) claims for this repair.
   warrantyClaims WarrantyClaim[]
+
+  // -- Proposal modules -----------------------------------------------------
+  symptomNode        SymptomNode?      @relation(fields: [symptomNodeId], references: [id])
+  conditionCapturedBy User?            @relation("JobConditionCapturedBy", fields: [conditionCapturedById], references: [id])
+  qcApprovedBy       User?             @relation("JobQcApprovedBy", fields: [qcApprovedById], references: [id])
+  /// Module 1: the visual damage map captured at the counter.
+  conditionMarks     JobConditionMark[]
+  /// Module 2: the append-only state log the SLA/KPI clocks are computed from.
+  stateEvents        JobStateEvent[]
+  /// Module 2: calibration / flash / structural checks recorded at QC.
+  qcChecks           JobQcCheck[]
+  /// Module 4: BER evaluations (one per evaluation run; latest wins).
+  berAssessments     BerAssessment[]
+  /// Module 4: the replacement, if this repair resolved as a swap.
+  deviceSwaps        DeviceSwap[]
+  /// Module 6: single-use collection PINs issued for this job.
+  collectionOtps     JobCollectionOtp[]
+  /// Module 6: consignment memberships (satellite ↔ hub legs).
+  consignmentJobs    ConsignmentJob[]
+  /// Module 6: the post-closure satisfaction survey.
+  csatSurveys        CsatSurvey[]
+  /// Module 7: everything ever sent to the customer about this job.
+  notifications      Notification[]
 
   @@unique([companyId, jobNo])
   @@index([companyId, branchId, stateId])
@@ -1407,6 +1655,14 @@ enum StockMovementType {
   RESERVE
   UNRESERVE
   DAMAGE
+  /// Proposal Module 3: a defective "core" component scanned back in against
+  /// the job that replaced it. Inbound (+) into `qty_core_returned`, which is
+  /// a HOLDING bucket outside available stock — the unit is destined for the
+  /// manufacturer, not the shelf.
+  CORE_RETURN
+  /// The core leaving for the manufacturer (or being scrapped), closing the
+  /// loop: outbound (−) from `qty_core_returned`.
+  CORE_DISPATCH
 }
 
 /// The kind of source document a movement links back to via ref_id (§4.4).
@@ -1438,6 +1694,12 @@ model Part {
   sellPriceTzs        BigInt?        @map("default_sell_price_tzs") @db.BigInt
   compatibleModels    Json?          @map("compatible_models")
   isSerialized        Boolean        @default(false) @map("is_serialized")
+  /// Proposal Module 3: a "core exchange" part. Global brand compliance
+  /// mandates a 1:1 replacement ratio for high-value tracked components
+  /// (displays, PBA mainboards, cameras) — the OLD unit must come back to
+  /// secure the credit. When true, the job cannot reach QC until the
+  /// defective core has been scanned in (guard `core_returns_complete`).
+  requiresCoreReturn  Boolean        @default(false) @map("requires_core_return")
   /// Preferred supplier (§4.4b) — drives suggested-reorder grouping. FK added
   /// in Task 2.5 now that `suppliers` exists (see `preferredSupplier` below).
   preferredSupplierId String?        @map("preferred_supplier_id") @db.Char(36)
@@ -1474,9 +1736,15 @@ model Part {
 /// can't both promise the last unit); CONSUMED is written when the part is
 /// physically installed — that releases the reservation AND removes the unit
 /// from on-hand stock (an UNRESERVE + a CONSUMPTION through applyMovement).
+/// Proposal Module 3 extends this into the full core-exchange chain:
+/// RESERVED (allocated, still on the shelf) → ISSUED (physically picked from
+/// its bin and handed to the technician) → CONSUMED (installed). CANCELLED
+/// releases the reservation without consuming.
 enum JobPartStatus {
   RESERVED
+  ISSUED
   CONSUMED
+  CANCELLED
 }
 
 /// A part committed to a job (§4.5). Adding a line RESERVES branch stock;
@@ -1500,6 +1768,32 @@ model JobPart {
   reservedAt    DateTime      @default(now()) @map("reserved_at") @db.DateTime(3)
   consumedAt    DateTime?     @map("consumed_at") @db.DateTime(3)
 
+  // -- Proposal Module 3: the closed-loop core exchange ----------------------
+  /// Where the storekeeper picks it from, captured on the picking ticket
+  /// (copied from `inventory.bin_location` at reservation so the ticket still
+  /// reads true if the bin is re-labelled later).
+  pickBinLocation   String?   @map("pick_bin_location") @db.VarChar(50)
+  /// Physically picked from the bin and handed over: "Issued to Tech" (step 3).
+  issuedAt          DateTime? @map("issued_at") @db.DateTime(3)
+  issuedById        String?   @map("issued_by") @db.Char(36)
+  /// The NEW part's unique tracking serial, tagged to this repair ticket
+  /// (step 2). `partUnitId` is the `part_units` row when the part is
+  /// serial-tracked; `newSerialNo` also carries a hand-keyed serial for parts
+  /// that are not in the unit register.
+  partUnitId        String?   @map("part_unit_id") @db.Char(36)
+  newSerialNo       String?   @map("new_serial_no") @db.VarChar(100)
+  /// Snapshot of `parts.requires_core_return` at reservation time. Frozen on
+  /// the line so re-classifying the catalogue later cannot retroactively
+  /// unblock — or newly block — a job already in flight.
+  coreRequired      Boolean   @default(false) @map("core_required")
+  /// The OLD component's serial, scanned as it goes into the secure return
+  /// bin (step 4). Together with `newSerialNo` this is the "New Part Serial
+  /// Out vs Old Part Serial In" pair Samsung audits.
+  coreSerialNo      String?   @map("core_serial_no") @db.VarChar(100)
+  coreReturnedAt    DateTime? @map("core_returned_at") @db.DateTime(3)
+  coreReturnedById  String?   @map("core_returned_by") @db.Char(36)
+  coreBinLocation   String?   @map("core_bin_location") @db.VarChar(50)
+
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
   createdById String?  @map("created_by") @db.Char(36)
@@ -1510,9 +1804,13 @@ model JobPart {
   company Company @relation(fields: [companyId], references: [id])
   job     Job     @relation(fields: [jobId], references: [id])
   part    Part    @relation(fields: [partId], references: [id])
+  // Proposal Module 3 — who picked it, who scanned the core back in.
+  issuedBy       User? @relation("JobPartIssuedBy", fields: [issuedById], references: [id])
+  coreReturnedBy User? @relation("JobPartCoreReturnedBy", fields: [coreReturnedById], references: [id])
 
   @@index([companyId, jobId])
   @@index([partId])
+  @@index([partUnitId])
   @@map("job_parts")
 }
 
@@ -1531,6 +1829,13 @@ model Inventory {
   qtyInTransitIn Int     @default(0) @map("qty_in_transit_in")
   qtyDamaged     Int     @default(0) @map("qty_damaged")
   reorderLevel   Int     @default(0) @map("reorder_level")
+  /// Proposal Module 3 — the Scrap/Return Warehouse bucket: defective cores
+  /// scanned back in and held for the manufacturer. Deliberately OUTSIDE the
+  /// available-stock formula (on_hand − reserved − damaged): these units are
+  /// faulty and owed to Samsung, so they must never be pickable.
+  qtyCoreReturned Int    @default(0) @map("qty_core_returned")
+  /// Where cores are physically held pending shipment (e.g. `RET-A1`).
+  coreBinLocation String? @map("core_bin_location") @db.VarChar(50)
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -1948,6 +2253,13 @@ enum PartUnitStatus {
   INSTALLED
   RETURNED
   DAMAGED
+  /// Proposal Module 3: the defective component pulled OFF a device and
+  /// scanned into the secure return bin, awaiting shipment to the
+  /// manufacturer. Rows in this state are the "Scrap/Return Warehouse".
+  CORE_RETURNED
+  /// The core has left for the manufacturer (or been scrapped) — the 1:1
+  /// exchange obligation is discharged.
+  CORE_DISPATCHED
 }
 
 model PartUnit {
@@ -2045,6 +2357,35 @@ model Invoice {
   soldById String        @map("sold_by") @db.Char(36)
   notes    String?       @db.Text
 
+  // -- SCMS Module 5: out-of-warranty financial authorization ---------------
+  // "The job cannot advance to REPAIRING until the customer clicks 'Approve'
+  // and provides a verified digital signature or prepayment."
+  //
+  // A REPAIR_OW invoice in DRAFT is the QUOTE. These columns record the
+  // customer's decision on it. `ow_quote_approved` (the workflow guard) reads
+  // `customerApprovedAt` — an unsent, unanswered quote no longer counts as
+  // consent, which is what the earlier "a quote row exists" check meant.
+  /// When the secure approval link was issued to the customer.
+  quoteSentAt        DateTime? @map("quote_sent_at") @db.DateTime(3)
+  quoteSentTo        String?   @map("quote_sent_to") @db.VarChar(255)
+  /// SHA-256 hex of the approval token — the raw token only ever exists in
+  /// the SMS/email link, never at rest, exactly like the collection OTP.
+  approvalTokenHash  String?   @map("approval_token_hash") @db.VarChar(64)
+  approvalExpiresAt  DateTime? @map("approval_expires_at") @db.DateTime(3)
+  /// The customer's decision.
+  customerApprovedAt DateTime? @map("customer_approved_at") @db.DateTime(3)
+  customerDeclinedAt DateTime? @map("customer_declined_at") @db.DateTime(3)
+  /// How consent was captured: PORTAL (they clicked the link), COUNTER (they
+  /// signed in person), PHONE (agent recorded a verbal yes), PREPAYMENT
+  /// (money arrived, which the proposal accepts in place of a signature).
+  approvalVia        String?   @map("approval_via") @db.VarChar(20)
+  /// The signature attachment captured with a COUNTER/PORTAL approval.
+  approvalSignatureAttachmentId String? @map("approval_signature_attachment_id") @db.Char(36)
+  /// Who recorded a COUNTER/PHONE approval (NULL for a customer self-service
+  /// PORTAL approval — nobody on staff touched it).
+  approvalRecordedById String?  @map("approval_recorded_by") @db.Char(36)
+  approvalNote       String?    @map("approval_note") @db.VarChar(500)
+
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
@@ -2065,6 +2406,9 @@ model Invoice {
   @@index([companyId, branchId, status])
   @@index([customerId])
   @@index([jobId])
+  /// SCMS Module 5: the public quote-approval endpoint resolves a link by its
+  /// token hash alone (the caller is the customer — they have no tenant).
+  @@index([approvalTokenHash])
   @@map("invoices")
 }
 
@@ -2422,4 +2766,1035 @@ model Product {
   @@unique([companyId, sku])
   @@index([companyId, active])
   @@map("products")
+}
+
+// ===========================================================================
+// SCMS PROPOSAL MODULES — Service_Center_System_Proposal.docx
+//
+// Everything below implements the enterprise SCMS functional specification on
+// top of the TriServe core. Section numbers refer to that document:
+//
+//   Module 1 (§2) Job Booking & Intake     → symptom tree, condition map
+//   Module 2 (§3) Repair Lifecycle & SLA   → skills, state log, QC checklist
+//   Module 3 (§4) Core Exchange            → (fields on parts/job_parts above)
+//   Module 4 (§5) BER & Replacement        → ber_assessments, swap stock
+//   Module 5 (§6) RBAC & Approval Matrix   → role_limits
+//   Module 6 (§7) Dispatch & Hub Logistics → OTP, consignments, CSAT
+//   Module 7 (§8) Architecture             → notifications outbox
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Module 1 — Multi-tiered symptom tree (proposal §2, step 4)
+//
+// "Instead of letting agents write ambiguous text descriptions like 'phone
+// broken', the system enforces a cascading diagnostic dropdown: Category
+// (Display) → Sub-Category (Backlight) → Symptom Trigger (Flickers only when
+// warm)."
+//
+// One SELF-REFERENCING table rather than three, so a company can run two
+// levels for appliances and four for phones without a schema change. `level`
+// is denormalised (1 = category, 2 = sub-category, 3+ = symptom) purely so
+// the picker can load a whole tier in one query; the parent chain is the
+// truth. Only a LEAF (`is_leaf`) may be attached to a job — that is what
+// stops "Display" being filed as a complete diagnosis.
+// ---------------------------------------------------------------------------
+
+model SymptomNode {
+  id        String  @id @default(uuid()) @db.Char(36)
+  companyId String  @map("company_id") @db.Char(36)
+  parentId  String? @map("parent_id") @db.Char(36)
+  /// Stable machine key, unique per company (e.g. `DISPLAY.BACKLIGHT.WARM_FLICKER`).
+  code      String  @db.VarChar(120)
+  label     String  @db.VarChar(255)
+  /// 1 = category, 2 = sub-category, 3+ = symptom trigger.
+  level     Int     @default(1)
+  /// Only leaves are selectable on a job.
+  isLeaf    Boolean @default(false) @map("is_leaf")
+  /// Restrict this branch of the tree to one device class (NULL = all).
+  category  DeviceCategory?
+
+  /// Routing hints the tree exists to enable (proposal: "structures data for
+  /// subsequent automated routing"): the fault code this symptom maps to, the
+  /// service line it belongs to, and the indicative OW labour price used for
+  /// the counter's preliminary estimate.
+  faultCodeId       String? @map("fault_code_id") @db.Char(36)
+  serviceCategoryId String? @map("service_category_id") @db.Char(36)
+  estimateAmount    BigInt? @map("estimate_amount") @db.BigInt
+  estimateCurrency  String? @map("estimate_currency") @db.Char(3)
+  /// Typical bench minutes — feeds the SLA/appointment estimate.
+  estimateMinutes   Int?    @map("estimate_minutes")
+
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company           Company          @relation(fields: [companyId], references: [id])
+  parent            SymptomNode?     @relation("SymptomNodeParent", fields: [parentId], references: [id])
+  children          SymptomNode[]    @relation("SymptomNodeParent")
+  faultCode         FaultCode?       @relation(fields: [faultCodeId], references: [id])
+  serviceCategory   ServiceCategory? @relation(fields: [serviceCategoryId], references: [id])
+  createdBy         User?            @relation("SymptomNodeCreatedBy", fields: [createdById], references: [id])
+  updatedBy         User?            @relation("SymptomNodeUpdatedBy", fields: [updatedById], references: [id])
+  jobs              Job[]
+
+  @@unique([companyId, code])
+  @@index([companyId, parentId, sortOrder])
+  @@index([companyId, level, active])
+  @@map("symptom_nodes")
+}
+
+// ---------------------------------------------------------------------------
+// Module 1 — Dynamic visual condition mapping (proposal §2, step 3)
+//
+// "The agent is presented with an interactive layout mapping common physical
+// damage spots… checks off pre-existing conditions… The system forces the
+// agent to capture and upload high-resolution proof photos before proceeding."
+//
+// `condition_zones` is the CONFIGURABLE hotspot layout per device class — each
+// zone carries normalised 0–1 coordinates so the same data drives a phone
+// outline, a TV outline and a fridge outline without any hardcoded artwork.
+// `job_condition_marks` is what the agent actually ticked on THIS device.
+// ---------------------------------------------------------------------------
+
+/// The kinds of pre-existing damage an agent can record. Deliberately a fixed
+/// vocabulary (not free text) — this is the evidence that settles disputes,
+/// and "scratch" vs "scratched" vs "sctach" would make it unsearchable.
+enum DamageType {
+  SCRATCH
+  HAIRLINE_CRACK
+  CRACK
+  SHATTERED
+  DENT
+  SCUFF
+  CHIP
+  DISCOLOURATION
+  CORROSION
+  BURN
+  MISSING_PART
+  LOOSE_PART
+  WATER_INGRESS
+  LIQUID_INDICATOR_TRIPPED
+  PREVIOUS_REPAIR
+  OTHER
+}
+
+enum DamageSeverity {
+  MINOR
+  MODERATE
+  SEVERE
+}
+
+/// One hotspot on the interactive device outline (config, per device class).
+model ConditionZone {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  category  DeviceCategory
+  code      String         @db.VarChar(60)
+  label     String         @db.VarChar(120)
+  /// Normalised hotspot centre on the outline, 0.0–1.0 (x = left→right,
+  /// y = top→bottom). Decimal, not float: the map must render identically on
+  /// every client, and these are coordinates, not measurements.
+  x         Decimal        @db.Decimal(5, 4)
+  y         Decimal        @db.Decimal(5, 4)
+  /// Which face of the device the hotspot sits on ("FRONT", "BACK", "SIDE").
+  face      String         @default("FRONT") @db.VarChar(20)
+  sortOrder Int            @default(0) @map("sort_order")
+  active    Boolean        @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company            @relation(fields: [companyId], references: [id])
+  createdBy User?              @relation("ConditionZoneCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?              @relation("ConditionZoneUpdatedBy", fields: [updatedById], references: [id])
+  marks     JobConditionMark[]
+
+  @@unique([companyId, category, code])
+  @@index([companyId, category, active])
+  @@map("condition_zones")
+}
+
+/// One piece of pre-existing damage the agent recorded on one job.
+model JobConditionMark {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  jobId     String         @map("job_id") @db.Char(36)
+  zoneId    String         @map("zone_id") @db.Char(36)
+  damage    DamageType
+  severity  DamageSeverity @default(MINOR)
+  note      String?        @db.VarChar(500)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+
+  company   Company       @relation(fields: [companyId], references: [id])
+  job       Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  zone      ConditionZone @relation(fields: [zoneId], references: [id])
+  createdBy User?         @relation("JobConditionMarkCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?         @relation("JobConditionMarkUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([jobId, zoneId, damage])
+  @@index([companyId, jobId])
+  @@map("job_condition_marks")
+}
+
+// ---------------------------------------------------------------------------
+// Module 2 — Technician skill matrix (proposal §3, BOOKED → ASSIGNED:
+// "Technician profile must match device skill matrix.")
+//
+// A skill is (technician × device class), optionally narrowed to one service
+// category, with a competency level. `can_qc` marks the Senior Quality
+// Assurers who may sign off the QC gate for that class — the proposal makes
+// QC approval a distinct authority, not just seniority.
+// ---------------------------------------------------------------------------
+
+model UserSkill {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  userId    String         @map("user_id") @db.Char(36)
+  category  DeviceCategory
+  /// Optional narrowing to one service line (NULL = the whole device class).
+  serviceCategoryId String? @map("service_category_id") @db.Char(36)
+  /// 1 = trainee … 5 = master. The assignment guard requires >= 1; routing
+  /// prefers the highest.
+  level     Int            @default(1)
+  /// May approve the QC gate for this device class (Senior Quality Assurer).
+  canQc     Boolean        @default(false) @map("can_qc")
+  certifiedAt DateTime?    @map("certified_at") @db.Date
+  notes     String?        @db.VarChar(255)
+  active    Boolean        @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company         Company          @relation(fields: [companyId], references: [id])
+  user            User             @relation("UserSkillUser", fields: [userId], references: [id])
+  serviceCategory ServiceCategory? @relation(fields: [serviceCategoryId], references: [id])
+  createdBy       User?            @relation("UserSkillCreatedBy", fields: [createdById], references: [id])
+  updatedBy       User?            @relation("UserSkillUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([userId, category, serviceCategoryId])
+  @@index([companyId, category, active])
+  @@map("user_skills")
+}
+
+// ---------------------------------------------------------------------------
+// Module 2 — Append-only state log (proposal §3, "Time Tracking (KPI Metrics)")
+//
+// One row per OCCUPANCY of a state: when the job entered, when it left, and
+// how long that took. Written by JobsService inside the same transaction as
+// the state change, so it can never disagree with `jobs.state_id`.
+//
+// This is what makes Clock-to-Diagnosis, Hold-for-Parts and Total Turnaround
+// computable for any past date without replaying the audit log, and what lets
+// the customer-facing SLA stop while the internal clock keeps running:
+// `pauses_sla` is snapshotted from the state at entry time, so re-configuring
+// the workflow later never rewrites history.
+// ---------------------------------------------------------------------------
+
+model JobStateEvent {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+
+  stateId     String  @map("state_id") @db.Char(36)
+  /// NULL for the intake row (the job had no previous state).
+  fromStateId String? @map("from_state_id") @db.Char(36)
+
+  /// Snapshots taken at entry — see header note on why these are copied.
+  stage     WorkflowStage
+  holdKind  HoldKind      @default(NONE) @map("hold_kind")
+  pausesSla Boolean       @default(false) @map("pauses_sla")
+
+  enteredAt  DateTime  @map("entered_at") @db.DateTime(3)
+  /// NULL while this is the CURRENT state. Exactly one open row per job.
+  exitedAt   DateTime? @map("exited_at") @db.DateTime(3)
+  /// Denormalised occupancy in milliseconds, written when the row closes, so
+  /// the KPI aggregates are plain SUMs rather than per-row date arithmetic.
+  durationMs BigInt?   @map("duration_ms") @db.BigInt
+
+  /// Who caused the entry, and the technician holding the job at the time
+  /// (so per-engineer bench time survives a later reassignment).
+  actorUserId String? @map("actor_user_id") @db.Char(36)
+  engineerId  String? @map("engineer_id") @db.Char(36)
+  note        String? @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company Company       @relation(fields: [companyId], references: [id])
+  branch  Branch        @relation(fields: [branchId], references: [id])
+  job     Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  state   WorkflowState @relation("JobStateEventState", fields: [stateId], references: [id])
+
+  @@index([companyId, jobId, enteredAt])
+  @@index([companyId, stage, enteredAt])
+  @@index([jobId, exitedAt])
+  @@map("job_state_events")
+}
+
+// ---------------------------------------------------------------------------
+// Module 2 — Mandatory calibration logs (proposal §3)
+//
+// "Before a device exits the QC phase, the system requires completion of a
+// structural checklist tailored to the device class. For example, flagship
+// mobile devices must pass an automated pressure/water-resistance calibration
+// test, with raw log files uploaded to the record."
+//
+// `qc_checklist_items` is the per-device-class template (config);
+// `job_qc_checks` is the filled-in result for one QC attempt. `attempt_no`
+// keeps every round after a rejection instead of overwriting — a device that
+// failed water-resistance twice must look different from one that passed
+// first time.
+// ---------------------------------------------------------------------------
+
+enum QcCheckResult {
+  PASS
+  FAIL
+  NA
+}
+
+model QcChecklistItem {
+  id        String         @id @default(uuid()) @db.Char(36)
+  companyId String         @map("company_id") @db.Char(36)
+  category  DeviceCategory
+  code      String         @db.VarChar(60)
+  label     String         @db.VarChar(255)
+  /// Short instruction shown to the Quality Assurer.
+  help      String?        @db.VarChar(500)
+  /// A measured reading must be typed in (e.g. pressure test kPa), not just
+  /// a tick.
+  requiresValue Boolean    @default(false) @map("requires_value")
+  /// A raw log/measurement FILE must be attached to the job before the item
+  /// can pass — the proposal's "raw log files uploaded to the record".
+  requiresAttachment Boolean @default(false) @map("requires_attachment")
+  /// When false the item is advisory: it must be ANSWERED but may be failed
+  /// or marked N/A without blocking the gate.
+  blocking  Boolean        @default(true)
+  sortOrder Int            @default(0) @map("sort_order")
+  active    Boolean        @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company      @relation(fields: [companyId], references: [id])
+  createdBy User?        @relation("QcChecklistItemCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?        @relation("QcChecklistItemUpdatedBy", fields: [updatedById], references: [id])
+  checks    JobQcCheck[]
+
+  @@unique([companyId, category, code])
+  @@index([companyId, category, active])
+  @@map("qc_checklist_items")
+}
+
+model JobQcCheck {
+  id        String        @id @default(uuid()) @db.Char(36)
+  companyId String        @map("company_id") @db.Char(36)
+  jobId     String        @map("job_id") @db.Char(36)
+  itemId    String        @map("item_id") @db.Char(36)
+  /// 1 for the first QC round, 2 after the first rejection, …
+  attemptNo Int           @default(1) @map("attempt_no")
+  result    QcCheckResult
+  /// The measured reading, when the item requires one.
+  value     String?       @db.VarChar(120)
+  note      String?       @db.VarChar(500)
+
+  recordedById String   @map("recorded_by") @db.Char(36)
+  recordedAt   DateTime @default(now()) @map("recorded_at") @db.DateTime(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company    Company         @relation(fields: [companyId], references: [id])
+  job        Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item       QcChecklistItem @relation(fields: [itemId], references: [id])
+  recordedBy User            @relation("JobQcCheckRecordedBy", fields: [recordedById], references: [id])
+
+  @@unique([jobId, itemId, attemptNo])
+  @@index([companyId, jobId, attemptNo])
+  @@map("job_qc_checks")
+}
+
+// ---------------------------------------------------------------------------
+// Module 4 — Beyond Economic Repair & Replacement (proposal §5)
+//
+// Step 1 fires automatically: when (estimated SKU parts + estimated labour)
+// reaches `companies.ber_threshold_percent` of the device's fair commercial
+// market value, the standard track HALTS and a BER assessment is written in
+// FLAGGED. Step 2 locks the technician out (`jobs.tech_locked`) and hands
+// ownership to the Workshop Supervisor, who certifies or rejects — an
+// approval-gated action (ApprovalType.BER_CERTIFICATION) producing a
+// numbered certificate. Steps 3–5 record what the customer chose and, for a
+// replacement, the swap.
+//
+// Every input is SNAPSHOTTED on the row: re-pricing a part next month must
+// not silently change what the supervisor certified, and the certificate is
+// a document the manufacturer may audit years later.
+// ---------------------------------------------------------------------------
+
+enum BerStatus {
+  /// The formula tripped; awaiting supervisor review.
+  FLAGGED
+  /// Supervisor certified the device Beyond Economic Repair.
+  CERTIFIED
+  /// Supervisor reviewed and put the job back on the standard repair track.
+  REJECTED
+  /// Superseded by a newer evaluation, or the job moved on.
+  WITHDRAWN
+}
+
+/// What the customer chose once BER was certified (proposal §5 step 3).
+enum BerOutcome {
+  /// In-warranty factory fault → replacement pipeline.
+  REPLACE_IW
+  /// Out-of-warranty → customer bought a discounted replacement.
+  REPLACE_TRADE_UP
+  /// Out-of-warranty → customer took the salvage value and left the unit.
+  SALVAGE
+  /// Customer declined everything and took the device back unrepaired.
+  DECLINED
+  /// Certified BER but the customer insisted on the repair anyway.
+  REPAIR_ANYWAY
+}
+
+model BerAssessment {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+
+  /// Human-facing certificate number, allocated ONLY on certification:
+  /// `BER-{BRANCH}-{YYYY}-{seq}`. NULL while FLAGGED.
+  certificateNo String? @map("certificate_no") @db.VarChar(50)
+
+  // -- The formula, snapshotted (all minor units of `currency`) -------------
+  partsCost   BigInt  @map("parts_cost") @db.BigInt
+  labourCost  BigInt  @map("labour_cost") @db.BigInt
+  totalCost   BigInt  @map("total_cost") @db.BigInt
+  deviceValue BigInt  @map("device_value") @db.BigInt
+  currency    String  @db.Char(3)
+  /// totalCost / deviceValue as a percentage, to 2 dp.
+  ratioPercent     Decimal @map("ratio_percent") @db.Decimal(9, 2)
+  /// The company threshold in force when this ran (default 70).
+  thresholdPercent Int     @map("threshold_percent")
+  /// Where `deviceValue` came from — DEVICE (per-unit override), MODEL
+  /// (catalogue figure) or MANUAL (supervisor keyed it in). Without this,
+  /// a certificate cannot be defended.
+  valuationSource  String  @map("valuation_source") @db.VarChar(20)
+
+  status BerStatus @default(FLAGGED)
+
+  flaggedAt   DateTime  @default(now()) @map("flagged_at") @db.DateTime(3)
+  reviewedById String?  @map("reviewed_by") @db.Char(36)
+  reviewedAt   DateTime? @map("reviewed_at") @db.DateTime(3)
+  decisionNotes String?  @map("decision_notes") @db.Text
+
+  outcome            BerOutcome? 
+  customerRespondedAt DateTime?  @map("customer_responded_at") @db.DateTime(3)
+  /// Salvage value offered / trade-up discount, minor units of `currency`.
+  offerAmount        BigInt?     @map("offer_amount") @db.BigInt
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+
+  company    Company      @relation(fields: [companyId], references: [id])
+  branch     Branch       @relation(fields: [branchId], references: [id])
+  job        Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  reviewedBy User?        @relation("BerAssessmentReviewedBy", fields: [reviewedById], references: [id])
+  createdBy  User?        @relation("BerAssessmentCreatedBy", fields: [createdById], references: [id])
+  updatedBy  User?        @relation("BerAssessmentUpdatedBy", fields: [updatedById], references: [id])
+  swaps      DeviceSwap[]
+
+  @@unique([companyId, certificateNo])
+  @@index([companyId, jobId, flaggedAt])
+  @@index([companyId, branchId, status])
+  @@map("ber_assessments")
+}
+
+/// Per-(company, branch, year) counter backing BER certificate numbers.
+/// Same atomic MySQL sequence idiom as JobCounter — raw SQL only.
+model BerCertificateCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("ber_certificate_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Module 4, step 4 — Swap Buffer Stock (proposal §5)
+//
+// "The system issues a new unit from a strictly isolated inventory segment
+// known as the 'Swap Buffer Stock' (which contains unboxed, replacement-only
+// units). The system blocks standard commercial inventory access for this
+// step."
+//
+// The isolation is STRUCTURAL, not a flag on a shared table: swap units live
+// in their own table that the POS, the parts ledger and the products
+// catalogue simply cannot see. There is no query that can accidentally sell
+// one over the counter, because no selling code path joins here.
+// ---------------------------------------------------------------------------
+
+enum SwapUnitStatus {
+  IN_STOCK
+  /// Committed to a specific job, not yet handed over.
+  ALLOCATED
+  /// Handed to the customer — the swap is done.
+  ISSUED
+  /// Withdrawn from the buffer (damaged, recalled, returned to Samsung).
+  RETIRED
+}
+
+model SwapUnit {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  /// Where the unit physically sits.
+  branchId  String @map("branch_id") @db.Char(36)
+
+  modelId    String? @map("model_id") @db.Char(36)
+  /// Free-text model when it predates the catalogue entry.
+  modelLabel String? @map("model_label") @db.VarChar(150)
+  category   DeviceCategory @default(HHP)
+  /// The replacement unit's own IMEI/serial — becomes the customer's new
+  /// primary tracking identity on issue. Normalised like `devices.imei_serial`.
+  imeiSerial String  @map("imei_serial") @db.VarChar(100)
+  color      String? @db.VarChar(50)
+
+  /// Acquisition cost, minor units of `currency` (for the swap's COGS).
+  cost     BigInt? @db.BigInt
+  currency String? @db.Char(3)
+
+  status          SwapUnitStatus @default(IN_STOCK)
+  allocatedJobId  String?        @map("allocated_job_id") @db.Char(36)
+  allocatedAt     DateTime?      @map("allocated_at") @db.DateTime(3)
+  issuedAt        DateTime?      @map("issued_at") @db.DateTime(3)
+  issuedById      String?        @map("issued_by") @db.Char(36)
+  /// Provenance (which delivery it arrived on) — no FK, like PartUnit.
+  grnId           String?        @map("grn_id") @db.Char(36)
+  notes           String?        @db.VarChar(500)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company      @relation(fields: [companyId], references: [id])
+  branch    Branch       @relation(fields: [branchId], references: [id])
+  model     DeviceModel? @relation(fields: [modelId], references: [id])
+  issuedBy  User?        @relation("SwapUnitIssuedBy", fields: [issuedById], references: [id])
+  createdBy User?        @relation("SwapUnitCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?        @relation("SwapUnitUpdatedBy", fields: [updatedById], references: [id])
+  swaps     DeviceSwap[]
+
+  @@unique([companyId, imeiSerial])
+  @@index([companyId, branchId, status])
+  @@index([allocatedJobId])
+  @@map("swap_units")
+}
+
+/// Module 4, step 5 — the executed replacement + primary identity realignment.
+/// One row per swap; it is the join that lets device history walk from the
+/// decommissioned IMEI to the live one.
+model DeviceSwap {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+
+  /// The unit that came in and is now decommissioned.
+  oldDeviceId String @map("old_device_id") @db.Char(36)
+  /// The `devices` row created FOR the replacement (same customer, new IMEI).
+  newDeviceId String @map("new_device_id") @db.Char(36)
+  swapUnitId  String @map("swap_unit_id") @db.Char(36)
+
+  berAssessmentId String? @map("ber_assessment_id") @db.Char(36)
+  /// Snapshot of the old IMEI: `devices` rows can be edited, and the audit
+  /// question "which identity was retired here" must stay answerable.
+  oldImeiSerial   String? @map("old_imei_serial") @db.VarChar(100)
+  newImeiSerial   String? @map("new_imei_serial") @db.VarChar(100)
+  /// How many historical jobs were carried across to the new identity.
+  historyJobCount Int     @default(0) @map("history_job_count")
+
+  reason         String?  @db.VarChar(500)
+  authorizedById String   @map("authorized_by") @db.Char(36)
+  authorizedAt   DateTime @default(now()) @map("authorized_at") @db.DateTime(3)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  branch        Branch         @relation(fields: [branchId], references: [id])
+  job           Job            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  oldDevice     Device         @relation("DeviceSwapOld", fields: [oldDeviceId], references: [id])
+  newDevice     Device         @relation("DeviceSwapNew", fields: [newDeviceId], references: [id])
+  swapUnit      SwapUnit       @relation(fields: [swapUnitId], references: [id])
+  berAssessment BerAssessment? @relation(fields: [berAssessmentId], references: [id])
+  authorizedBy  User           @relation("DeviceSwapAuthorizedBy", fields: [authorizedById], references: [id])
+  createdBy     User?          @relation("DeviceSwapCreatedBy", fields: [createdById], references: [id])
+
+  @@index([companyId, jobId])
+  @@index([oldDeviceId])
+  @@index([newDeviceId])
+  @@map("device_swaps")
+}
+
+// ---------------------------------------------------------------------------
+// Module 5 — Financial ceilings per role (proposal §6 approval matrix)
+//
+//   Front Counter Agent — takes payment, CANNOT grant discounts.
+//   Repair Technician   — parts to diagnostic codes up to a minor variance.
+//   Floor Supervisor    — OW price adjustments up to a ceiling; no write-offs.
+//   Centre Manager      — full authority.
+//
+// Expressed as DATA keyed on the role KEY (built-in or custom), exactly like
+// `role_permissions`, so a company can retune the ceilings without a deploy.
+// A permission answers "may you do this at all"; a limit answers "how far".
+// NO ROW = no authority (deny), which is why the seed writes an explicit
+// zero-amount row for the front counter rather than leaving it absent — the
+// two are indistinguishable to a reader otherwise, so the seed is explicit
+// and `enabled=false` is the way to say "unlimited".
+// ---------------------------------------------------------------------------
+
+enum RoleLimitType {
+  /// Percentage or absolute discount on a POS/repair invoice.
+  DISCOUNT
+  /// Adjusting an agreed OW price up or down.
+  PRICE_ADJUSTMENT
+  /// Consumable/parts value a technician may commit beyond the diagnosis.
+  PARTS_VARIANCE
+  /// Writing off a repair, a stock loss, or a BER unit.
+  WRITE_OFF
+  /// Cash back to a customer.
+  REFUND
+}
+
+model RoleLimit {
+  id        String        @id @default(uuid()) @db.Char(36)
+  companyId String        @map("company_id") @db.Char(36)
+  /// A role KEY — built-in or custom, like `role_permissions.role`.
+  role      String        @db.VarChar(50)
+  type      RoleLimitType
+
+  /// Ceiling in minor units of `currency`. NULL = no amount ceiling.
+  maxAmount BigInt? @map("max_amount") @db.BigInt
+  currency  String? @db.Char(3)
+  /// Ceiling as a percentage of the document total (discounts). NULL = none.
+  maxPercent Decimal? @map("max_percent") @db.Decimal(6, 3)
+  /// false = this role has NO ceiling for this action (unlimited). Distinct
+  /// from a missing row, which denies.
+  enabled   Boolean @default(true)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+  updatedById String?  @map("updated_by") @db.Char(36)
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User?   @relation("RoleLimitCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?   @relation("RoleLimitUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, role, type])
+  @@index([companyId, role])
+  @@map("role_limits")
+}
+
+// ---------------------------------------------------------------------------
+// Module 6 — Secure OTP handshake (proposal §7, steps 1 & 4)
+//
+// "When a job transitions to READY_FOR_COLLECTION, the system generates a
+// secure, randomized, single-use 6-digit One-Time PIN sent directly to the
+// customer's registered mobile number… The system blocks the agent from
+// selecting 'Delivered' until the entered PIN matches."
+//
+// The PIN is NEVER stored: only a SHA-256 hash, exactly like refresh tokens
+// in `sessions`. A counter agent with database access must not be able to
+// read the code that authorises a handover — that would defeat the control.
+// Re-issuing supersedes the previous row rather than mutating it, so the
+// dispatch trail shows every PIN ever sent.
+// ---------------------------------------------------------------------------
+
+model JobCollectionOtp {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+
+  /// SHA-256 hex of the 6-digit PIN — see header note.
+  codeHash  String @map("code_hash") @db.VarChar(64)
+  /// Last 2 digits, shown to staff so they can help a customer who says
+  /// "…ends in 47" without ever revealing the full code.
+  codeHint  String @map("code_hint") @db.Char(2)
+
+  /// Where it was sent (the customer's number at the time of issue).
+  sentTo      String?   @map("sent_to") @db.VarChar(50)
+  sentAt      DateTime? @map("sent_at") @db.DateTime(3)
+  expiresAt   DateTime  @map("expires_at") @db.DateTime(3)
+  attempts    Int       @default(0)
+  verifiedAt  DateTime? @map("verified_at") @db.DateTime(3)
+  verifiedById String?  @map("verified_by") @db.Char(36)
+  /// Set when a newer PIN supersedes this one, or the attempt cap is hit.
+  voidedAt    DateTime? @map("voided_at") @db.DateTime(3)
+  voidReason  String?   @map("void_reason") @db.VarChar(255)
+
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  createdById String?  @map("created_by") @db.Char(36)
+
+  company    Company @relation(fields: [companyId], references: [id])
+  branch     Branch  @relation(fields: [branchId], references: [id])
+  job        Job     @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  verifiedBy User?   @relation("JobCollectionOtpVerifiedBy", fields: [verifiedById], references: [id])
+  createdBy  User?   @relation("JobCollectionOtpCreatedBy", fields: [createdById], references: [id])
+
+  @@index([companyId, jobId, createdAt])
+  @@index([jobId, verifiedAt, voidedAt])
+  @@map("job_collection_otps")
+}
+
+// ---------------------------------------------------------------------------
+// Module 6 — Consignments, totes & chain of custody (proposal §7, steps 2–3)
+//
+// "If the device was dropped off at a satellite collection point rather than
+// the main repair hub… The system assigns a distinct tracking label to a
+// secure 'Logistics Tote' and bundles all outbound devices into a unified
+// digital consignment manifest… At each point along the chain handlers must
+// scan the barcode on the tote."
+//
+// A consignment IS the tote: one physical container, one manifest, many jobs.
+// Scans are append-only — a chain of custody you can edit is not a chain of
+// custody.
+// ---------------------------------------------------------------------------
+
+enum ConsignmentStatus {
+  /// Being packed at the origin; jobs can still be added or removed.
+  OPEN
+  /// Sealed and handed to the courier.
+  IN_TRANSIT
+  /// Received at the destination; contents checked in.
+  ARRIVED
+  CANCELLED
+}
+
+/// Which leg of the hub-and-spoke journey this consignment covers.
+enum ConsignmentDirection {
+  /// Satellite drop point → main repair hub (device coming in for repair).
+  INBOUND_TO_HUB
+  /// Main repair hub → satellite storefront (repaired device going back).
+  OUTBOUND_TO_SPOKE
+}
+
+model Consignment {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+
+  /// `CON-{FROM}-{YYYY}-{seq}` — the manifest reference.
+  consignmentNo String @map("consignment_no") @db.VarChar(50)
+  /// The barcode printed on the physical tote. Separate from
+  /// `consignment_no` because totes are REUSED: the same tote label carries a
+  /// different manifest next week, and scanning must resolve to the manifest
+  /// that is currently in flight.
+  toteLabel     String @map("tote_label") @db.VarChar(60)
+
+  fromBranchId String @map("from_branch_id") @db.Char(36)
+  toBranchId   String @map("to_branch_id") @db.Char(36)
+  direction    ConsignmentDirection
+
+  status ConsignmentStatus @default(OPEN)
+
+  courierName String? @map("courier_name") @db.VarChar(120)
+  courierRef  String? @map("courier_ref") @db.VarChar(120)
+  /// The customer-facing waybill number, when the courier issues one.
+  waybillNo   String? @map("waybill_no") @db.VarChar(100)
+
+  sealedAt       DateTime? @map("sealed_at") @db.DateTime(3)
+  dispatchedAt   DateTime? @map("dispatched_at") @db.DateTime(3)
+  dispatchedById String?   @map("dispatched_by") @db.Char(36)
+  arrivedAt      DateTime? @map("arrived_at") @db.DateTime(3)
+  arrivedById    String?   @map("arrived_by") @db.Char(36)
+  notes          String?   @db.Text
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  fromBranch   Branch            @relation("ConsignmentFromBranch", fields: [fromBranchId], references: [id])
+  toBranch     Branch            @relation("ConsignmentToBranch", fields: [toBranchId], references: [id])
+  dispatchedBy User?             @relation("ConsignmentDispatchedBy", fields: [dispatchedById], references: [id])
+  arrivedBy    User?             @relation("ConsignmentArrivedBy", fields: [arrivedById], references: [id])
+  createdBy    User?             @relation("ConsignmentCreatedBy", fields: [createdById], references: [id])
+  updatedBy    User?             @relation("ConsignmentUpdatedBy", fields: [updatedById], references: [id])
+  jobs         ConsignmentJob[]
+  scans        ConsignmentScan[]
+
+  @@unique([companyId, consignmentNo])
+  @@index([companyId, status, createdAt])
+  @@index([companyId, toteLabel])
+  @@map("consignments")
+}
+
+/// One job riding in one consignment (the manifest line).
+model ConsignmentJob {
+  id            String @id @default(uuid()) @db.Char(36)
+  companyId     String @map("company_id") @db.Char(36)
+  consignmentId String @map("consignment_id") @db.Char(36)
+  jobId         String @map("job_id") @db.Char(36)
+
+  addedAt    DateTime  @default(now()) @map("added_at") @db.DateTime(3)
+  addedById  String?   @map("added_by") @db.Char(36)
+  /// Checked off against the manifest on arrival. A NULL here on an ARRIVED
+  /// consignment is a MISSING DEVICE — the whole point of the manifest.
+  checkedInAt DateTime? @map("checked_in_at") @db.DateTime(3)
+  checkedInById String? @map("checked_in_by") @db.Char(36)
+  note        String?   @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  consignment Consignment @relation(fields: [consignmentId], references: [id], onDelete: Cascade)
+  job         Job         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  addedBy     User?       @relation("ConsignmentJobAddedBy", fields: [addedById], references: [id])
+  checkedInBy User?       @relation("ConsignmentJobCheckedInBy", fields: [checkedInById], references: [id])
+
+  @@unique([consignmentId, jobId])
+  @@index([companyId, jobId])
+  @@map("consignment_jobs")
+}
+
+/// Where the tote was scanned. CUSTOM covers anything a company adds without
+/// needing a migration — `location` carries the free-text detail either way.
+enum ScanPoint {
+  HUB_DEPART
+  COURIER_HUB
+  COURIER_DEPART
+  SPOKE_ARRIVE
+  HUB_ARRIVE
+  CUSTOM
+}
+
+/// APPEND-ONLY chain-of-custody scan. Never updated, never deleted.
+model ConsignmentScan {
+  id            String @id @default(uuid()) @db.Char(36)
+  companyId     String @map("company_id") @db.Char(36)
+  consignmentId String @map("consignment_id") @db.Char(36)
+
+  scanPoint  ScanPoint @map("scan_point")
+  location   String?   @db.VarChar(255)
+  scannedAt  DateTime  @default(now()) @map("scanned_at") @db.DateTime(3)
+  /// NULL when a courier's own handheld posted the scan via an integration
+  /// rather than a logged-in user.
+  scannedById String?  @map("scanned_by") @db.Char(36)
+  handlerName String?  @map("handler_name") @db.VarChar(120)
+  note        String?  @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  company     Company     @relation(fields: [companyId], references: [id])
+  consignment Consignment @relation(fields: [consignmentId], references: [id], onDelete: Cascade)
+  scannedBy   User?       @relation("ConsignmentScanScannedBy", fields: [scannedById], references: [id])
+
+  @@index([companyId, consignmentId, scannedAt])
+  @@map("consignment_scans")
+}
+
+/// Per-(company, branch, year) counter for consignment numbers — raw SQL only,
+/// same idiom as JobCounter.
+model ConsignmentCounter {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  year      Int
+  nextSeq   Int    @default(0) @map("next_seq")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@unique([companyId, branchId, year])
+  @@map("consignment_counters")
+}
+
+// ---------------------------------------------------------------------------
+// Module 6, step 5 — CSAT (proposal §7)
+//
+// "…fires a customer satisfaction (CSAT) survey link." The token is the
+// customer's credential: it is unguessable, single-purpose, expiring, and
+// grants read/write to exactly ONE survey row and nothing else.
+// ---------------------------------------------------------------------------
+
+model CsatSurvey {
+  id        String @id @default(uuid()) @db.Char(36)
+  companyId String @map("company_id") @db.Char(36)
+  branchId  String @map("branch_id") @db.Char(36)
+  jobId     String @map("job_id") @db.Char(36)
+  customerId String @map("customer_id") @db.Char(36)
+
+  /// URL-safe random token identifying the public survey link.
+  token     String    @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
+  sentAt    DateTime? @map("sent_at") @db.DateTime(3)
+
+  /// 1–5. NULL until the customer answers.
+  score       Int?      @db.TinyInt
+  comment     String?   @db.Text
+  respondedAt DateTime? @map("responded_at") @db.DateTime(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company  Company  @relation(fields: [companyId], references: [id])
+  branch   Branch   @relation(fields: [branchId], references: [id])
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id])
+
+  @@unique([token])
+  @@index([companyId, branchId, respondedAt])
+  @@index([companyId, jobId])
+  @@map("csat_surveys")
+}
+
+// ---------------------------------------------------------------------------
+// Module 7 — Notification engine + asynchronous outbox (proposal §8;
+// DESIGN.md §4.13 / E6)
+//
+// "Build the system using asynchronous worker queues to handle heavy
+// operations like third-party warranty verification lookups, SMS delivery,
+// invoice generation and customer email alerts. This ensures the frontend
+// stays responsive for front-desk staff."
+//
+// The queue is a DATABASE TABLE, not Redis. Deliberate: the deployment is a
+// single managed MySQL with daily backups (§9), and a durable outbox in the
+// same database as the business row means "the job card was created" and
+// "the SMS was queued" commit or fail together. No second system to keep
+// alive, no lost message when a broker restarts, and the retry history is
+// queryable with SQL. The trade-off — polling latency and no fan-out across
+// many workers — is the right one at this scale; swapping in a broker later
+// means changing the drain loop, not the call sites.
+//
+// `notifications` doubles as the CRM communication log (§4.13).
+// ---------------------------------------------------------------------------
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  WHATSAPP
+  /// Delivered inside the app only (no external provider).
+  IN_APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  /// Claimed by a worker; guards against two workers sending the same row.
+  SENDING
+  SENT
+  /// Failed and out of retries. `last_error` says why.
+  FAILED
+  CANCELLED
+}
+
+/// Per-company, per-event, per-channel, per-language message body. Bodies use
+/// `{{placeholder}}` tokens resolved from the event payload.
+model NotificationTemplate {
+  id        String              @id @default(uuid()) @db.Char(36)
+  companyId String              @map("company_id") @db.Char(36)
+  /// e.g. `JOB_READY`, `COLLECTION_OTP`, `QUOTE_APPROVAL`, `CSAT_REQUEST`.
+  eventCode String              @map("event_code") @db.VarChar(60)
+  channel   NotificationChannel
+  language  PreferredLanguage   @default(EN)
+  subject   String?             @db.VarChar(255)
+  body      String              @db.Text
+  active    Boolean             @default(true)
+
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  createdById String?   @map("created_by") @db.Char(36)
+  updatedById String?   @map("updated_by") @db.Char(36)
+
+  company   Company @relation(fields: [companyId], references: [id])
+  createdBy User?   @relation("NotificationTemplateCreatedBy", fields: [createdById], references: [id])
+  updatedBy User?   @relation("NotificationTemplateUpdatedBy", fields: [updatedById], references: [id])
+
+  @@unique([companyId, eventCode, channel, language])
+  @@index([companyId, eventCode])
+  @@map("notification_templates")
+}
+
+/// One queued/sent message — the durable outbox AND the comms log.
+model Notification {
+  id        String  @id @default(uuid()) @db.Char(36)
+  companyId String  @map("company_id") @db.Char(36)
+  branchId  String? @map("branch_id") @db.Char(36)
+
+  customerId String? @map("customer_id") @db.Char(36)
+  jobId      String? @map("job_id") @db.Char(36)
+  /// The signed-in user this is for, when it is an internal alert.
+  userId     String? @map("user_id") @db.Char(36)
+
+  eventCode String              @map("event_code") @db.VarChar(60)
+  channel   NotificationChannel
+  language  PreferredLanguage   @default(EN)
+  /// Phone number / email address, resolved at enqueue time.
+  toAddress String              @map("to_address") @db.VarChar(255)
+  subject   String?             @db.VarChar(255)
+  /// The RENDERED body. Stored rather than re-rendered so the comms log shows
+  /// exactly what the customer received, even after the template changes.
+  body      String              @db.Text
+  /// The event data the body was rendered from — kept for debugging a bad
+  /// render, and deliberately free-form.
+  payload   Json?
+
+  status   NotificationStatus @default(QUEUED)
+  attempts Int                @default(0)
+  /// Earliest time a worker may pick this up — the retry backoff lives here.
+  availableAt DateTime        @default(now()) @map("available_at") @db.DateTime(3)
+  sentAt      DateTime?       @map("sent_at") @db.DateTime(3)
+  /// Provider message id (Beem/Africa's Talking), for delivery-report lookup.
+  providerRef String?         @map("provider_ref") @db.VarChar(255)
+  lastError   String?         @map("last_error") @db.Text
+  /// Set while a worker holds the row; a stale lease is reclaimable.
+  leasedUntil DateTime?       @map("leased_until") @db.DateTime(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  company  Company   @relation(fields: [companyId], references: [id])
+  branch   Branch?   @relation(fields: [branchId], references: [id])
+  customer Customer? @relation(fields: [customerId], references: [id])
+  job      Job?      @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  /// The drain loop's hot path: "QUEUED and due, oldest first".
+  @@index([status, availableAt])
+  @@index([companyId, customerId, createdAt])
+  @@index([companyId, jobId, createdAt])
+  @@index([companyId, eventCode, createdAt])
+  @@map("notifications")
 }

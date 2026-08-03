@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { WorkflowModule } from '../workflow/workflow.module';
+import { JobEventsService } from './job-events.service';
 import { JobPartsController } from './job-parts.controller';
 import { JobPartsService } from './job-parts.service';
 import { JobsController } from './jobs.controller';
@@ -34,7 +35,10 @@ import { OperationsReportService } from './operations-report.service';
     JobPartsService,
     OperationsReportService,
     FloorSnapshotService,
+    // SCMS proposal Module 6: the one-way lifecycle notification bus other
+    // modules subscribe to (see JobEventsService for why not forwardRef).
+    JobEventsService,
   ],
-  exports: [JobsService],
+  exports: [JobsService, JobPartsService, JobEventsService],
 })
 export class JobsModule {}

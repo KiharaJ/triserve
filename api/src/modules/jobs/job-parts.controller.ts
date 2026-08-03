@@ -13,8 +13,17 @@ import { RequirePermissions } from '../../common/authz/require-permissions.decor
 import type { AuthUser } from '../auth/auth.types';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { AuthGuard } from '../auth/guards/auth.guard';
-import { AddJobPartDto } from './dto/job-part.dto';
-import { JobPartsService, type JobPartWire } from './job-parts.service';
+import {
+  AddJobPartDto,
+  IssueJobPartDto,
+  ReturnCoreDto,
+} from './dto/job-part.dto';
+import {
+  JobPartsService,
+  type CoreStatusWire,
+  type JobPartWire,
+  type PickingTicketWire,
+} from './job-parts.service';
 
 /**
  * /api/v1/jobs/{jobId}/parts (Task 2.2, DESIGN.md §4.5) — parts on a job.
@@ -24,6 +33,12 @@ import { JobPartsService, type JobPartWire } from './job-parts.service';
  *   DELETE /jobs/{jobId}/parts/{id}   (unreserve) 'inventory.reserve'
  *   POST   /jobs/{jobId}/parts/consume      (all) 'inventory.consume'
  *   POST   /jobs/{jobId}/parts/{id}/consume       'inventory.consume'
+ *
+ * SCMS proposal Module 3 (the closed-loop core exchange) adds:
+ *   GET    /jobs/{jobId}/parts/picking-ticket     'inventory.read'
+ *   POST   /jobs/{jobId}/parts/{id}/issue         'inventory.issue'
+ *   POST   /jobs/{jobId}/parts/{id}/core-return   'inventory.core.return'
+ *   GET    /jobs/{jobId}/parts/core-status        'job.read'
  *
  * Every stock effect runs through InventoryService.applyMovement (ref JOB) in
  * one transaction with the line. Access is gated through the parent job's
@@ -57,6 +72,61 @@ export class JobPartsController {
         qty: dto.qty,
         unit_sell_price: dto.unit_sell_price,
         is_warranty: dto.is_warranty,
+      },
+      user,
+    );
+  }
+
+  // -- SCMS proposal Module 3: the closed-loop core exchange ---------------
+  //
+  // These two literal routes are declared BEFORE the ':lineId' routes below.
+  // Nest matches in declaration order, so 'picking-ticket' would otherwise be
+  // swallowed by ':lineId' and fail UUID validation.
+
+  @Get('picking-ticket')
+  @RequirePermissions('inventory.read')
+  pickingTicket(
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<PickingTicketWire> {
+    return this.jobParts.pickingTicket(jobId, user);
+  }
+
+  @Get('core-status')
+  @RequirePermissions('job.read')
+  coreStatus(
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<CoreStatusWire> {
+    return this.jobParts.coreStatus(jobId, user);
+  }
+
+  @Post(':lineId/issue')
+  @RequirePermissions('inventory.issue')
+  issue(
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @Param('lineId', ParseUUIDPipe) lineId: string,
+    @Body() dto: IssueJobPartDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<JobPartWire> {
+    return this.jobParts.issue(jobId, lineId, { serial_no: dto.serial_no }, user);
+  }
+
+  @Post(':lineId/core-return')
+  @RequirePermissions('inventory.core.return')
+  returnCore(
+    @Param('jobId', ParseUUIDPipe) jobId: string,
+    @Param('lineId', ParseUUIDPipe) lineId: string,
+    @Body() dto: ReturnCoreDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<JobPartWire> {
+    return this.jobParts.returnCore(
+      jobId,
+      lineId,
+      {
+        core_serial_no: dto.core_serial_no,
+        bin_location: dto.bin_location,
+        note: dto.note,
       },
       user,
     );

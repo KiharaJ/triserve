@@ -18,7 +18,12 @@ import {
   PrismaClient,
   type AccountType,
   type ApprovalType,
+  type DeviceCategory,
+  type HoldKind,
+  type NotificationChannel,
+  type RoleLimitType,
   type ServiceCodeKind,
+  type WorkflowStage,
 } from '@prisma/client';
 import { ROLE_DESCRIPTIONS, ROLE_LABELS, USER_ROLES } from '@triserve/shared';
 import * as argon2 from 'argon2';
@@ -187,6 +192,650 @@ const SERVICE_CODES: Array<{
   },
 ];
 
+// ===========================================================================
+// SCMS proposal seed data (Service_Center_System_Proposal.docx)
+// ===========================================================================
+
+/**
+ * Module 5 (§6) — the proposal's approval matrix as DATA.
+ *
+ *   Front Counter Agent  "can accept standard invoice payments, cannot grant
+ *                         discounts"                → DISCOUNT ceiling of 0
+ *   Repair Technician    "parts matching diagnostic codes up to a $5 minor
+ *                         consumable variance"      → PARTS_VARIANCE $5
+ *   Floor Supervisor     "OW price adjustments up to $200… requires Center
+ *                         Manager approval for full write-offs"
+ *                                                   → PRICE_ADJUSTMENT $200,
+ *                                                      WRITE_OFF 0
+ *   Center Manager       "Full authorization"       → enabled:false everywhere
+ *                                                      (no ceiling at all)
+ *
+ * The proposal quotes USD figures; the centre trades in TZS, so the ceilings
+ * are seeded in USD cents against an explicit `USD` currency rather than
+ * silently reinterpreting "$200" as shillings. A company retunes them in its
+ * own currency from the roles screen — that is what the table is for.
+ *
+ * A MISSING row denies outright; `enabled: false` means unlimited. Both are
+ * written explicitly below so no reader has to infer intent from absence.
+ */
+const ROLE_LIMITS: Array<{
+  role: string;
+  type: RoleLimitType;
+  maxAmount: bigint | null;
+  currency: string | null;
+  maxPercent: Prisma.Decimal | null;
+  enabled: boolean;
+  note: string;
+}> = [
+  {
+    role: 'SERVICE_ADVISOR',
+    type: 'DISCOUNT',
+    maxAmount: 0n,
+    currency: 'USD',
+    maxPercent: new Prisma.Decimal(0),
+    enabled: true,
+    note: 'front counter cannot grant discounts',
+  },
+  {
+    role: 'SERVICE_ADVISOR',
+    type: 'PRICE_ADJUSTMENT',
+    maxAmount: 0n,
+    currency: 'USD',
+    maxPercent: null,
+    enabled: true,
+    note: 'front counter cannot adjust prices',
+  },
+  {
+    role: 'TECHNICIAN',
+    type: 'PARTS_VARIANCE',
+    maxAmount: 500n, // USD 5.00
+    currency: 'USD',
+    maxPercent: null,
+    enabled: true,
+    note: 'technician: $5 minor consumable variance',
+  },
+  {
+    role: 'FLOOR_SUPERVISOR',
+    type: 'PRICE_ADJUSTMENT',
+    maxAmount: 20_000n, // USD 200.00
+    currency: 'USD',
+    maxPercent: null,
+    enabled: true,
+    note: 'floor supervisor: OW price adjustments up to $200',
+  },
+  {
+    role: 'FLOOR_SUPERVISOR',
+    type: 'DISCOUNT',
+    maxAmount: 20_000n,
+    currency: 'USD',
+    maxPercent: new Prisma.Decimal(25),
+    enabled: true,
+    note: 'floor supervisor: discounts up to $200 / 25%',
+  },
+  {
+    role: 'FLOOR_SUPERVISOR',
+    type: 'WRITE_OFF',
+    maxAmount: 0n,
+    currency: 'USD',
+    maxPercent: null,
+    enabled: true,
+    note: 'write-offs escalate to the Centre Manager',
+  },
+  {
+    role: 'BRANCH_MANAGER',
+    type: 'DISCOUNT',
+    maxAmount: null,
+    currency: null,
+    maxPercent: null,
+    enabled: false,
+    note: 'Centre Manager: full authorization',
+  },
+  {
+    role: 'BRANCH_MANAGER',
+    type: 'PRICE_ADJUSTMENT',
+    maxAmount: null,
+    currency: null,
+    maxPercent: null,
+    enabled: false,
+    note: 'Centre Manager: full authorization',
+  },
+  {
+    role: 'BRANCH_MANAGER',
+    type: 'WRITE_OFF',
+    maxAmount: null,
+    currency: null,
+    maxPercent: null,
+    enabled: false,
+    note: 'Centre Manager: approves stock write-offs and BER',
+  },
+  {
+    role: 'BRANCH_MANAGER',
+    type: 'REFUND',
+    maxAmount: null,
+    currency: null,
+    maxPercent: null,
+    enabled: false,
+    note: 'Centre Manager: full authorization',
+  },
+];
+
+/**
+ * Module 1 (§2 step 4) — the cascading symptom tree.
+ *
+ * A STARTER tree for handsets, one branch deep enough to show the shape the
+ * proposal specifies: Category → Sub-category → Symptom trigger, where only
+ * the trigger is selectable. Real centres grow this from their own repair
+ * history via the config screen; seeding an exhaustive Samsung fault taxonomy
+ * here would be inventing data we cannot verify.
+ *
+ * `estimateAmount` is the indicative OW labour price the counter quotes at
+ * intake (TZS minor units) — the proposal's "preliminary estimate… based on
+ * the symptom tree".
+ */
+const SYMPTOM_TREE: Array<{
+  code: string;
+  label: string;
+  parent?: string;
+  category?: DeviceCategory;
+  estimateTzs?: bigint;
+  estimateMinutes?: number;
+  sortOrder: number;
+}> = [
+  // -- Display ------------------------------------------------------------
+  { code: 'DISPLAY', label: 'Display', category: 'HHP', sortOrder: 10 },
+  {
+    code: 'DISPLAY.BLANK',
+    label: 'No image',
+    parent: 'DISPLAY',
+    category: 'HHP',
+    sortOrder: 10,
+  },
+  {
+    code: 'DISPLAY.BLANK.DEAD',
+    label: 'Completely dead — no backlight, no image',
+    parent: 'DISPLAY.BLANK',
+    category: 'HHP',
+    estimateTzs: 45_000_000n,
+    estimateMinutes: 90,
+    sortOrder: 10,
+  },
+  {
+    code: 'DISPLAY.BLANK.BACKLIGHT_ONLY',
+    label: 'Backlight on, no image',
+    parent: 'DISPLAY.BLANK',
+    category: 'HHP',
+    estimateTzs: 45_000_000n,
+    estimateMinutes: 90,
+    sortOrder: 20,
+  },
+  {
+    code: 'DISPLAY.BACKLIGHT',
+    label: 'Backlight',
+    parent: 'DISPLAY',
+    category: 'HHP',
+    sortOrder: 20,
+  },
+  {
+    code: 'DISPLAY.BACKLIGHT.WARM_FLICKER',
+    label: 'Flickers only when warm',
+    parent: 'DISPLAY.BACKLIGHT',
+    category: 'HHP',
+    estimateTzs: 45_000_000n,
+    estimateMinutes: 120,
+    sortOrder: 10,
+  },
+  {
+    code: 'DISPLAY.TOUCH',
+    label: 'Touch',
+    parent: 'DISPLAY',
+    category: 'HHP',
+    sortOrder: 30,
+  },
+  {
+    code: 'DISPLAY.TOUCH.DEAD_ZONE',
+    label: 'Dead zone in one area',
+    parent: 'DISPLAY.TOUCH',
+    category: 'HHP',
+    estimateTzs: 45_000_000n,
+    estimateMinutes: 90,
+    sortOrder: 10,
+  },
+  {
+    code: 'DISPLAY.TOUCH.GHOST',
+    label: 'Ghost touches / responds untouched',
+    parent: 'DISPLAY.TOUCH',
+    category: 'HHP',
+    estimateTzs: 45_000_000n,
+    estimateMinutes: 90,
+    sortOrder: 20,
+  },
+  // -- Power / charging ---------------------------------------------------
+  { code: 'POWER', label: 'Power & charging', category: 'HHP', sortOrder: 20 },
+  {
+    code: 'POWER.CHARGING',
+    label: 'Charging',
+    parent: 'POWER',
+    category: 'HHP',
+    sortOrder: 10,
+  },
+  {
+    code: 'POWER.CHARGING.NONE',
+    label: 'Does not charge at all',
+    parent: 'POWER.CHARGING',
+    category: 'HHP',
+    estimateTzs: 3_500_000n,
+    estimateMinutes: 60,
+    sortOrder: 10,
+  },
+  {
+    code: 'POWER.CHARGING.INTERMITTENT',
+    label: 'Charges only at a certain cable angle',
+    parent: 'POWER.CHARGING',
+    category: 'HHP',
+    estimateTzs: 3_500_000n,
+    estimateMinutes: 60,
+    sortOrder: 20,
+  },
+  {
+    code: 'POWER.BATTERY',
+    label: 'Battery',
+    parent: 'POWER',
+    category: 'HHP',
+    sortOrder: 20,
+  },
+  {
+    code: 'POWER.BATTERY.DRAIN',
+    label: 'Drains within a few hours',
+    parent: 'POWER.BATTERY',
+    category: 'HHP',
+    estimateTzs: 5_500_000n,
+    estimateMinutes: 45,
+    sortOrder: 10,
+  },
+  {
+    code: 'POWER.BATTERY.SWOLLEN',
+    label: 'Swollen / lifting the back cover',
+    parent: 'POWER.BATTERY',
+    category: 'HHP',
+    estimateTzs: 5_500_000n,
+    estimateMinutes: 45,
+    sortOrder: 20,
+  },
+  {
+    code: 'POWER.DEAD',
+    label: 'Will not power on',
+    parent: 'POWER',
+    category: 'HHP',
+    sortOrder: 30,
+  },
+  {
+    code: 'POWER.DEAD.NO_RESPONSE',
+    label: 'No response at all, even on charger',
+    parent: 'POWER.DEAD',
+    category: 'HHP',
+    estimateTzs: 2_000_000n,
+    estimateMinutes: 60,
+    sortOrder: 10,
+  },
+  // -- Software -----------------------------------------------------------
+  { code: 'SOFTWARE', label: 'Software', category: 'HHP', sortOrder: 30 },
+  {
+    code: 'SOFTWARE.BOOT',
+    label: 'Boot',
+    parent: 'SOFTWARE',
+    category: 'HHP',
+    sortOrder: 10,
+  },
+  {
+    code: 'SOFTWARE.BOOT.LOOP',
+    label: 'Restarts in a loop at the logo',
+    parent: 'SOFTWARE.BOOT',
+    category: 'HHP',
+    estimateTzs: 2_000_000n,
+    estimateMinutes: 60,
+    sortOrder: 10,
+  },
+  {
+    code: 'SOFTWARE.LOCK',
+    label: 'Lock',
+    parent: 'SOFTWARE',
+    category: 'HHP',
+    sortOrder: 20,
+  },
+  {
+    code: 'SOFTWARE.LOCK.FRP',
+    label: 'Google account (FRP) lock after reset',
+    parent: 'SOFTWARE.LOCK',
+    category: 'HHP',
+    estimateTzs: 2_000_000n,
+    estimateMinutes: 45,
+    sortOrder: 10,
+  },
+  // -- Liquid damage ------------------------------------------------------
+  { code: 'LIQUID', label: 'Liquid damage', category: 'HHP', sortOrder: 40 },
+  {
+    code: 'LIQUID.EXPOSURE',
+    label: 'Exposure',
+    parent: 'LIQUID',
+    category: 'HHP',
+    sortOrder: 10,
+  },
+  {
+    code: 'LIQUID.EXPOSURE.SUBMERGED',
+    label: 'Submerged / dropped in liquid',
+    parent: 'LIQUID.EXPOSURE',
+    category: 'HHP',
+    estimateMinutes: 120,
+    sortOrder: 10,
+  },
+  {
+    code: 'LIQUID.EXPOSURE.SPLASH',
+    label: 'Splashed, still partly working',
+    parent: 'LIQUID.EXPOSURE',
+    category: 'HHP',
+    estimateMinutes: 120,
+    sortOrder: 20,
+  },
+];
+
+/**
+ * Module 1 (§2 step 3) — the interactive condition map's hotspots.
+ *
+ * Normalised 0–1 coordinates on a device outline, so one renderer draws a
+ * handset, a TV and a fridge from the same data. A starter layout per class.
+ */
+const CONDITION_ZONES: Array<{
+  category: DeviceCategory;
+  code: string;
+  label: string;
+  x: number;
+  y: number;
+  face: string;
+  sortOrder: number;
+}> = [
+  // Handset — front
+  { category: 'HHP', code: 'SCREEN_TL', label: 'Screen — top left', x: 0.28, y: 0.2, face: 'FRONT', sortOrder: 10 },
+  { category: 'HHP', code: 'SCREEN_TR', label: 'Screen — top right', x: 0.72, y: 0.2, face: 'FRONT', sortOrder: 20 },
+  { category: 'HHP', code: 'SCREEN_C', label: 'Screen — centre', x: 0.5, y: 0.5, face: 'FRONT', sortOrder: 30 },
+  { category: 'HHP', code: 'SCREEN_BL', label: 'Screen — bottom left', x: 0.28, y: 0.8, face: 'FRONT', sortOrder: 40 },
+  { category: 'HHP', code: 'SCREEN_BR', label: 'Screen — bottom right', x: 0.72, y: 0.8, face: 'FRONT', sortOrder: 50 },
+  { category: 'HHP', code: 'EARPIECE', label: 'Earpiece / front camera', x: 0.5, y: 0.07, face: 'FRONT', sortOrder: 60 },
+  // Handset — back & sides
+  { category: 'HHP', code: 'BACK_GLASS', label: 'Back panel', x: 0.5, y: 0.55, face: 'BACK', sortOrder: 70 },
+  { category: 'HHP', code: 'CAMERA_BUMP', label: 'Rear camera housing', x: 0.28, y: 0.14, face: 'BACK', sortOrder: 80 },
+  { category: 'HHP', code: 'FRAME_LEFT', label: 'Left frame / volume keys', x: 0.04, y: 0.35, face: 'SIDE', sortOrder: 90 },
+  { category: 'HHP', code: 'FRAME_RIGHT', label: 'Right frame / power key', x: 0.96, y: 0.35, face: 'SIDE', sortOrder: 100 },
+  { category: 'HHP', code: 'PORT', label: 'Charging port / speaker', x: 0.5, y: 0.97, face: 'SIDE', sortOrder: 110 },
+  { category: 'HHP', code: 'SIM_TRAY', label: 'SIM tray', x: 0.04, y: 0.12, face: 'SIDE', sortOrder: 120 },
+  { category: 'HHP', code: 'LDI', label: 'Liquid damage indicator', x: 0.1, y: 0.9, face: 'SIDE', sortOrder: 130 },
+  // TV / consumer electronics
+  { category: 'CE', code: 'PANEL_TL', label: 'Panel — top left', x: 0.25, y: 0.25, face: 'FRONT', sortOrder: 10 },
+  { category: 'CE', code: 'PANEL_C', label: 'Panel — centre', x: 0.5, y: 0.45, face: 'FRONT', sortOrder: 20 },
+  { category: 'CE', code: 'PANEL_BR', label: 'Panel — bottom right', x: 0.75, y: 0.7, face: 'FRONT', sortOrder: 30 },
+  { category: 'CE', code: 'BEZEL', label: 'Bezel / frame', x: 0.5, y: 0.05, face: 'FRONT', sortOrder: 40 },
+  { category: 'CE', code: 'STAND', label: 'Stand / wall mount', x: 0.5, y: 0.95, face: 'FRONT', sortOrder: 50 },
+  { category: 'CE', code: 'PORTS', label: 'Rear port bank', x: 0.75, y: 0.55, face: 'BACK', sortOrder: 60 },
+  { category: 'CE', code: 'BACK_COVER', label: 'Rear cover', x: 0.4, y: 0.5, face: 'BACK', sortOrder: 70 },
+  // Air conditioning
+  { category: 'AC', code: 'INDOOR_FASCIA', label: 'Indoor unit fascia', x: 0.5, y: 0.3, face: 'FRONT', sortOrder: 10 },
+  { category: 'AC', code: 'LOUVRE', label: 'Air louvre / vanes', x: 0.5, y: 0.6, face: 'FRONT', sortOrder: 20 },
+  { category: 'AC', code: 'FILTER', label: 'Filter housing', x: 0.3, y: 0.45, face: 'FRONT', sortOrder: 30 },
+  { category: 'AC', code: 'OUTDOOR_FINS', label: 'Outdoor unit fins', x: 0.5, y: 0.5, face: 'BACK', sortOrder: 40 },
+  { category: 'AC', code: 'PIPEWORK', label: 'Pipework / insulation', x: 0.8, y: 0.75, face: 'BACK', sortOrder: 50 },
+  // Refrigeration
+  { category: 'REF', code: 'DOOR_UPPER', label: 'Upper door', x: 0.5, y: 0.25, face: 'FRONT', sortOrder: 10 },
+  { category: 'REF', code: 'DOOR_LOWER', label: 'Lower door', x: 0.5, y: 0.7, face: 'FRONT', sortOrder: 20 },
+  { category: 'REF', code: 'GASKET', label: 'Door gasket / seal', x: 0.12, y: 0.45, face: 'FRONT', sortOrder: 30 },
+  { category: 'REF', code: 'HANDLE', label: 'Handle', x: 0.85, y: 0.4, face: 'FRONT', sortOrder: 40 },
+  { category: 'REF', code: 'INTERIOR', label: 'Interior / shelving', x: 0.5, y: 0.5, face: 'FRONT', sortOrder: 50 },
+  { category: 'REF', code: 'COMPRESSOR', label: 'Compressor bay', x: 0.5, y: 0.9, face: 'BACK', sortOrder: 60 },
+  { category: 'REF', code: 'SIDE_PANEL', label: 'Side panel', x: 0.05, y: 0.5, face: 'SIDE', sortOrder: 70 },
+];
+
+/**
+ * Module 2 (§3) — mandatory calibration logs before a device exits QC.
+ *
+ * "For example, flagship mobile devices must pass an automated pressure/
+ * water-resistance calibration test, with raw log files uploaded to the
+ * record." That example is seeded literally as PRESSURE_TEST; the rest are the
+ * checks a handset/TV/AC/fridge genuinely cannot ship without.
+ */
+const QC_CHECKLIST: Array<{
+  category: DeviceCategory;
+  code: string;
+  label: string;
+  help?: string;
+  requiresValue?: boolean;
+  requiresAttachment?: boolean;
+  blocking?: boolean;
+  sortOrder: number;
+}> = [
+  {
+    category: 'HHP',
+    code: 'PRESSURE_TEST',
+    label: 'Pressure / water-resistance calibration',
+    help: 'Run the automated seal test and enter the measured pressure (kPa). Attach the raw log file to the job.',
+    requiresValue: true,
+    requiresAttachment: true,
+    sortOrder: 10,
+  },
+  {
+    category: 'HHP',
+    code: 'FLASH_CHECK',
+    label: 'Software flash / firmware version verified',
+    help: 'Confirm the handset boots on the expected firmware build.',
+    requiresValue: true,
+    sortOrder: 20,
+  },
+  {
+    category: 'HHP',
+    code: 'TOUCH_GRID',
+    label: 'Full touch-grid sweep',
+    sortOrder: 30,
+  },
+  {
+    category: 'HHP',
+    code: 'CAMERA_TEST',
+    label: 'Front & rear camera capture',
+    sortOrder: 40,
+  },
+  {
+    category: 'HHP',
+    code: 'CHARGE_TEST',
+    label: 'Charge & battery health check',
+    requiresValue: true,
+    sortOrder: 50,
+  },
+  {
+    category: 'HHP',
+    code: 'IMEI_MATCH',
+    label: 'IMEI still matches the job card',
+    help: 'Catches a unit mixed up on the bench before it reaches the customer.',
+    sortOrder: 60,
+  },
+  {
+    category: 'HHP',
+    code: 'COSMETIC',
+    label: 'Cosmetic condition matches intake photos',
+    blocking: false,
+    sortOrder: 70,
+  },
+  {
+    category: 'CE',
+    code: 'PANEL_UNIFORMITY',
+    label: 'Panel uniformity / dead-pixel sweep',
+    sortOrder: 10,
+  },
+  {
+    category: 'CE',
+    code: 'INPUT_TEST',
+    label: 'All HDMI / USB inputs verified',
+    sortOrder: 20,
+  },
+  {
+    category: 'CE',
+    code: 'FIRMWARE',
+    label: 'Firmware version verified',
+    requiresValue: true,
+    sortOrder: 30,
+  },
+  {
+    category: 'AC',
+    code: 'GAS_PRESSURE',
+    label: 'Refrigerant pressure within spec',
+    requiresValue: true,
+    requiresAttachment: true,
+    sortOrder: 10,
+  },
+  {
+    category: 'AC',
+    code: 'COOLING_DELTA',
+    label: 'Inlet/outlet temperature differential',
+    requiresValue: true,
+    sortOrder: 20,
+  },
+  {
+    category: 'AC',
+    code: 'LEAK_TEST',
+    label: 'Leak test passed',
+    sortOrder: 30,
+  },
+  {
+    category: 'REF',
+    code: 'TEMP_PULLDOWN',
+    label: 'Cabinet pull-down to set temperature',
+    requiresValue: true,
+    sortOrder: 10,
+  },
+  {
+    category: 'REF',
+    code: 'DOOR_SEAL',
+    label: 'Door seal / gasket integrity',
+    sortOrder: 20,
+  },
+  {
+    category: 'REF',
+    code: 'COMPRESSOR_RUN',
+    label: 'Compressor run current within spec',
+    requiresValue: true,
+    sortOrder: 30,
+  },
+];
+
+/**
+ * Module 7 (§8) / DESIGN §4.13 — starter notification templates.
+ *
+ * `{{token}}` placeholders are resolved from the event payload at enqueue
+ * time. SMS bodies are kept inside one 160-character segment where possible:
+ * a two-segment message costs twice as much, and these fire on every job.
+ * Swahili variants ship alongside English because `customers.preferred_language`
+ * already selects between them (§4.2) — a customer who set SW and receives EN
+ * is a bug, not a missing feature.
+ */
+const NOTIFICATION_TEMPLATES: Array<{
+  eventCode: string;
+  channel: NotificationChannel;
+  language: 'EN' | 'SW';
+  subject?: string;
+  body: string;
+}> = [
+  {
+    eventCode: 'JOB_BOOKED',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: job {{job_no}} opened for your {{device}}. We will text you when it is ready. Ref {{job_no}}.',
+  },
+  {
+    eventCode: 'JOB_BOOKED',
+    channel: 'SMS',
+    language: 'SW',
+    body: '{{company}}: kazi {{job_no}} imefunguliwa kwa {{device}} yako. Tutakutumia ujumbe ikiwa tayari. Kumb. {{job_no}}.',
+  },
+  {
+    eventCode: 'QUOTE_APPROVAL',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: repair quote for {{job_no}} is {{amount}}. Approve here: {{link}} (expires {{expires}}).',
+  },
+  {
+    eventCode: 'QUOTE_APPROVAL',
+    channel: 'SMS',
+    language: 'SW',
+    body: '{{company}}: gharama ya matengenezo {{job_no}} ni {{amount}}. Thibitisha hapa: {{link}} (inaisha {{expires}}).',
+  },
+  {
+    eventCode: 'AWAITING_PARTS',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: job {{job_no}} is waiting on a spare part. We will update you as soon as it arrives.',
+  },
+  {
+    eventCode: 'JOB_READY',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: {{device}} (job {{job_no}}) is ready for collection at {{branch}}.',
+  },
+  {
+    eventCode: 'JOB_READY',
+    channel: 'SMS',
+    language: 'SW',
+    body: '{{company}}: {{device}} (kazi {{job_no}}) iko tayari kuchukuliwa {{branch}}.',
+  },
+  {
+    // The PIN travels in its OWN message, never bundled with anything else:
+    // a collection code forwarded along with other text is a code that has
+    // left the customer's control.
+    eventCode: 'COLLECTION_OTP',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: your collection PIN for job {{job_no}} is {{otp}}. Show it at the counter. Do not share it.',
+  },
+  {
+    eventCode: 'COLLECTION_OTP',
+    channel: 'SMS',
+    language: 'SW',
+    body: '{{company}}: PIN yako ya kuchukua kazi {{job_no}} ni {{otp}}. Ionyeshe kaunta. Usimpe mtu mwingine.',
+  },
+  {
+    eventCode: 'BER_NOTICE',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: job {{job_no}} — repair cost exceeds the device value. Please call {{branch_phone}} to discuss your options.',
+  },
+  {
+    eventCode: 'JOB_DISPATCHED',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: job {{job_no}} was collected on {{date}}. Thank you.',
+  },
+  {
+    eventCode: 'CSAT_REQUEST',
+    channel: 'SMS',
+    language: 'EN',
+    body: '{{company}}: how did we do on job {{job_no}}? Rate us here: {{link}}',
+  },
+  {
+    eventCode: 'CSAT_REQUEST',
+    channel: 'SMS',
+    language: 'SW',
+    body: '{{company}}: tulifanyaje kwenye kazi {{job_no}}? Tupe maoni: {{link}}',
+  },
+  {
+    eventCode: 'JOB_READY',
+    channel: 'EMAIL',
+    language: 'EN',
+    subject: '{{device}} ready for collection — job {{job_no}}',
+    body: 'Hello {{customer}},\n\nYour {{device}} (job {{job_no}}) has passed quality checks and is ready for collection at {{branch}}.\n\nPlease bring the collection PIN we texted you.\n\n{{company}}',
+  },
+  {
+    eventCode: 'QUOTE_APPROVAL',
+    channel: 'EMAIL',
+    language: 'EN',
+    subject: 'Repair quote for job {{job_no}}',
+    body: 'Hello {{customer}},\n\nThe repair quote for your {{device}} (job {{job_no}}) is {{amount}}.\n\nApprove it here: {{link}}\nThis link expires {{expires}}.\n\nWork will not start until you approve.\n\n{{company}}',
+  },
+];
+
 /**
  * DEFAULT workflow (Task 1.2, DESIGN.md §4.10/§5/E7) — the §5 job lifecycle
  * as seeded data. Companies reshape it later via /workflow/* admin endpoints.
@@ -197,26 +846,69 @@ const WORKFLOW_STATES: Array<{
   isInitial?: boolean;
   isTerminal?: boolean;
   sortOrder: number;
+  /**
+   * SCMS proposal Module 2 — what the state means to the KPI clocks. `stage`
+   * drives Clock-to-Diagnosis / Hold-for-Parts / Turnaround; `holdKind` says
+   * why a hold is holding; `pausesSla` stops the CUSTOMER-facing countdown
+   * while the internal clock keeps running.
+   */
+  stage: WorkflowStage;
+  holdKind?: HoldKind;
+  pausesSla?: boolean;
 }> = [
-  { code: 'RECEIVED', label: 'Received', isInitial: true, sortOrder: 10 },
-  { code: 'DIAGNOSING', label: 'Diagnosing', sortOrder: 20 },
+  {
+    code: 'RECEIVED',
+    label: 'Received',
+    isInitial: true,
+    sortOrder: 10,
+    stage: 'INTAKE',
+  },
+  { code: 'DIAGNOSING', label: 'Diagnosing', sortOrder: 20, stage: 'DIAGNOSIS' },
   {
     code: 'AWAITING_CUSTOMER_APPROVAL',
     label: 'Awaiting Customer Approval',
     sortOrder: 30,
+    stage: 'HOLD',
+    holdKind: 'CUSTOMER',
+    pausesSla: true,
   },
-  { code: 'AWAITING_PARTS', label: 'Awaiting Parts', sortOrder: 40 },
-  { code: 'IN_REPAIR', label: 'In Repair', sortOrder: 50 },
-  { code: 'QC', label: 'Quality Check', sortOrder: 60 },
-  { code: 'READY', label: 'Ready for Collection', sortOrder: 70 },
-  { code: 'DISPATCHED', label: 'Dispatched', sortOrder: 80 },
-  { code: 'CLOSED', label: 'Closed', isTerminal: true, sortOrder: 90 },
-  { code: 'CANCELLED', label: 'Cancelled', isTerminal: true, sortOrder: 100 },
+  {
+    code: 'AWAITING_PARTS',
+    label: 'Awaiting Parts',
+    sortOrder: 40,
+    stage: 'HOLD',
+    holdKind: 'PARTS',
+    pausesSla: true,
+  },
+  { code: 'IN_REPAIR', label: 'In Repair', sortOrder: 50, stage: 'REPAIR' },
+  { code: 'QC', label: 'Quality Check', sortOrder: 60, stage: 'QC' },
+  {
+    code: 'READY',
+    label: 'Ready for Collection',
+    sortOrder: 70,
+    stage: 'READY',
+  },
+  { code: 'DISPATCHED', label: 'Dispatched', sortOrder: 80, stage: 'DONE' },
+  {
+    code: 'CLOSED',
+    label: 'Closed',
+    isTerminal: true,
+    sortOrder: 90,
+    stage: 'DONE',
+  },
+  {
+    code: 'CANCELLED',
+    label: 'Cancelled',
+    isTerminal: true,
+    sortOrder: 100,
+    stage: 'DONE',
+  },
   {
     code: 'RETURNED_UNREPAIRED',
     label: 'Returned Unrepaired',
     isTerminal: true,
     sortOrder: 110,
+    stage: 'DONE',
   },
 ];
 
@@ -231,9 +923,26 @@ const WORKFLOW_STATES: Array<{
  *                               BRANCH_MANAGER (+SUPER_ADMIN); technicians
  *                               deliberately cannot dispatch.
  *
- * AWAITING_CUSTOMER_APPROVAL→IN_REPAIR carries guard_code
- * 'ow_quote_approved' — a stub (always true) until POS lands (Phase 3);
- * requires_approval stays false for now (OW-quote gating comes with POS).
+ * GUARDS (SCMS proposal §3 "Conditional Enforcements", §4 step 4, §6). An edge
+ * may name SEVERAL guards, comma-separated — ALL must pass. The proposal's
+ * enforcement table maps onto the seeded lifecycle like this:
+ *
+ *   RECEIVED    → DIAGNOSING  intake_evidence_complete, engineer_skill_match
+ *                             (the proposal's BOOKED→ASSIGNED skill rule and
+ *                             its intake-integrity rules land on the same edge
+ *                             here, because TriServe assigns at intake rather
+ *                             than modelling ASSIGNED as its own column)
+ *   DIAGNOSING  → IN_REPAIR   — via AWAITING_CUSTOMER_APPROVAL / AWAITING_PARTS
+ *   AWAIT_CUST  → IN_REPAIR   ow_quote_approved, ber_not_blocking
+ *   AWAIT_PARTS → IN_REPAIR   ber_not_blocking
+ *   IN_REPAIR   → QC          repair_work_declared, core_returns_complete
+ *   QC          → READY       qc_checklist_passed
+ *   QC          → IN_REPAIR   qc_failure_logged
+ *   READY       → DISPATCHED  collection_otp_verified
+ *
+ * Every one of these is overridable by an approved manager override where a
+ * mapping exists in GUARD_OVERRIDE_TYPE (jobs.service.ts) — the gates are hard
+ * by default and openable on the record, never silently bypassable.
  */
 const WORKFLOW_TRANSITIONS: Array<{
   from: string;
@@ -242,7 +951,14 @@ const WORKFLOW_TRANSITIONS: Array<{
   requiresApproval?: boolean;
   guardCode?: string | null;
 }> = [
-  { from: 'RECEIVED', to: 'DIAGNOSING', requiredPermission: 'job.transition' },
+  {
+    from: 'RECEIVED',
+    to: 'DIAGNOSING',
+    requiredPermission: 'job.transition',
+    // §2: the counter's evidence pack must be complete, and §3: the
+    // technician holding the job must be certified for the device class.
+    guardCode: 'intake_evidence_complete,engineer_skill_match',
+  },
   { from: 'RECEIVED', to: 'CANCELLED', requiredPermission: 'job.transition' },
   {
     from: 'DIAGNOSING',
@@ -264,8 +980,10 @@ const WORKFLOW_TRANSITIONS: Array<{
     from: 'AWAITING_CUSTOMER_APPROVAL',
     to: 'IN_REPAIR',
     requiredPermission: 'job.transition.repair',
-    requiresApproval: false, // OW-quote approval gating arrives with POS
-    guardCode: 'ow_quote_approved',
+    requiresApproval: false,
+    // §6: no billable work starts without the customer's approval or a
+    // prepayment. §5: and not at all while a BER review is open.
+    guardCode: 'ow_quote_approved,ber_not_blocking',
   },
   {
     from: 'AWAITING_CUSTOMER_APPROVAL',
@@ -286,14 +1004,38 @@ const WORKFLOW_TRANSITIONS: Array<{
     from: 'AWAITING_PARTS',
     to: 'IN_REPAIR',
     requiredPermission: 'job.transition.repair',
+    guardCode: 'ber_not_blocking',
   },
-  { from: 'IN_REPAIR', to: 'QC', requiredPermission: 'job.transition.repair' },
-  { from: 'QC', to: 'READY', requiredPermission: 'job.transition.repair' },
-  { from: 'QC', to: 'IN_REPAIR', requiredPermission: 'job.transition.repair' }, // rework
+  {
+    from: 'IN_REPAIR',
+    to: 'QC',
+    requiredPermission: 'job.transition.repair',
+    // §3: actual labour hours + repair notes are mandatory. §4 step 4: the
+    // defective core must be in the secure bin FIRST — the interlock the
+    // proposal calls a CRITICAL STEP.
+    guardCode: 'repair_work_declared,core_returns_complete',
+  },
+  {
+    from: 'QC',
+    to: 'READY',
+    // §3: the QC gate is the Senior Quality Assurer's, not the bench's — a
+    // technician can push INTO QC but cannot sign their own work off.
+    requiredPermission: 'job.qc.approve',
+    guardCode: 'qc_checklist_passed',
+  },
+  {
+    from: 'QC',
+    to: 'IN_REPAIR',
+    requiredPermission: 'job.qc.approve',
+    // §3: "Requires mandatory failure reason log; routes back to the same tech."
+    guardCode: 'qc_failure_logged',
+  }, // rework
   {
     from: 'READY',
     to: 'DISPATCHED',
     requiredPermission: 'job.transition.dispatch',
+    // §7 step 4: no handover without the customer's single-use PIN.
+    guardCode: 'collection_otp_verified',
   },
   {
     from: 'DISPATCHED',
@@ -541,6 +1283,9 @@ async function main(): Promise<void> {
         isTerminal: s.isTerminal ?? false,
         sortOrder: s.sortOrder,
         active: true,
+        stage: s.stage,
+        holdKind: s.holdKind ?? 'NONE',
+        pausesSla: s.pausesSla ?? false,
       },
       create: {
         id: randomUUID(),
@@ -550,6 +1295,9 @@ async function main(): Promise<void> {
         isInitial: s.isInitial ?? false,
         isTerminal: s.isTerminal ?? false,
         sortOrder: s.sortOrder,
+        stage: s.stage,
+        holdKind: s.holdKind ?? 'NONE',
+        pausesSla: s.pausesSla ?? false,
       },
     });
     stateIdByCode.set(state.code, state.id);
@@ -676,6 +1424,9 @@ async function main(): Promise<void> {
       reorderLevel: 5,
       supplier: 'Samsung Parts Distributor',
       opening: { DAR: 12, KRK: 4 },
+      // SCMS proposal §4: displays, PBA mainboards and cameras are the
+      // 1:1 core-exchange items — the old unit must come back.
+      requiresCoreReturn: true,
     },
     {
       partNumber: 'GH82-30000B',
@@ -686,6 +1437,7 @@ async function main(): Promise<void> {
       reorderLevel: 8,
       supplier: 'Samsung Parts Distributor',
       opening: { DAR: 20, KRK: 10 },
+      requiresCoreReturn: true,
     },
     {
       partNumber: 'EB-BA556ABY',
@@ -696,6 +1448,8 @@ async function main(): Promise<void> {
       reorderLevel: 15,
       supplier: 'Samsung Parts Distributor',
       opening: { DAR: 40, KRK: 18 },
+      // Batteries are consumables, not tracked cores.
+      requiresCoreReturn: false,
     },
     {
       partNumber: 'DA97-19289X',
@@ -706,6 +1460,7 @@ async function main(): Promise<void> {
       reorderLevel: 6,
       supplier: 'Dar Local Spares Ltd',
       opening: { DAR: 7, KRK: 0 },
+      requiresCoreReturn: false,
     },
   ] as const;
 
@@ -723,6 +1478,7 @@ async function main(): Promise<void> {
         unitCostUsd: p.unitCostUsd,
         sellPriceTzs: p.sellPriceTzs,
         preferredSupplierId: supplierIdByName.get(p.supplier) ?? null,
+        requiresCoreReturn: p.requiresCoreReturn,
         active: true,
       },
       create: {
@@ -734,6 +1490,7 @@ async function main(): Promise<void> {
         unitCostUsd: p.unitCostUsd,
         sellPriceTzs: p.sellPriceTzs,
         preferredSupplierId: supplierIdByName.get(p.supplier) ?? null,
+        requiresCoreReturn: p.requiresCoreReturn,
         createdById: admin.id,
         updatedById: admin.id,
       },
@@ -782,6 +1539,211 @@ async function main(): Promise<void> {
     }
     console.log(`part:           ${part.partNumber} — ${part.description}`);
   }
+
+  // =========================================================================
+  // SCMS proposal modules
+  // =========================================================================
+
+  // --- Module 5 (§6): role financial ceilings (upsert by company+role+type) --
+  for (const l of ROLE_LIMITS) {
+    await prisma.roleLimit.upsert({
+      where: {
+        companyId_role_type: {
+          companyId: company.id,
+          role: l.role,
+          type: l.type,
+        },
+      },
+      update: {
+        maxAmount: l.maxAmount,
+        currency: l.currency,
+        maxPercent: l.maxPercent,
+        enabled: l.enabled,
+        updatedById: admin.id,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        role: l.role,
+        type: l.type,
+        maxAmount: l.maxAmount,
+        currency: l.currency,
+        maxPercent: l.maxPercent,
+        enabled: l.enabled,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+    console.log(`role limit:     ${l.role} ${l.type} — ${l.note}`);
+  }
+
+  // --- Module 1 (§2 step 4): the cascading symptom tree ---------------------
+  // Two passes are not needed: SYMPTOM_TREE is declared parents-first, so a
+  // node's parent id is always already in the map when we reach it. The
+  // explicit check turns a future reordering into a loud failure rather than
+  // a silently orphaned branch.
+  const symptomIdByCode = new Map<string, string>();
+  for (const n of SYMPTOM_TREE) {
+    if (n.parent && !symptomIdByCode.has(n.parent)) {
+      throw new Error(
+        `symptom tree seed: '${n.code}' names parent '${n.parent}' before it is defined`,
+      );
+    }
+    const parentId = n.parent ? (symptomIdByCode.get(n.parent) ?? null) : null;
+    // Depth is derived, not declared: it can only ever be the parent's depth
+    // plus one, and a hand-maintained `level` column would drift.
+    const level = n.parent
+      ? (SYMPTOM_TREE.find((x) => x.code === n.parent)?.parent ? 3 : 2)
+      : 1;
+    // A node is a LEAF when nothing else names it as a parent — computed, so
+    // adding a child to a former leaf automatically demotes it.
+    const isLeaf = !SYMPTOM_TREE.some((x) => x.parent === n.code);
+
+    const node = await prisma.symptomNode.upsert({
+      where: { companyId_code: { companyId: company.id, code: n.code } },
+      update: {
+        label: n.label,
+        parentId,
+        level,
+        isLeaf,
+        category: n.category ?? null,
+        estimateAmount: n.estimateTzs ?? null,
+        estimateCurrency: n.estimateTzs ? 'TZS' : null,
+        estimateMinutes: n.estimateMinutes ?? null,
+        sortOrder: n.sortOrder,
+        active: true,
+        deletedAt: null,
+        updatedById: admin.id,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        code: n.code,
+        label: n.label,
+        parentId,
+        level,
+        isLeaf,
+        category: n.category ?? null,
+        estimateAmount: n.estimateTzs ?? null,
+        estimateCurrency: n.estimateTzs ? 'TZS' : null,
+        estimateMinutes: n.estimateMinutes ?? null,
+        sortOrder: n.sortOrder,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+    symptomIdByCode.set(node.code, node.id);
+  }
+  console.log(`symptom tree:   ${SYMPTOM_TREE.length} nodes`);
+
+  // --- Module 1 (§2 step 3): condition-map hotspots -------------------------
+  for (const z of CONDITION_ZONES) {
+    await prisma.conditionZone.upsert({
+      where: {
+        companyId_category_code: {
+          companyId: company.id,
+          category: z.category,
+          code: z.code,
+        },
+      },
+      update: {
+        label: z.label,
+        x: new Prisma.Decimal(z.x),
+        y: new Prisma.Decimal(z.y),
+        face: z.face,
+        sortOrder: z.sortOrder,
+        active: true,
+        deletedAt: null,
+        updatedById: admin.id,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        category: z.category,
+        code: z.code,
+        label: z.label,
+        x: new Prisma.Decimal(z.x),
+        y: new Prisma.Decimal(z.y),
+        face: z.face,
+        sortOrder: z.sortOrder,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+  }
+  console.log(`condition map:  ${CONDITION_ZONES.length} hotspots`);
+
+  // --- Module 2 (§3): QC calibration checklist ------------------------------
+  for (const c of QC_CHECKLIST) {
+    await prisma.qcChecklistItem.upsert({
+      where: {
+        companyId_category_code: {
+          companyId: company.id,
+          category: c.category,
+          code: c.code,
+        },
+      },
+      update: {
+        label: c.label,
+        help: c.help ?? null,
+        requiresValue: c.requiresValue ?? false,
+        requiresAttachment: c.requiresAttachment ?? false,
+        blocking: c.blocking ?? true,
+        sortOrder: c.sortOrder,
+        active: true,
+        deletedAt: null,
+        updatedById: admin.id,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        category: c.category,
+        code: c.code,
+        label: c.label,
+        help: c.help ?? null,
+        requiresValue: c.requiresValue ?? false,
+        requiresAttachment: c.requiresAttachment ?? false,
+        blocking: c.blocking ?? true,
+        sortOrder: c.sortOrder,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+  }
+  console.log(`qc checklist:   ${QC_CHECKLIST.length} items`);
+
+  // --- Module 7 (§8): notification templates --------------------------------
+  for (const t of NOTIFICATION_TEMPLATES) {
+    await prisma.notificationTemplate.upsert({
+      where: {
+        companyId_eventCode_channel_language: {
+          companyId: company.id,
+          eventCode: t.eventCode,
+          channel: t.channel,
+          language: t.language,
+        },
+      },
+      update: {
+        subject: t.subject ?? null,
+        body: t.body,
+        active: true,
+        deletedAt: null,
+        updatedById: admin.id,
+      },
+      create: {
+        id: randomUUID(),
+        companyId: company.id,
+        eventCode: t.eventCode,
+        channel: t.channel,
+        language: t.language,
+        subject: t.subject ?? null,
+        body: t.body,
+        createdById: admin.id,
+        updatedById: admin.id,
+      },
+    });
+  }
+  console.log(`templates:      ${NOTIFICATION_TEMPLATES.length} notification templates`);
 
   console.log('Seed complete.');
 }

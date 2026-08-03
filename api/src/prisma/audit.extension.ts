@@ -125,7 +125,56 @@ export const AUDITED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   // high-value asset (register/status change/installation), never mutated
   // inside a caller-managed transaction.
   Prisma.ModelName.PartUnit,
+
+  // -- SCMS proposal modules -------------------------------------------------
+  // Module 1/2: the symptom tree, condition-map layout, skill matrix and QC
+  // checklist are ACCESS- and QUALITY-critical config — changing who is
+  // certified for a device class, or removing a blocking calibration check,
+  // alters what the workflow guards will let through. Audited like roles.
+  Prisma.ModelName.SymptomNode,
+  Prisma.ModelName.ConditionZone,
+  Prisma.ModelName.UserSkill,
+  Prisma.ModelName.QcChecklistItem,
+  // Module 1/2: the evidence itself. Condition marks are the record that
+  // settles a damage dispute; QC checks are the record that a calibration was
+  // performed. Both are written as ordinary creates outside any caller-managed
+  // transaction, so the extension can capture them.
+  Prisma.ModelName.JobConditionMark,
+  Prisma.ModelName.JobQcCheck,
+  // Module 4: certifying a device Beyond Economic Repair writes off a repair
+  // and can commit a replacement unit — among the most consequential single
+  // decisions in the system. Swap units and swaps are tracked assets and
+  // identity changes respectively.
+  Prisma.ModelName.BerAssessment,
+  Prisma.ModelName.SwapUnit,
+  Prisma.ModelName.DeviceSwap,
+  // Module 5: a role's financial ceiling is an access-control change.
+  Prisma.ModelName.RoleLimit,
+  // Module 6: the consignment chain is custody of other people's property.
+  // ConsignmentScan is deliberately ABSENT: it is append-only by construction
+  // (never updated or deleted), so it IS its own audit trail — a second copy
+  // of every scan would double the write volume for no added evidence.
+  Prisma.ModelName.Consignment,
+  Prisma.ModelName.ConsignmentJob,
+  // Module 7: template edits change what customers are told.
+  Prisma.ModelName.NotificationTemplate,
 ]);
+
+/**
+ * DELIBERATELY NOT AUDITED, and why:
+ *
+ *   JobStateEvent      — IS the state-change audit trail (append-only, with
+ *                        actor and timestamps). JobsService additionally emits
+ *                        a semantic TRANSITION row.
+ *   JobCollectionOtp   — append-only in practice and holds a code hash; the
+ *                        issue/verify/void stamps on the row are the trail.
+ *   Notification       — the outbox row IS the comms log, and the worker
+ *                        updates it several times per delivery; auditing every
+ *                        status hop would bury the log in noise.
+ *   ConsignmentScan    — append-only by construction (see above).
+ *   *Counter models    — internal sequences written via raw SQL, not business
+ *                        data (same reasoning as JobCounter).
+ */
 
 /** Mutations we intercept and audit. */
 const AUDITED_OPERATIONS = new Set([

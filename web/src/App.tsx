@@ -28,6 +28,8 @@ import { JobDetailPage } from '@/pages/jobs/detail'
 import { JobsPage } from '@/pages/jobs'
 import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
+import { PublicCsatPage } from '@/pages/public/csat'
+import { PublicQuotePage } from '@/pages/public/quote-approval'
 import { InvoicesPage } from '@/pages/pos/invoices'
 import { OperationsPage } from '@/pages/operations'
 import { ReportsPage } from '@/pages/reports'
@@ -63,6 +65,12 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      {/* Customer-facing and UNAUTHENTICATED — outside RequireAuth and the
+          AppShell on purpose. The recipient has no TriServe account; the
+          token in the URL is the credential. Sending them to /login would
+          kill both flows. */}
+      <Route path="/quote/:token" element={<PublicQuotePage />} />
+      <Route path="/csat/:token" element={<PublicCsatPage />} />
       <Route
         element={
           <RequireAuth>

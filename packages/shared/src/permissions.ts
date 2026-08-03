@@ -32,7 +32,37 @@ export const PERMISSIONS = {
     'job.transition.repair',
     'job.transition.dispatch',
     'job.reopen',
+    // SCMS proposal Module 1: the front-desk evidence pack — visual condition
+    // map, symptom tree pick, terms acceptance. Held by whoever books jobs.
+    'job.intake.capture',
+    // SCMS proposal Module 2: recording the calibration/flash checklist is the
+    // Senior Quality Assurer's authority, distinct from moving the job — a
+    // technician may push to QC but must not sign their own work off.
+    'job.qc.record',
+    'job.qc.approve',
+    // SCMS proposal Module 4: evaluating a device Beyond Economic Repair is
+    // routine (anyone on the bench can run the numbers); CERTIFYING it is the
+    // Workshop Supervisor's, and executing the swap the Centre Manager's.
+    'job.ber.evaluate',
+    'job.ber.certify',
+    'job.swap.execute',
   ],
+  // SCMS proposal Module 6: the handover controls — issuing/verifying the
+  // collection PIN, and the hub-and-spoke consignment chain.
+  logistics: [
+    'job.collection.otp.issue',
+    'job.collection.otp.verify',
+    'consignment.read',
+    'consignment.manage',
+    'consignment.scan',
+  ],
+  // SCMS proposal Module 4: the isolated replacement-unit buffer. Deliberately
+  // its own domain, not part of `inventory`: the whole point of the Swap Buffer
+  // Stock is that ordinary stock authority does NOT reach it.
+  swapStock: ['swapstock.read', 'swapstock.manage'],
+  // DESIGN §4.13 / proposal Module 7: the notification engine — reading the
+  // comms log is a CRM activity, editing templates is configuration.
+  notifications: ['notification.read', 'notification.manage'],
   // Task 2.1 (§4.4): the spare-parts CATALOGUE (part numbers, costs, reorder
   // config) — company-level like models. Reading stock levels is
   // 'inventory.read'; editing the catalogue itself is 'part.manage'.
@@ -44,6 +74,11 @@ export const PERMISSIONS = {
     'inventory.adjust',
     'inventory.transfer',
     'inventory.count',
+    // SCMS proposal Module 3: picking a reserved part from its bin and handing
+    // it to the bench ("Issued to Tech"), and scanning the defective core back
+    // into the secure return bin. Storekeeper work, distinct from consuming.
+    'inventory.issue',
+    'inventory.core.return',
   ],
   procurement: [
     'po.create',
@@ -101,6 +136,15 @@ export const ALL_PERMISSIONS: readonly Permission[] = Object.values(
 export const USER_ROLES = [
   'SUPER_ADMIN',
   'BRANCH_MANAGER',
+  // SCMS proposal §6 separates the Floor Supervisor (queue monitoring, quality
+  // assurance, dispute management, technician routing — price adjustments up
+  // to a ceiling) from the Centre Manager (full local authority: write-offs,
+  // BER certification, commercial swaps). TriServe's BRANCH_MANAGER plays the
+  // Centre Manager; this role is the tier below it, and without it the
+  // proposal's "requires Centre Manager approval for full write-offs"
+  // escalation has no lower rung to escalate FROM. Its financial ceilings live
+  // in `role_limits`, not here — a permission says whether, a limit says how far.
+  'FLOOR_SUPERVISOR',
   'SERVICE_ADVISOR',
   'TECHNICIAN',
   'STOREKEEPER',
@@ -212,6 +256,85 @@ export const ROLE_PERMISSIONS: Readonly<
     'attachment.create',
     'attachment.read',
     'attachment.delete',
+    // SCMS proposal §6, Center Manager: "Full authorization. Can approve BER
+    // certifications, stock write-offs, and commercial swaps."
+    'job.intake.capture',
+    'job.qc.record',
+    'job.qc.approve',
+    'job.ber.evaluate',
+    'job.ber.certify',
+    'job.swap.execute',
+    'inventory.issue',
+    'inventory.core.return',
+    'job.collection.otp.issue',
+    'job.collection.otp.verify',
+    'consignment.read',
+    'consignment.manage',
+    'consignment.scan',
+    'swapstock.read',
+    'swapstock.manage',
+    'notification.read',
+    'notification.manage',
+  ],
+
+  /**
+   * SCMS proposal §6, Floor Supervisor: "Queue monitoring, quality assurance,
+   * dispute management, technician routing. Can approve out-of-warranty price
+   * adjustments up to a ceiling. Can reassign stalled jobs. Requires Center
+   * Manager approval for full write-offs."
+   *
+   * So: full sight of the floor, QC sign-off authority, job routing, and
+   * approval powers — but NOT `job.swap.execute` or `job.ber.certify`
+   * (commercial decisions reserved to the Centre Manager), and no user
+   * management, catalogue management or finance.
+   */
+  FLOOR_SUPERVISOR: [
+    'job.create',
+    'job.read',
+    'job.update',
+    'job.assign',
+    'job.transition',
+    'job.transition.repair',
+    'job.transition.dispatch',
+    'job.intake.capture',
+    'job.qc.record',
+    'job.qc.approve',
+    'job.ber.evaluate',
+    'part.read',
+    'inventory.read',
+    'inventory.reserve',
+    'inventory.consume',
+    'inventory.issue',
+    'inventory.core.return',
+    'pos.sell',
+    'invoice.create',
+    'invoice.read',
+    'payment.capture',
+    'discount.apply',
+    'warranty.claim.read',
+    'approval.request',
+    // The proposal's escalation rung: a supervisor decides the adjustments
+    // within their ceiling and escalates the rest upward.
+    'approval.decide',
+    'customer.create',
+    'customer.read',
+    'customer.update',
+    'device.create',
+    'device.read',
+    'device.update',
+    'model.read',
+    'user.read',
+    'report.view.branch',
+    'config.read',
+    'attachment.create',
+    'attachment.read',
+    'job.collection.otp.issue',
+    'job.collection.otp.verify',
+    'consignment.read',
+    'consignment.manage',
+    'consignment.scan',
+    'swapstock.read',
+    'notification.read',
   ],
 
   SERVICE_ADVISOR: [
@@ -239,6 +362,20 @@ export const ROLE_PERMISSIONS: Readonly<
     // before-photos at intake.
     'attachment.create',
     'attachment.read',
+    // SCMS proposal §2/§7 — the counter owns intake evidence and the handover
+    // handshake. Deliberately NO 'discount.apply' sibling here: §6 says the
+    // Front Counter Agent "can accept standard invoice payments, cannot grant
+    // discounts". `discount.apply` above is the legacy grant; the ceiling in
+    // `role_limits` (max_amount 0) is what actually enforces the proposal's
+    // rule, so an advisor can open the discount field and be told no rather
+    // than silently not seeing it.
+    'job.intake.capture',
+    'job.collection.otp.issue',
+    'job.collection.otp.verify',
+    'consignment.read',
+    'consignment.manage',
+    'consignment.scan',
+    'notification.read',
   ],
 
   TECHNICIAN: [
@@ -256,6 +393,16 @@ export const ROLE_PERMISSIONS: Readonly<
     // Task 1.4 (§4.12): bench captures after-photos on completion.
     'attachment.create',
     'attachment.read',
+    // SCMS proposal §3: the bench RECORDS calibration/flash results and can
+    // run the BER numbers, but deliberately holds NEITHER 'job.qc.approve'
+    // (§3: "Senior Quality Assurer approves") NOR 'job.ber.certify' (§5: the
+    // supervisor certifies, and the technician is locked out while they do).
+    // A technician who also holds a `can_qc` skill still cannot self-approve:
+    // the QC gate checks that the approver is not the assigned engineer.
+    'job.qc.record',
+    'job.ber.evaluate',
+    'inventory.core.return',
+    'notification.read',
   ],
 
   STOREKEEPER: [
@@ -272,6 +419,16 @@ export const ROLE_PERMISSIONS: Readonly<
     'supplier.read',
     'supplier.manage',
     'approval.request',
+    // SCMS proposal §4: the store picks parts from bins, hands them to the
+    // bench, and books defective cores into the Scrap/Return Warehouse. §5:
+    // the Swap Buffer Stock is stock, so the store keeps it — but it is a
+    // SEPARATE grant, because ordinary stock authority must not reach it.
+    'inventory.issue',
+    'inventory.core.return',
+    'swapstock.read',
+    'swapstock.manage',
+    'consignment.read',
+    'consignment.scan',
   ],
 
   WARRANTY_CLERK: [
@@ -285,6 +442,10 @@ export const ROLE_PERMISSIONS: Readonly<
     'device.read',
     'model.read',
     'approval.request',
+    // The core-exchange trail is the evidence behind a warranty claim: the
+    // clerk must be able to see which serial went out and which came back.
+    'inventory.read',
+    'notification.read',
   ],
 
   ACCOUNTANT: [
@@ -406,6 +567,9 @@ export const PERMISSION_DOMAIN_LABELS: Record<
   config: 'Configuration',
   audit: 'Audit',
   attachments: 'Attachments',
+  logistics: 'Handover & logistics',
+  swapStock: 'Swap buffer stock',
+  notifications: 'Notifications',
 };
 
 /** Short human labels for every permission, for the matrix editor. */
@@ -418,6 +582,23 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
   'job.transition.repair': 'Move jobs (bench/repair)',
   'job.transition.dispatch': 'Move jobs (dispatch/handover)',
   'job.reopen': 'Reopen closed jobs',
+  'job.intake.capture': 'Capture intake evidence (condition map, terms)',
+  'job.qc.record': 'Record QC / calibration checks',
+  'job.qc.approve': 'Approve the QC gate',
+  'job.ber.evaluate': 'Run a BER evaluation',
+  'job.ber.certify': 'Certify Beyond Economic Repair',
+  'job.swap.execute': 'Execute a device swap',
+  'job.collection.otp.issue': 'Issue a collection PIN',
+  'job.collection.otp.verify': 'Verify a collection PIN at handover',
+  'consignment.read': 'View consignments',
+  'consignment.manage': 'Create & dispatch consignments',
+  'consignment.scan': 'Record chain-of-custody scans',
+  'swapstock.read': 'View swap buffer stock',
+  'swapstock.manage': 'Manage swap buffer stock',
+  'notification.read': 'View the communication log',
+  'notification.manage': 'Manage notification templates',
+  'inventory.issue': 'Issue picked parts to the bench',
+  'inventory.core.return': 'Scan defective cores into the return bin',
   'part.read': 'View parts catalogue',
   'part.manage': 'Manage parts catalogue',
   'inventory.read': 'View stock levels',
@@ -474,6 +655,7 @@ export const PERMISSION_LABELS: Record<Permission, string> = {
 export const ROLE_LABELS: Record<RoleName, string> = {
   SUPER_ADMIN: 'Super Admin',
   BRANCH_MANAGER: 'Branch Manager',
+  FLOOR_SUPERVISOR: 'Floor Supervisor',
   SERVICE_ADVISOR: 'Service Advisor',
   TECHNICIAN: 'Technician',
   STOREKEEPER: 'Storekeeper',
@@ -485,6 +667,8 @@ export const ROLE_LABELS: Record<RoleName, string> = {
 export const ROLE_DESCRIPTIONS: Record<RoleName, string> = {
   SUPER_ADMIN: 'Full access to every area — cannot be restricted.',
   BRANCH_MANAGER: 'Runs a branch: approvals, staff, stock and reporting.',
+  FLOOR_SUPERVISOR:
+    'Runs the floor: routing, QC sign-off, disputes and price adjustments.',
   SERVICE_ADVISOR: 'Front desk: customers, intake, invoicing and handover.',
   TECHNICIAN: 'Bench: works on and moves assigned repair jobs.',
   STOREKEEPER: 'Parts and stock: catalogue, counts, transfers and receiving.',

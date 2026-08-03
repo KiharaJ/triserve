@@ -18,6 +18,7 @@ import {
 import type { PaginatedResponse } from '@triserve/shared';
 import { randomUUID } from 'node:crypto';
 import { assertBranchAccess } from '../../common/authz/branch-access';
+import { assertValidDeviceIdentifier } from '../../common/util/device-identifier';
 import {
   normalizeImeiSerial,
   normalizePhone,
@@ -31,6 +32,9 @@ import {
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
 import { resolveType } from '../customers/customers.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { JobEventsService } from './job-events.service';
+import { JobClockService } from '../sla/job-clock.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import {
   looksLikeJobCard,
@@ -52,6 +56,20 @@ export interface AllowedTransition {
   to_state_code: string;
   to_label: string;
   requires_approval: boolean;
+  /**
+   * Why a business guard is currently holding this move, when one is —
+   * absent on a move that is ready to take.
+   *
+   * A guard-blocked edge is still LISTED. Hiding it would leave the board with
+   * a silently missing button and no way to learn what the job is waiting for,
+   * which is the whole reason guards explain their refusals; the UI shows it
+   * disabled with this reason instead. Moves the user lacks the PERMISSION for
+   * are a different matter and stay off the list entirely — those aren't
+   * theirs to make.
+   */
+  blocked_reason?: string;
+  /** Machine-readable counterpart of {@link blocked_reason} (the guard_code). */
+  blocked_guard?: string;
 }
 
 /** Wire shape of one job (snake_case per API convention). */
@@ -115,6 +133,30 @@ export interface JobWire {
   notes: string | null;
   created_at: string;
   updated_at: string;
+
+  // -- SCMS proposal (Service_Center_System_Proposal.docx) -------------------
+  /** Module 1 (§2): the structured intake captures. */
+  symptom_node_id: string | null;
+  condition_captured_at: string | null;
+  liquid_indicator_tripped: boolean | null;
+  estimate_amount: string | null;
+  estimate_currency: string | null;
+  terms_accepted_at: string | null;
+  /** Module 2 (§3): bench clocks + QC bookkeeping. */
+  diagnosis_started_at: string | null;
+  repair_started_at: string | null;
+  qc_submitted_at: string | null;
+  labour_hours: string | null;
+  qc_failure_reason: string | null;
+  qc_reject_count: number;
+  qc_approved_by: string | null;
+  qc_approved_at: string | null;
+  /**
+   * Modules 4/5 (§5/§6): the technician is locked out while a BER review or a
+   * customer quote decision is outstanding.
+   */
+  tech_locked: boolean;
+  tech_lock_reason: string | null;
 }
 
 /** Nested customer summary for the job detail view. */
@@ -179,6 +221,36 @@ const DEFAULT_PAGE_SIZE = 20;
  */
 const GUARD_OVERRIDE_TYPE: Readonly<Record<string, ApprovalType>> = {
   ow_quote_approved: 'OW_REPAIR_WITHOUT_QUOTE',
+  // SCMS proposal gates. Every one of these is a HARD rule that a manager can
+  // nonetheless open ON THE RECORD, because each has a legitimate real-world
+  // exception the proposal's flat prohibition does not cover:
+  //
+  //   intake_evidence_complete — a device dropped at reception out of hours,
+  //     with the customer already gone, still has to be booked in.
+  //   engineer_skill_match     — the only certified CE technician is on leave
+  //     and a manager decides to supervise the work personally.
+  //   repair_work_declared     — a job imported from the legacy spreadsheets
+  //     with the bench notes on paper.
+  //   qc_checklist_passed      — the pressure rig is out of service; the
+  //     manager accepts the risk and records who accepted it.
+  //   core_returns_complete    — the old part shattered on removal and there
+  //     is physically nothing to scan.
+  //   collection_otp_verified  — a walk-in with no mobile number, or a dealer
+  //     collecting on the customer's behalf.
+  //
+  // Every one produces a PENDING approval naming the guard, and consuming it
+  // stamps who authorised the exception. That is strictly better than the
+  // alternative these gates otherwise invite: staff working around the system.
+  intake_evidence_complete: 'REOPEN_JOB',
+  engineer_skill_match: 'REOPEN_JOB',
+  repair_work_declared: 'REOPEN_JOB',
+  qc_checklist_passed: 'REOPEN_JOB',
+  core_returns_complete: 'WRITE_OFF',
+  collection_otp_verified: 'REOPEN_JOB',
+  // ber_not_blocking is deliberately ABSENT. A BER flag is resolved by the
+  // supervisor REVIEWING it (certify or reject) — an approval to ignore the
+  // review would be an approval to skip the very decision the module exists
+  // to force.
 };
 
 /** The three-field override protocol shared by every guarded action. */
@@ -221,6 +293,16 @@ export class JobsService {
     private readonly workflow: WorkflowService,
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
+    /** SCMS proposal Module 2: the append-only clock behind CTD/HFP/TAT. */
+    private readonly clock: JobClockService,
+    /** SCMS proposal Module 7: status notifications to the customer. */
+    private readonly notifications: NotificationsService,
+    /**
+     * SCMS proposal Module 6: lifecycle side-effects owned by other modules
+     * (issue the collection PIN on READY, fire CSAT on handover). Published
+     * to rather than called directly — see JobEventsService for why.
+     */
+    private readonly events: JobEventsService,
   ) {}
 
   // ---------------------------------------------------------------- queries
@@ -408,6 +490,30 @@ export class JobsService {
         updatedById: user.userId,
       },
     });
+
+    // SCMS proposal Module 2: open the job's first state occupancy, so the
+    // clocks start at intake rather than at the first transition. Without
+    // this, Clock-to-Diagnosis would silently measure from the wrong instant
+    // for every job.
+    //
+    // Deliberately NOT inside the create transaction: `job.create` is audited
+    // by the Prisma extension, which wraps it in its OWN transaction and
+    // forbids a caller-managed one around it. A failure here would leave a job
+    // with no opening event — which the metrics tolerate (they treat a missing
+    // event as unknown occupancy) far better than a failed intake.
+    await this.clock.recordEntry(this.prisma, {
+      companyId: user.companyId,
+      branchId: branch.id,
+      jobId: job.id,
+      toStateId: initial.id,
+      fromStateId: null,
+      actorUserId: user.userId,
+      engineerId: dto.assigned_engineer_id ?? null,
+      note: 'Job booked',
+      at: now,
+    });
+
+    await this.notifyJobEvent(job.id, 'JOB_BOOKED');
 
     return this.get(job.id, user);
   }
@@ -799,7 +905,63 @@ export class JobsService {
       data.dispatchedById = user.userId;
     }
 
-    await this.prisma.job.update({ where: { id: job.id }, data });
+    // -- SCMS proposal Module 2: QC bookkeeping -----------------------------
+    // Entering QC starts a FRESH verification attempt, so the previous
+    // rejection reason is cleared. Leaving it stale would let the
+    // `qc_failure_logged` guard be satisfied on the next bounce by a reason
+    // written for the last one.
+    if (to.stage === 'QC') {
+      data.qcSubmittedAt = now;
+      data.qcFailureReason = null;
+    }
+    // A QC → REPAIR move is a rejection: count it (the first-time-fix metric)
+    // and record who sent it back. The job stays with the SAME technician —
+    // "routes back to the same tech" is achieved by simply not touching
+    // `assigned_engineer_id`, which is the correct way to express it.
+    if (job.state.stage === 'QC' && to.stage === 'REPAIR') {
+      data.qcRejectCount = { increment: 1 };
+      data.qcApprovedById = null;
+      data.qcApprovedAt = null;
+    }
+    // Passing QC records the Senior Quality Assurer who signed it off.
+    if (job.state.stage === 'QC' && to.stage === 'READY') {
+      data.qcApprovedById = user.userId;
+      data.qcApprovedAt = now;
+    }
+    // Any forward move out of a hold clears a stale bench lock: whatever the
+    // technician was locked out FOR (a quote decision, a BER review) has been
+    // resolved by the fact that the job is moving again.
+    if (job.techLocked && to.stage !== 'HOLD') {
+      data.techLocked = false;
+      data.techLockReason = null;
+    }
+
+    // The state change and its clock entry commit TOGETHER — a state_id that
+    // disagrees with the log would silently corrupt every SLA and KPI number
+    // computed from it afterwards.
+    await this.prisma.$transaction(async (tx) => {
+      const stamps = await this.clock.recordEntry(tx, {
+        companyId: job.companyId,
+        branchId: job.branchId,
+        jobId: job.id,
+        toStateId: to.id,
+        fromStateId: job.stateId,
+        actorUserId: user.userId,
+        engineerId: job.assignedEngineerId,
+        note,
+        at: now,
+      });
+      // First entry into diagnosis/repair only — `??=` semantics, so a job
+      // that bounces back through a stage keeps its original start time and
+      // Clock-to-Diagnosis stays the measure of the FIRST touch.
+      if (stamps.diagnosisStartedAt && !job.diagnosisStartedAt) {
+        data.diagnosisStartedAt = stamps.diagnosisStartedAt;
+      }
+      if (stamps.repairStartedAt && !job.repairStartedAt) {
+        data.repairStartedAt = stamps.repairStartedAt;
+      }
+      await tx.job.update({ where: { id: job.id }, data });
+    });
 
     // Semantic TRANSITION row (the extension only sees a mechanical UPDATE).
     await this.audit.record({
@@ -813,6 +975,25 @@ export class JobsService {
       actorUserId: user.userId,
     });
 
+    // SCMS proposal Module 7: publish the status event. Detached on purpose —
+    // the state HAS changed and been audited by this point; a notification
+    // problem must not undo that or make the front desk wait on it.
+    await this.publishStateEvent(job, to.code);
+
+    // SCMS proposal Module 6: side-effects owned by other modules (collection
+    // PIN, CSAT survey). Individually guarded inside the bus, for the same
+    // reason: the move is already final.
+    await this.events.publishStateChanged({
+      jobId: job.id,
+      companyId: job.companyId,
+      branchId: job.branchId,
+      fromStateCode: fromCode,
+      toStateCode: to.code,
+      toStage: to.stage,
+      actorUserId: user.userId,
+      at: now,
+    });
+
     return { held: false, job: await this.get(job.id, user) };
   }
 
@@ -823,6 +1004,95 @@ export class JobsService {
    */
   async loadAccessibleJob(id: string, user: AuthUser): Promise<JobWithState> {
     return this.getRow(id, user);
+  }
+
+  /**
+   * SCMS proposal Module 7 — tell the customer their job moved.
+   *
+   * Only the states a customer actually cares about raise an event; a
+   * DIAGNOSING or QC move is internal, and texting on every hop trains people
+   * to ignore the messages that matter (the collection PIN in particular).
+   *
+   * COLLECTION_OTP is NOT sent here: the PIN itself is issued by
+   * LogisticsService when the job reaches READY, and the code must travel in
+   * its own message.
+   */
+  private async publishStateEvent(
+    job: JobWithState,
+    toCode: string,
+  ): Promise<void> {
+    const EVENT_BY_STATE: Readonly<Record<string, string>> = {
+      AWAITING_PARTS: 'AWAITING_PARTS',
+      READY: 'JOB_READY',
+      DISPATCHED: 'JOB_DISPATCHED',
+    };
+    const eventCode = EVENT_BY_STATE[toCode];
+    if (!eventCode) return;
+    await this.notifyJobEvent(job.id, eventCode);
+  }
+
+  /**
+   * Load a job's customer/device/branch context and publish `eventCode`
+   * against it. One place that knows how to fill the standard placeholder set
+   * ({{company}}, {{branch}}, {{customer}}, {{job_no}}, {{device}}) — callers
+   * add event-specific tokens via `extra`.
+   *
+   * Public so sibling services (logistics, BER, POS quotes) render the same
+   * tokens rather than each assembling their own slightly different payload.
+   */
+  async notifyJobEvent(
+    jobId: string,
+    eventCode: string,
+    extra: Record<string, string | number | null> = {},
+  ): Promise<void> {
+    const detail = await this.prisma.job.findFirst({
+      where: { id: jobId },
+      select: {
+        companyId: true,
+        branchId: true,
+        jobNo: true,
+        customerId: true,
+        customer: {
+          select: {
+            name: true,
+            phoneNormalized: true,
+            phone: true,
+            email: true,
+            preferredLanguage: true,
+          },
+        },
+        device: { select: { brand: true, model: true, imeiSerial: true } },
+        branch: { select: { name: true, phone: true } },
+        company: { select: { name: true } },
+      },
+    });
+    if (!detail) return;
+
+    this.notifications.enqueueDetached({
+      companyId: detail.companyId,
+      branchId: detail.branchId,
+      customerId: detail.customerId,
+      jobId,
+      eventCode,
+      language: detail.customer.preferredLanguage,
+      to: {
+        sms: detail.customer.phoneNormalized ?? detail.customer.phone,
+        email: detail.customer.email,
+      },
+      payload: {
+        company: detail.company.name,
+        branch: detail.branch.name,
+        branch_phone: detail.branch.phone,
+        customer: detail.customer.name,
+        job_no: detail.jobNo,
+        device:
+          [detail.device.brand, detail.device.model]
+            .filter(Boolean)
+            .join(' ') || 'device',
+        date: new Date().toISOString().slice(0, 10),
+        ...extra,
+      },
+    });
   }
 
   /**
@@ -868,11 +1138,21 @@ export class JobsService {
         user,
         { job },
       );
+      // A guard refusal (blocked_guard) keeps the edge on the list, carrying
+      // its reason; a permission refusal drops it. See AllowedTransition.
       if (check.allowed) {
         out.push({
           to_state_code: edge.toState.code,
           to_label: edge.toState.label,
           requires_approval: edge.requiresApproval,
+        });
+      } else if (check.blocked_guard) {
+        out.push({
+          to_state_code: edge.toState.code,
+          to_label: edge.toState.label,
+          requires_approval: edge.requiresApproval,
+          blocked_reason: check.reason,
+          blocked_guard: check.blocked_guard,
         });
       }
     }
@@ -1026,6 +1306,12 @@ export class JobsService {
     const purchaseDate = toDateOnly(dto.device.purchase_date);
 
     const imei = normalizeImeiSerial(dto.device.imei_serial);
+    // SCMS proposal §2 step 1 — validated at the counter, before anything is
+    // written. Deliberately BEFORE the find-or-create below: a mistyped IMEI
+    // must be rejected, not quietly used to look up (and miss) an existing
+    // device and then create a second record for the same handset.
+    assertValidDeviceIdentifier(dto.device.category, imei);
+
     if (imei) {
       const match = await this.prisma.device.findFirst({
         where: { imeiSerial: imei, deletedAt: null },
@@ -1371,6 +1657,24 @@ function toWire(j: JobWithState): JobWire {
     notes: j.notes,
     created_at: j.createdAt.toISOString(),
     updated_at: j.updatedAt.toISOString(),
+    symptom_node_id: j.symptomNodeId,
+    condition_captured_at: j.conditionCapturedAt?.toISOString() ?? null,
+    liquid_indicator_tripped: j.liquidIndicatorTripped,
+    // Money crosses the wire as a STRING of minor units.
+    estimate_amount: j.estimateAmount?.toString() ?? null,
+    estimate_currency: j.estimateCurrency,
+    terms_accepted_at: j.termsAcceptedAt?.toISOString() ?? null,
+    diagnosis_started_at: j.diagnosisStartedAt?.toISOString() ?? null,
+    repair_started_at: j.repairStartedAt?.toISOString() ?? null,
+    qc_submitted_at: j.qcSubmittedAt?.toISOString() ?? null,
+    // Decimal, not money — but still a string, so 1.50 does not become 1.5.
+    labour_hours: j.labourHours?.toString() ?? null,
+    qc_failure_reason: j.qcFailureReason,
+    qc_reject_count: j.qcRejectCount,
+    qc_approved_by: j.qcApprovedById,
+    qc_approved_at: j.qcApprovedAt?.toISOString() ?? null,
+    tech_locked: j.techLocked,
+    tech_lock_reason: j.techLockReason,
   };
 }
 

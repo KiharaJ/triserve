@@ -6,6 +6,7 @@ import {
 import { Prisma, type Device } from '@prisma/client';
 import type { PaginatedResponse } from '@triserve/shared';
 import { normalizeImeiSerial } from '../../common/util/phone';
+import { assertValidDeviceIdentifier } from '../../common/util/device-identifier';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
 import type {
@@ -121,6 +122,14 @@ export class DevicesService {
     await this.assertCustomerInCompany(dto.customer_id);
     await this.assertModelInCompany(dto.model_id);
 
+    // SCMS proposal §2 step 1: a 15-digit Luhn-valid IMEI for handsets, a
+    // plausible alphanumeric serial for everything else. Enforced HERE (and
+    // in the job-intake path) rather than only in the DTO, so no write route
+    // can put an unverifiable identifier on a device.
+    const category = dto.category ?? 'OTHER';
+    const normalized = normalizeImeiSerial(dto.imei_serial);
+    assertValidDeviceIdentifier(category, normalized);
+
     const device = await this.prisma.device.create({
       data: {
         companyId: user.companyId, // also force-injected by the extension
@@ -128,9 +137,9 @@ export class DevicesService {
         brand: dto.brand ?? 'Samsung',
         model: dto.model ?? null,
         modelId: dto.model_id ?? null,
-        category: dto.category ?? 'OTHER',
+        category,
         deviceType: dto.device_type ?? null,
-        imeiSerial: normalizeImeiSerial(dto.imei_serial),
+        imeiSerial: normalized,
         color: dto.color ?? null,
         createdById: user.userId,
         updatedById: user.userId,
@@ -146,11 +155,23 @@ export class DevicesService {
     dto: UpdateDeviceDto,
     user: AuthUser,
   ): Promise<DeviceWire> {
-    await this.get(id); // clean 404 (scope extension pins the read)
+    const current = await this.get(id); // clean 404 (scope extension pins the read)
     if (dto.customer_id !== undefined) {
       await this.assertCustomerInCompany(dto.customer_id);
     }
     await this.assertModelInCompany(dto.model_id);
+
+    // Validate against the category the device will HAVE after this patch —
+    // re-categorising an HHP to CE and re-keying its serial in one call must
+    // be judged by the new category, not the old one.
+    const nextCategory = dto.category ?? current.category;
+    const nextImei =
+      dto.imei_serial !== undefined
+        ? normalizeImeiSerial(dto.imei_serial)
+        : undefined;
+    if (nextImei !== undefined) {
+      assertValidDeviceIdentifier(nextCategory, nextImei);
+    }
 
     const device = await this.prisma.device.update({
       where: { id },
@@ -163,9 +184,7 @@ export class DevicesService {
         ...(dto.model_id !== undefined ? { modelId: dto.model_id } : {}),
         ...(dto.category !== undefined ? { category: dto.category } : {}),
         ...(dto.device_type !== undefined ? { deviceType: dto.device_type } : {}),
-        ...(dto.imei_serial !== undefined
-          ? { imeiSerial: normalizeImeiSerial(dto.imei_serial) }
-          : {}),
+        ...(nextImei !== undefined ? { imeiSerial: nextImei } : {}),
         ...(dto.color !== undefined ? { color: dto.color } : {}),
         updatedById: user.userId,
       },

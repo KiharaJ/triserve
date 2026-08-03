@@ -301,7 +301,8 @@ describe('GET /workflow/graph (§4.10 — board rendering)', () => {
     expect(quoteEdge).toMatchObject({
       required_permission: 'job.transition.repair',
       requires_approval: false, // OW-quote gating arrives with POS
-      guard_code: 'ow_quote_approved',
+      // An edge can carry SEVERAL guards, comma-separated; all must pass.
+      guard_code: 'ow_quote_approved,ber_not_blocking',
     });
   });
 
@@ -352,15 +353,20 @@ describe('GET /workflow/states + /workflow/transitions', () => {
 });
 
 describe('WorkflowService.canTransition (§4.10 engine semantics)', () => {
-  it('allows a legal, permitted move: RECEIVED→DIAGNOSING as advisor', async () => {
+  it('clears legality + permission on RECEIVED→DIAGNOSING for an advisor, leaving only the guards', async () => {
     const check = await workflow.canTransition(
       companyId,
       'RECEIVED',
       'DIAGNOSING',
       advisorUser,
     );
-    expect(check.allowed).toBe(true);
-    expect(check.reason).toBeUndefined();
+    // The edge exists and the advisor holds its permission, so the first two
+    // layers pass and the move reaches the guards. It stops there because no
+    // job context was supplied and the SCMS intake gate fails closed — a
+    // guard hold, NOT an illegal or unauthorized move, and `blocked_guard`
+    // is what tells those apart.
+    expect(check.blocked_guard).toBe('intake_evidence_complete');
+    expect(check.allowed).toBe(false);
     expect(check.transition).toMatchObject({
       from_code: 'RECEIVED',
       to_code: 'DIAGNOSING',
@@ -404,13 +410,17 @@ describe('WorkflowService.canTransition (§4.10 engine semantics)', () => {
       "Not authorized: READY → DISPATCHED requires permission 'job.transition.dispatch'",
     );
 
+    // The advisor clears the permission layer; the handover gate (§6) is then
+    // the only thing holding the move, which is a guard hold rather than an
+    // authorization failure.
     const advisorCheck = await workflow.canTransition(
       companyId,
       'READY',
       'DISPATCHED',
       advisorUser,
     );
-    expect(advisorCheck.allowed).toBe(true);
+    expect(advisorCheck.blocked_guard).toBe('collection_otp_verified');
+    expect(advisorCheck.reason).not.toContain('Not authorized');
   });
 
   it('SERVICE_ADVISOR cannot take the bench-only AWAITING_PARTS→IN_REPAIR edge; tech can', async () => {
@@ -423,11 +433,15 @@ describe('WorkflowService.canTransition (§4.10 engine semantics)', () => {
     expect(advisorCheck.allowed).toBe(false);
     expect(advisorCheck.reason).toContain("'job.transition.repair'");
 
+    // The technician clears the permission layer. A synthetic job with no BER
+    // review open satisfies this edge's only guard, so the move is allowed —
+    // proving the refusal above was about permission, not business rules.
     const techCheck = await workflow.canTransition(
       companyId,
       'AWAITING_PARTS',
       'IN_REPAIR',
       techUser,
+      { job: { id: 'job-ctx-no-ber', companyId } },
     );
     expect(techCheck.allowed).toBe(true);
   });
@@ -494,8 +508,11 @@ describe('guard registry (§4.10 — pluggable business rules)', () => {
         { job: { id: `job-unquoted-${coverage}`, companyId, coverage } },
       );
       expect(check.allowed).toBe(false);
+      expect(check.blocked_guard).toBe('ow_quote_approved');
+      // The guard states its own case — a generic "condition not satisfied"
+      // tells the counter nothing they can act on.
       expect(check.reason).toBe(
-        "Transition condition 'ow_quote_approved' not satisfied for AWAITING_CUSTOMER_APPROVAL → IN_REPAIR",
+        'This repair is billable to the customer — raise the quote and get it approved before starting work.',
       );
     }
   });

@@ -36,6 +36,14 @@ export interface StockBuckets {
   reserved: number;
   inTransitIn: number;
   damaged: number;
+  /**
+   * SCMS proposal Module 3 — the Scrap/Return Warehouse: defective cores
+   * scanned back in and held for the manufacturer. NOT part of available
+   * stock: these units are faulty and owed to Samsung, so they must never be
+   * pickable, and they are NOT on hand either (they left on_hand when the new
+   * part was consumed — this is a separate holding bucket, not a subset).
+   */
+  coreReturned: number;
 }
 
 /** Signed changes a single movement applies to the buckets. */
@@ -68,6 +76,13 @@ export interface InventoryWire {
   qty_reserved: number;
   qty_in_transit_in: number;
   qty_damaged: number;
+  /**
+   * SCMS proposal Module 3 — defective cores held for the manufacturer.
+   * Deliberately EXCLUDED from `qty_available`: they are faulty and owed back.
+   */
+  qty_core_returned: number;
+  /** Where cores are held pending shipment. */
+  core_bin_location: string | null;
   /** Derived: on_hand − reserved − damaged (§4.4 / E10). */
   qty_available: number;
   reorder_level: number;
@@ -142,6 +157,13 @@ export function movementBucketDeltas(
       return { reserved: qty };
     case 'DAMAGE':
       return { damaged: qty };
+    // SCMS proposal Module 3, step 5 ("Ledger Balancing & Reconciliation"):
+    // the defective core arrives in the return warehouse (+) and later leaves
+    // for the manufacturer (−). Both move ONLY the holding bucket — a core
+    // coming back is not a part coming back into stock.
+    case 'CORE_RETURN':
+    case 'CORE_DISPATCH':
+      return { coreReturned: qty };
   }
 }
 
@@ -152,6 +174,7 @@ function applyDeltas(cur: StockBuckets, d: BucketDeltas): StockBuckets {
     reserved: cur.reserved + (d.reserved ?? 0),
     inTransitIn: cur.inTransitIn + (d.inTransitIn ?? 0),
     damaged: cur.damaged + (d.damaged ?? 0),
+    coreReturned: cur.coreReturned + (d.coreReturned ?? 0),
   };
 }
 
@@ -195,11 +218,11 @@ export class InventoryService {
       await t.$executeRaw`
         INSERT INTO inventory
           (id, company_id, branch_id, part_id, qty_on_hand, qty_reserved,
-           qty_in_transit_in, qty_damaged, reorder_level, created_at, updated_at,
-           created_by, updated_by)
+           qty_in_transit_in, qty_damaged, qty_core_returned, reorder_level,
+           created_at, updated_at, created_by, updated_by)
         VALUES
           (${randomUUID()}, ${input.companyId}, ${input.branchId}, ${input.partId},
-           0, 0, 0, 0, 0, NOW(3), NOW(3), ${input.movedById}, ${input.movedById})
+           0, 0, 0, 0, 0, 0, NOW(3), NOW(3), ${input.movedById}, ${input.movedById})
         ON DUPLICATE KEY UPDATE id = id`;
 
       // 2. Lock the row and read current buckets (held until commit).
@@ -209,10 +232,12 @@ export class InventoryService {
           reserved: number;
           inTransitIn: number;
           damaged: number;
+          coreReturned: number;
         }>
       >`
         SELECT qty_on_hand AS onHand, qty_reserved AS reserved,
-               qty_in_transit_in AS inTransitIn, qty_damaged AS damaged
+               qty_in_transit_in AS inTransitIn, qty_damaged AS damaged,
+               qty_core_returned AS coreReturned
         FROM inventory
         WHERE branch_id = ${input.branchId} AND part_id = ${input.partId}
         FOR UPDATE`;
@@ -238,6 +263,7 @@ export class InventoryService {
           qtyReserved: next.reserved,
           qtyInTransitIn: next.inTransitIn,
           qtyDamaged: next.damaged,
+          qtyCoreReturned: next.coreReturned,
           updatedById: input.movedById,
         },
       });
@@ -313,7 +339,9 @@ export class InventoryService {
       SELECT i.id, i.branch_id AS branchId, i.part_id AS partId,
              i.bin_location AS binLocation, i.qty_on_hand AS qtyOnHand,
              i.qty_reserved AS qtyReserved, i.qty_in_transit_in AS qtyInTransitIn,
-             i.qty_damaged AS qtyDamaged, i.reorder_level AS reorderLevel,
+             i.qty_damaged AS qtyDamaged,
+             i.qty_core_returned AS qtyCoreReturned,
+             i.core_bin_location AS coreBinLocation, i.reorder_level AS reorderLevel,
              i.updated_at AS updatedAt, p.part_number AS partNumber,
              p.description AS description, p.category AS category
       FROM inventory i JOIN parts p ON p.id = i.part_id
@@ -378,6 +406,8 @@ export class InventoryService {
       qty_reserved: 0,
       qty_in_transit_in: 0,
       qty_damaged: 0,
+      qty_core_returned: 0,
+      core_bin_location: null,
       qty_available: 0,
       reorder_level: 0,
       low_stock: true,
@@ -528,6 +558,7 @@ export class InventoryService {
       reserved: 0,
       inTransitIn: 0,
       damaged: 0,
+      coreReturned: 0,
     };
     for (const m of movements) {
       buckets = applyDeltas(
@@ -545,6 +576,7 @@ export class InventoryService {
         qtyOnHand: buckets.onHand,
         qtyReserved: buckets.reserved,
         qtyDamaged: buckets.damaged,
+        qtyCoreReturned: buckets.coreReturned,
         createdById: user.userId,
         updatedById: user.userId,
       },
@@ -553,6 +585,7 @@ export class InventoryService {
         qtyOnHand: buckets.onHand,
         qtyReserved: buckets.reserved,
         qtyDamaged: buckets.damaged,
+        qtyCoreReturned: buckets.coreReturned,
         updatedById: user.userId,
       },
     });
@@ -706,8 +739,15 @@ export class InventoryService {
           reserved: row.qtyReserved,
           inTransitIn: row.qtyInTransitIn,
           damaged: row.qtyDamaged,
+          coreReturned: row.qtyCoreReturned,
         }
-      : { onHand: 0, reserved: 0, inTransitIn: 0, damaged: 0 };
+      : {
+          onHand: 0,
+          reserved: 0,
+          inTransitIn: 0,
+          damaged: 0,
+          coreReturned: 0,
+        };
   }
 
   /** Load a part of the acting company (400 on unknown/foreign/deleted). */
@@ -760,6 +800,14 @@ function assertBucketsValid(next: StockBuckets): void {
       'In-transit quantity cannot go negative',
     );
   }
+  // SCMS proposal Module 3: dispatching more cores to the manufacturer than
+  // were ever scanned in would break the 1:1 exchange audit — that ratio is
+  // the whole point of the closed loop.
+  if (next.coreReturned < 0) {
+    throw new UnprocessableEntityException(
+      'Cannot dispatch more defective cores than are held in the return bin',
+    );
+  }
   if (next.onHand - next.reserved - next.damaged < 0) {
     throw new UnprocessableEntityException(
       'Insufficient available stock (reserved + damaged would exceed on hand)',
@@ -777,6 +825,8 @@ interface InventoryRawRow {
   qtyReserved: number;
   qtyInTransitIn: number;
   qtyDamaged: number;
+  qtyCoreReturned: number;
+  coreBinLocation: string | null;
   reorderLevel: number;
   updatedAt: Date;
   partNumber: string;
@@ -793,6 +843,8 @@ function buildWire(base: {
   qtyReserved: number;
   qtyInTransitIn: number;
   qtyDamaged: number;
+  qtyCoreReturned?: number;
+  coreBinLocation?: string | null;
   reorderLevel: number;
   updatedAt: Date;
   part: { part_number: string; description: string; category: DeviceCategory };
@@ -808,6 +860,8 @@ function buildWire(base: {
     qty_reserved: base.qtyReserved,
     qty_in_transit_in: base.qtyInTransitIn,
     qty_damaged: base.qtyDamaged,
+    qty_core_returned: base.qtyCoreReturned ?? 0,
+    core_bin_location: base.coreBinLocation ?? null,
     qty_available: available,
     reorder_level: base.reorderLevel,
     low_stock: available <= base.reorderLevel,
@@ -825,6 +879,8 @@ function rawToWire(r: InventoryRawRow): InventoryWire {
     qtyReserved: r.qtyReserved,
     qtyInTransitIn: r.qtyInTransitIn,
     qtyDamaged: r.qtyDamaged,
+    qtyCoreReturned: r.qtyCoreReturned,
+    coreBinLocation: r.coreBinLocation,
     reorderLevel: r.reorderLevel,
     updatedAt: r.updatedAt,
     part: {
@@ -847,6 +903,8 @@ function prismaToWire(
     qtyReserved: row.qtyReserved,
     qtyInTransitIn: row.qtyInTransitIn,
     qtyDamaged: row.qtyDamaged,
+    qtyCoreReturned: row.qtyCoreReturned,
+    coreBinLocation: row.coreBinLocation,
     reorderLevel: row.reorderLevel,
     updatedAt: row.updatedAt,
     part: {

@@ -516,12 +516,38 @@ export interface JobWire {
   notes: string | null
   created_at: string
   updated_at: string
+
+  // -- SCMS proposal fields --------------------------------------------------
+  /** Module 1: the symptom-tree LEAF picked at the counter. */
+  symptom_node_id?: string | null
+  condition_captured_at?: string | null
+  liquid_indicator_tripped?: boolean | null
+  estimate_amount?: string | null
+  estimate_currency?: string | null
+  terms_accepted_at?: string | null
+  /** Module 2: bench clocks and QC bookkeeping. */
+  diagnosis_started_at?: string | null
+  repair_started_at?: string | null
+  qc_submitted_at?: string | null
+  labour_hours?: string | null
+  qc_failure_reason?: string | null
+  qc_reject_count?: number
+  qc_approved_by?: string | null
+  qc_approved_at?: string | null
+  /** Modules 4/5: the bench is locked pending a supervisor/customer decision. */
+  tech_locked?: boolean
+  tech_lock_reason?: string | null
 }
 
 export interface AllowedTransition {
   to_state_code: string
   to_label: string
   requires_approval: boolean
+  /** Set when a business guard is holding this move — render it disabled with
+   *  this as the reason, rather than dropping the button. */
+  blocked_reason?: string
+  /** Machine-readable counterpart of `blocked_reason` (the guard_code). */
+  blocked_guard?: string
 }
 
 export interface JobCustomerSummary {
@@ -1228,4 +1254,593 @@ export interface DashboardSummaryWire {
     low_stock: number
     open_invoices: number
   }
+}
+
+// ===========================================================================
+// SCMS proposal modules (Service_Center_System_Proposal.docx)
+//
+// Wire contracts mirroring the API's `*Wire` interfaces. Money is always a
+// STRING of minor units — BIGINT values exceed the precision a JSON number
+// guarantees, so they never become numbers on this side either.
+// ===========================================================================
+
+// -- Module 1 (§2): intake integrity -----------------------------------------
+
+export type DamageType =
+  | 'SCRATCH'
+  | 'HAIRLINE_CRACK'
+  | 'CRACK'
+  | 'SHATTERED'
+  | 'DENT'
+  | 'SCUFF'
+  | 'CHIP'
+  | 'DISCOLOURATION'
+  | 'CORROSION'
+  | 'BURN'
+  | 'MISSING_PART'
+  | 'LOOSE_PART'
+  | 'WATER_INGRESS'
+  | 'LIQUID_INDICATOR_TRIPPED'
+  | 'PREVIOUS_REPAIR'
+  | 'OTHER'
+
+export type DamageSeverity = 'MINOR' | 'MODERATE' | 'SEVERE'
+
+export interface SymptomNode {
+  id: string
+  code: string
+  label: string
+  parent_id: string | null
+  level: number
+  is_leaf: boolean
+  category: DeviceCategory | null
+  fault_code_id: string | null
+  service_category_id: string | null
+  estimate_amount: string | null
+  estimate_currency: string | null
+  estimate_minutes: number | null
+  sort_order: number
+  active: boolean
+  /** Ancestor labels, root-first — populated on search results. */
+  path: string[]
+}
+
+export interface ConditionZone {
+  id: string
+  category: DeviceCategory
+  code: string
+  label: string
+  /** Normalised 0–1 hotspot position on the device outline. */
+  x: number
+  y: number
+  face: string
+  sort_order: number
+  active: boolean
+}
+
+export interface ConditionMark {
+  id: string
+  zone_id: string
+  zone_code: string
+  zone_label: string
+  face: string
+  x: number
+  y: number
+  damage: DamageType
+  severity: DamageSeverity
+  note: string | null
+}
+
+export interface JobCondition {
+  job_id: string
+  category: DeviceCategory
+  captured_at: string | null
+  captured_by: string | null
+  liquid_indicator_tripped: boolean | null
+  marks: ConditionMark[]
+  zones: ConditionZone[]
+}
+
+export interface IntakeReadiness {
+  job_id: string
+  ready: boolean
+  condition_captured: boolean
+  symptom_selected: boolean
+  terms_accepted: boolean
+  has_before_photo: boolean
+  has_signature: boolean
+  outstanding: string[]
+}
+
+// -- Module 2 (§3): bench, QC and the clocks ---------------------------------
+
+export type WorkflowStage =
+  | 'INTAKE'
+  | 'DIAGNOSIS'
+  | 'HOLD'
+  | 'REPAIR'
+  | 'QC'
+  | 'READY'
+  | 'DONE'
+
+export type HoldKind = 'NONE' | 'PARTS' | 'CUSTOMER' | 'EXTERNAL'
+
+export type QcCheckResult = 'PASS' | 'FAIL' | 'NA'
+
+/** The proposal's queue colours: >50% green, 20–50% amber, <20%/breached red. */
+export type SlaBand = 'GREEN' | 'AMBER' | 'RED' | 'NONE'
+
+export interface UserSkill {
+  id: string
+  user_id: string
+  user_name: string
+  user_role: string
+  category: DeviceCategory
+  service_category_id: string | null
+  level: number
+  can_qc: boolean
+  certified_at: string | null
+  notes: string | null
+  active: boolean
+}
+
+export interface RoutingCandidate {
+  user_id: string
+  user_name: string
+  level: number
+  can_qc: boolean
+  open_jobs: number
+}
+
+export interface QcChecklistItem {
+  id: string
+  category: DeviceCategory
+  code: string
+  label: string
+  help: string | null
+  requires_value: boolean
+  requires_attachment: boolean
+  blocking: boolean
+  sort_order: number
+  active: boolean
+}
+
+export interface JobQcLine {
+  item_id: string
+  code: string
+  label: string
+  help: string | null
+  requires_value: boolean
+  requires_attachment: boolean
+  blocking: boolean
+  result: QcCheckResult | null
+  value: string | null
+  note: string | null
+  recorded_at: string | null
+}
+
+export interface JobQcPanel {
+  job_id: string
+  category: DeviceCategory
+  attempt_no: number
+  qc_reject_count: number
+  qc_submitted_at: string | null
+  qc_failure_reason: string | null
+  qc_approved_by: string | null
+  qc_approved_at: string | null
+  labour_hours: string | null
+  tech_report: string | null
+  can_approve: boolean
+  approve_blocked_reason: string | null
+  lines: JobQcLine[]
+}
+
+export interface JobClockMetrics {
+  job_id: string
+  received_at: string
+  /** Clock-to-Diagnosis, ms. Null until diagnosis starts. */
+  ctd_ms: number | null
+  /** Hold-for-Parts, ms, summed across every parts hold. */
+  hfp_ms: number
+  customer_hold_ms: number
+  /** Total turnaround, ms. */
+  tat_ms: number
+  tat_final: boolean
+  /** Elapsed time that counts against the SLA (pauses excluded). */
+  sla_elapsed_ms: number
+  internal_elapsed_ms: number
+  sla_due_at: string | null
+  sla_remaining_percent: number | null
+  sla_band: SlaBand
+  qc_reject_count: number
+  stage_totals_ms: Record<string, number>
+}
+
+export interface SlaQueue {
+  counts: Record<SlaBand, number>
+  jobs: Array<{
+    job_id: string
+    job_no: string
+    state_code: string
+    stage: WorkflowStage
+    engineer_id: string | null
+    engineer_name: string | null
+    sla_band: SlaBand
+    sla_remaining_percent: number | null
+    sla_due_at: string | null
+    hfp_ms: number
+    tat_ms: number
+  }>
+}
+
+export interface SlaAggregate {
+  key: string
+  label: string
+  jobs: number
+  avg_ctd_ms: number | null
+  median_ctd_ms: number | null
+  avg_hfp_ms: number
+  avg_tat_ms: number | null
+  median_tat_ms: number | null
+  on_time: number
+  breached: number
+  on_time_percent: number | null
+  rework_jobs: number
+  first_time_fix_percent: number | null
+}
+
+// -- Module 3 (§4): the closed-loop core exchange ----------------------------
+
+export interface PickingTicket {
+  job_id: string
+  job_no: string
+  branch_id: string
+  printed_at: string
+  lines: Array<{
+    line_id: string
+    part_id: string
+    part_number: string
+    description: string
+    qty: number
+    bin_location: string | null
+    bin_moved: boolean
+    core_required: boolean
+    is_serialized: boolean
+  }>
+}
+
+export interface CoreStatus {
+  job_id: string
+  clear: boolean
+  outstanding_count: number
+  lines: Array<{
+    line_id: string
+    part_number: string
+    description: string
+    qty: number
+    status: string
+    new_serial_no: string | null
+    core_serial_no: string | null
+    core_returned_at: string | null
+    outstanding: boolean
+  }>
+}
+
+// -- Module 4 (§5): BER & replacement ----------------------------------------
+
+export type BerStatus = 'FLAGGED' | 'CERTIFIED' | 'REJECTED' | 'WITHDRAWN'
+
+export type BerOutcome =
+  | 'REPLACE_IW'
+  | 'REPLACE_TRADE_UP'
+  | 'SALVAGE'
+  | 'DECLINED'
+  | 'REPAIR_ANYWAY'
+
+export interface BerAssessment {
+  id: string
+  job_id: string
+  job_no: string
+  branch_id: string
+  certificate_no: string | null
+  parts_cost: string
+  labour_cost: string
+  total_cost: string
+  device_value: string
+  currency: string
+  ratio_percent: string
+  threshold_percent: number
+  valuation_source: string
+  status: BerStatus
+  breached: boolean
+  flagged_at: string
+  reviewed_by: string | null
+  reviewed_at: string | null
+  decision_notes: string | null
+  outcome: BerOutcome | null
+  offer_amount: string | null
+  customer_responded_at: string | null
+}
+
+export interface BerPreview {
+  job_id: string
+  parts_cost: string
+  labour_cost: string
+  total_cost: string
+  device_value: string
+  currency: string
+  ratio_percent: string
+  threshold_percent: number
+  breached: boolean
+  valuation_source: string
+  /** Where each figure came from, in words. */
+  basis: string[]
+}
+
+export interface BerEvaluateResult {
+  preview: BerPreview
+  assessment: BerAssessment | null
+}
+
+export type SwapUnitStatus = 'IN_STOCK' | 'ALLOCATED' | 'ISSUED' | 'RETIRED'
+
+export interface SwapUnit {
+  id: string
+  branch_id: string
+  model_id: string | null
+  model_label: string | null
+  category: DeviceCategory
+  imei_serial: string
+  color: string | null
+  cost: string | null
+  currency: string | null
+  status: SwapUnitStatus
+  allocated_job_id: string | null
+  issued_at: string | null
+  notes: string | null
+}
+
+export interface DeviceSwap {
+  id: string
+  job_id: string
+  branch_id: string
+  old_device_id: string
+  new_device_id: string
+  swap_unit_id: string
+  old_imei_serial: string | null
+  new_imei_serial: string | null
+  history_job_count: number
+  reason: string | null
+  authorized_by: string
+  authorized_at: string
+}
+
+// -- Module 5 (§6): role ceilings + the OW authorization gate ----------------
+
+export type RoleLimitType =
+  | 'DISCOUNT'
+  | 'PRICE_ADJUSTMENT'
+  | 'PARTS_VARIANCE'
+  | 'WRITE_OFF'
+  | 'REFUND'
+
+export interface RoleLimit {
+  id: string
+  role: string
+  type: RoleLimitType
+  max_amount: string | null
+  currency: string | null
+  max_percent: string | null
+  enabled: boolean
+  summary: string
+}
+
+export interface QuoteApproval {
+  invoice_id: string
+  invoice_no: string
+  job_id: string | null
+  total: string
+  currency: string
+  quote_sent_at: string | null
+  quote_sent_to: string | null
+  approval_expires_at: string | null
+  customer_approved_at: string | null
+  customer_declined_at: string | null
+  approval_via: string | null
+  approved: boolean
+}
+
+export interface PublicQuote {
+  token: string
+  company: string
+  branch: string
+  invoice_no: string
+  job_no: string | null
+  device: string
+  currency: string
+  subtotal: string
+  discount: string
+  tax: string
+  total: string
+  lines: Array<{ description: string; qty: number; line_total: string }>
+  expires_at: string
+  decided: 'APPROVED' | 'DECLINED' | null
+}
+
+// -- Module 6 (§7): handover, logistics and CSAT -----------------------------
+
+export interface CollectionOtp {
+  id: string
+  job_id: string
+  /** Last two digits only — the full PIN is never returned by the API. */
+  code_hint: string
+  sent_to: string | null
+  sent_at: string | null
+  expires_at: string
+  attempts: number
+  attempts_remaining: number
+  verified_at: string | null
+  voided_at: string | null
+  void_reason: string | null
+  active: boolean
+}
+
+export type ConsignmentStatus = 'OPEN' | 'IN_TRANSIT' | 'ARRIVED' | 'CANCELLED'
+export type ConsignmentDirection = 'INBOUND_TO_HUB' | 'OUTBOUND_TO_SPOKE'
+export type ScanPoint =
+  | 'HUB_DEPART'
+  | 'COURIER_HUB'
+  | 'COURIER_DEPART'
+  | 'SPOKE_ARRIVE'
+  | 'HUB_ARRIVE'
+  | 'CUSTOM'
+
+export interface ConsignmentJobLine {
+  job_id: string
+  job_no: string
+  customer_name: string
+  device: string
+  imei_serial: string | null
+  added_at: string
+  checked_in_at: string | null
+  /** On the manifest but not checked in at arrival. */
+  missing: boolean
+}
+
+export interface ConsignmentScan {
+  id: string
+  scan_point: ScanPoint
+  location: string | null
+  handler_name: string | null
+  scanned_at: string
+  scanned_by: string | null
+  note: string | null
+}
+
+export interface Consignment {
+  id: string
+  consignment_no: string
+  tote_label: string
+  from_branch_id: string
+  from_branch: string
+  to_branch_id: string
+  to_branch: string
+  direction: ConsignmentDirection
+  status: ConsignmentStatus
+  courier_name: string | null
+  courier_ref: string | null
+  waybill_no: string | null
+  sealed_at: string | null
+  dispatched_at: string | null
+  arrived_at: string | null
+  job_count: number
+  missing_count: number
+  notes: string | null
+  jobs: ConsignmentJobLine[]
+  scans: ConsignmentScan[]
+}
+
+export interface CsatSurvey {
+  id: string
+  job_id: string
+  job_no: string
+  branch_id: string
+  customer_id: string
+  customer_name: string
+  score: number | null
+  comment: string | null
+  sent_at: string | null
+  responded_at: string | null
+  expires_at: string
+}
+
+export interface PublicCsat {
+  token: string
+  company: string
+  branch: string
+  job_no: string
+  device: string
+  answered: boolean
+  score: number | null
+}
+
+// -- Module 7 (§8): notifications --------------------------------------------
+
+export type NotificationChannel = 'SMS' | 'EMAIL' | 'WHATSAPP' | 'IN_APP'
+export type NotificationStatus =
+  | 'QUEUED'
+  | 'SENDING'
+  | 'SENT'
+  | 'FAILED'
+  | 'CANCELLED'
+
+export interface NotificationRow {
+  id: string
+  event_code: string
+  channel: NotificationChannel
+  language: 'EN' | 'SW'
+  to_address: string
+  subject: string | null
+  body: string
+  status: NotificationStatus
+  attempts: number
+  available_at: string
+  sent_at: string | null
+  provider_ref: string | null
+  last_error: string | null
+  customer_id: string | null
+  job_id: string | null
+  created_at: string
+}
+
+export interface NotificationTemplate {
+  id: string
+  event_code: string
+  channel: NotificationChannel
+  language: 'EN' | 'SW'
+  subject: string | null
+  body: string
+  active: boolean
+  updated_at: string
+}
+
+// ---------------------------------------------------------------------------
+// Public (unauthenticated) customer-facing pages — SCMS Modules 5 and 6.
+// Both are reached by an unguessable token in the URL and deliberately carry
+// only what the page must render: no contact details, no other jobs.
+// ---------------------------------------------------------------------------
+
+export interface PublicQuoteLine {
+  description: string
+  qty: number
+  line_total: string
+}
+
+export interface PublicQuoteWire {
+  token: string
+  company: string
+  branch: string
+  invoice_no: string
+  job_no: string | null
+  device: string
+  currency: string
+  subtotal: string
+  discount: string
+  tax: string
+  total: string
+  lines: PublicQuoteLine[]
+  expires_at: string
+  /** Already decided — the page shows the outcome rather than the buttons. */
+  decided: 'APPROVED' | 'DECLINED' | null
+}
+
+export interface PublicCsatWire {
+  token: string
+  company: string
+  branch: string
+  job_no: string
+  device: string
+  /** Already answered — the page shows a thank-you rather than the form. */
+  answered: boolean
+  score: number | null
 }

@@ -32,6 +32,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../app.module';
 import { AllExceptionsFilter } from '../common/filters/all-exceptions.filter';
 import { resolveLocalStoragePath } from './storage/local-storage-path.util';
+import { testImei } from '../../test/imei';
 
 function storageBaseDir(): string {
   return process.env.STORAGE_LOCAL_DIR ?? join(process.cwd(), '.storage');
@@ -112,7 +113,9 @@ async function createJob(
         name: `${TEST_PREFIX} Cust ${suffix}`,
         phone: `07650${suffix}`,
       },
-      device: { category: 'HHP', imei_serial: `35100000${suffix}` },
+      // SCMS §2 step 1: the API now Luhn-checks handset IMEIs, so fixtures
+      // must build valid ones rather than invent digits.
+      device: { category: 'HHP', imei_serial: testImei(`1${suffix}`) },
     })
     .expect(201);
   const job = res.body as JobBody;

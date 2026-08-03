@@ -128,6 +128,45 @@ export const COMPANY_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.WarrantyRegistration,
   // Retail catalogue: products are company-level master data (like parts).
   Prisma.ModelName.Product,
+
+  // -- SCMS proposal modules -------------------------------------------------
+  // Module 1: the symptom tree and condition-map hotspots are COMPANY-level
+  // config (like fault codes); the marks recorded on a job are gated through
+  // the branch-scoped parent job, exactly like JobPart.
+  Prisma.ModelName.SymptomNode,
+  Prisma.ModelName.ConditionZone,
+  Prisma.ModelName.JobConditionMark,
+  // Module 2: the skill matrix and QC checklist are company config; the state
+  // log and the recorded QC results are per-job. JobStateEvent IS additionally
+  // branch-scoped (below) — it carries the job's branch and feeds per-branch
+  // SLA reporting.
+  Prisma.ModelName.UserSkill,
+  Prisma.ModelName.QcChecklistItem,
+  Prisma.ModelName.JobStateEvent,
+  Prisma.ModelName.JobQcCheck,
+  // Module 4: BER assessments and swaps belong to the branch that raised them;
+  // swap units to the branch holding them. BerCertificateCounter is raw-SQL
+  // only (company_id passed explicitly), listed for defense in depth.
+  Prisma.ModelName.BerAssessment,
+  Prisma.ModelName.BerCertificateCounter,
+  Prisma.ModelName.SwapUnit,
+  Prisma.ModelName.DeviceSwap,
+  // Module 5: role ceilings are company config, like role_permissions.
+  Prisma.ModelName.RoleLimit,
+  // Module 6: handover PINs and the consignment chain. `Consignment` is NOT
+  // branch-scoped — like StockTransfer it has TWO branch columns, so from/to
+  // visibility is filtered in the service. ConsignmentCounter is raw-SQL only.
+  Prisma.ModelName.JobCollectionOtp,
+  Prisma.ModelName.Consignment,
+  Prisma.ModelName.ConsignmentJob,
+  Prisma.ModelName.ConsignmentScan,
+  Prisma.ModelName.ConsignmentCounter,
+  Prisma.ModelName.CsatSurvey,
+  // Module 7: templates are company config; notifications carry a NULLABLE
+  // branch_id, so like Attachment they are company-scoped here and
+  // branch-filtered with OR-null semantics in the controller.
+  Prisma.ModelName.NotificationTemplate,
+  Prisma.ModelName.Notification,
 ]);
 
 /**
@@ -181,6 +220,20 @@ export const BRANCH_SCOPED_MODELS: ReadonlySet<Prisma.ModelName> = new Set([
   Prisma.ModelName.WarrantyClaim,
   // Retail: a warranty registration belongs to the selling branch.
   Prisma.ModelName.WarrantyRegistration,
+
+  // -- SCMS proposal modules -------------------------------------------------
+  // Module 2: a state-log row belongs to the job's branch — per-branch SLA
+  // reporting is exactly the read a branch user is entitled to and no more.
+  Prisma.ModelName.JobStateEvent,
+  // Module 4: a BER assessment belongs to the branch that raised it; a swap
+  // to the branch that performed it; a swap unit to the branch holding it.
+  Prisma.ModelName.BerAssessment,
+  Prisma.ModelName.SwapUnit,
+  Prisma.ModelName.DeviceSwap,
+  // Module 6: a collection PIN belongs to the collecting branch; a survey to
+  // the branch that did the work.
+  Prisma.ModelName.JobCollectionOtp,
+  Prisma.ModelName.CsatSurvey,
 ]);
 // NOTE: `Attachment` (Task 1.4, §4.12) is intentionally ABSENT here even
 // though it carries a branch_id column. Its branch_id is NULLABLE (NULL for

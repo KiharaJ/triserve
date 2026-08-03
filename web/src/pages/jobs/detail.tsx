@@ -23,6 +23,10 @@ import {
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { BerTab } from './tabs/ber-tab'
+import { CoreExchangeTab } from './tabs/core-exchange-tab'
+import { IntakeTab } from './tabs/intake-tab'
+import { QcTab } from './tabs/qc-tab'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
@@ -749,7 +753,11 @@ export function JobDetailPage() {
                   key={t.to_state_code}
                   size="sm"
                   variant="outline"
-                  disabled={transition.isPending}
+                  // A guard-held move stays VISIBLE but unclickable, with the
+                  // guard's own words as the tooltip — the point of the hold is
+                  // to tell the counter what the job is still waiting for.
+                  disabled={transition.isPending || Boolean(t.blocked_reason)}
+                  title={t.blocked_reason}
                   onClick={() =>
                     setPendingMove({
                       jobId: job.id,
@@ -761,7 +769,12 @@ export function JobDetailPage() {
                   }
                 >
                   {t.to_label}
-                  {t.requires_approval && (
+                  {t.blocked_reason && (
+                    <Badge variant="secondary" className="ml-1">
+                      held
+                    </Badge>
+                  )}
+                  {t.requires_approval && !t.blocked_reason && (
                     <Badge variant="warning" className="ml-1">
                       needs approval
                     </Badge>
@@ -780,6 +793,16 @@ export function JobDetailPage() {
           <TabsTrigger value="attachments">Attachments</TabsTrigger>
           {can('audit.read') && <TabsTrigger value="history">History</TabsTrigger>}
           <TabsTrigger value="parts">Parts</TabsTrigger>
+          {/* SCMS proposal tabs. Intake and QC are the two every job passes
+              through; core exchange and BER only apply to some, but they are
+              shown to whoever may act on them rather than hidden until a row
+              exists — an empty tab is how you learn the step is available. */}
+          <TabsTrigger value="intake">Intake</TabsTrigger>
+          <TabsTrigger value="qc">QC</TabsTrigger>
+          <TabsTrigger value="core">Core exchange</TabsTrigger>
+          {(can('job.ber.evaluate') || can('job.ber.certify')) && (
+            <TabsTrigger value="ber">BER</TabsTrigger>
+          )}
           <TabsTrigger value="payment" disabled>
             Payment
           </TabsTrigger>
@@ -801,6 +824,20 @@ export function JobDetailPage() {
         <TabsContent value="parts">
           <PartsTab job={job} />
         </TabsContent>
+        <TabsContent value="intake">
+          <IntakeTab job={job} />
+        </TabsContent>
+        <TabsContent value="qc">
+          <QcTab job={job} />
+        </TabsContent>
+        <TabsContent value="core">
+          <CoreExchangeTab job={job} />
+        </TabsContent>
+        {(can('job.ber.evaluate') || can('job.ber.certify')) && (
+          <TabsContent value="ber">
+            <BerTab job={job} />
+          </TabsContent>
+        )}
         <TabsContent value="payment">
           <p className="text-sm text-muted-foreground">
             Payment / warranty claim arrives in Phase 3/4.

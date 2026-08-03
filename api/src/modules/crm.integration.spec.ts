@@ -378,7 +378,7 @@ describe('/api/v1/devices (§4.2/E3)', () => {
         model: 'Galaxy A05',
         model_id: modelId,
         category: 'HHP',
-        imei_serial: '3.51234567891234E14',
+        imei_serial: '3.51234567891239E14',
         color: 'Black',
       })
       .expect(201);
@@ -387,18 +387,18 @@ describe('/api/v1/devices (§4.2/E3)', () => {
     expect(body.brand).toBe('Samsung'); // default
     expect(body.customer_id).toBe(customerId);
     expect(body.model_id).toBe(modelId);
-    expect(body.imei_serial).toBe('351234567891234'); // expanded + cleaned
+    expect(body.imei_serial).toBe('351234567891239'); // expanded + cleaned
 
     const row = await raw.device.findUniqueOrThrow({ where: { id: deviceId } });
     expect(row.companyId).toBe(companyId);
-    expect(row.imeiSerial).toBe('351234567891234');
+    expect(row.imeiSerial).toBe('351234567891239');
   });
 
   it('GET /devices?imei= finds it from spaced/dashed/sci-notation input', async () => {
     for (const imei of [
-      '351234567891234',
-      '351234 5678-91234',
-      '3.51234567891234E14',
+      '351234567891239',
+      '351234 5678-91239',
+      '3.51234567891239E14',
     ]) {
       const res = await request(app.getHttpServer())
         .get(`/api/v1/devices?imei=${encodeURIComponent(imei)}`)

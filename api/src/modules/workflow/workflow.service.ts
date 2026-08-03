@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import {
   Prisma,
+  type HoldKind,
+  type WorkflowStage,
   type WorkflowState,
   type WorkflowTransition,
 } from '@prisma/client';
@@ -21,7 +23,30 @@ import type {
   WorkflowStateListQueryDto,
   WorkflowTransitionListQueryDto,
 } from './dto/workflow.dto';
-import { WORKFLOW_GUARDS, type WorkflowGuardContext } from './guards/registry';
+import {
+  normalizeVerdict,
+  WORKFLOW_GUARDS,
+  type WorkflowGuardContext,
+} from './guards/registry';
+
+/**
+ * Split a `guard_code` into the guards it names.
+ *
+ * An edge originally carried at most ONE guard, but the SCMS proposal's
+ * "Conditional Enforcements" routinely stack several on one move — IN_REPAIR →
+ * QC must check both that the technician declared their work AND that every
+ * defective core came back. Rather than inventing a join table for what is
+ * always a short list, `guard_code` accepts a comma-separated set and ALL of
+ * them must pass. A single code parses to a one-element list, so every
+ * existing row keeps working unchanged.
+ */
+export function parseGuardCodes(raw: string | null): string[] {
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((c) => c.trim())
+    .filter((c) => c.length > 0);
+}
 
 /** Wire shape of one workflow state (snake_case per API convention). */
 export interface WorkflowStateWire {
@@ -32,6 +57,14 @@ export interface WorkflowStateWire {
   is_terminal: boolean;
   sort_order: number;
   active: boolean;
+  /**
+   * SCMS proposal Module 2: what this state means to the KPI clocks
+   * (INTAKE/DIAGNOSIS/HOLD/REPAIR/QC/READY/DONE), why a HOLD is holding, and
+   * whether time here burns the customer-facing SLA.
+   */
+  stage: WorkflowStage;
+  hold_kind: HoldKind;
+  pauses_sla: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -290,10 +323,14 @@ export class WorkflowService {
       );
     }
     // Unknown guard codes would fail CLOSED at runtime — reject the typo at
-    // config time instead. Guards ship in code (guards/registry.ts).
-    if (dto.guard_code && !(dto.guard_code in WORKFLOW_GUARDS)) {
+    // config time instead. Guards ship in code (guards/registry.ts). Every
+    // code in the comma-separated set is validated, not just the first.
+    const unknownGuard = parseGuardCodes(dto.guard_code ?? null).find(
+      (c) => !(c in WORKFLOW_GUARDS),
+    );
+    if (unknownGuard) {
       throw new UnprocessableEntityException(
-        `Unknown guard_code '${dto.guard_code}' — it must be registered in the workflow guard registry`,
+        `Unknown guard_code '${unknownGuard}' — it must be registered in the workflow guard registry`,
       );
     }
 
@@ -401,37 +438,49 @@ export class WorkflowService {
 
     // An APPROVED override lets a named guard through for THIS call only.
     // Generic on purpose: every guard becomes overridable the moment a caller
-    // knows how to obtain approval for it, with no change here.
-    const overridden = (
-      guardContext?.overriddenGuards as string[] | undefined
-    )?.includes(transition.guardCode ?? '');
+    // knows how to obtain approval for it, with no change here. Overrides are
+    // per-GUARD, not per-edge: approving "start the repair without a quote"
+    // must not also wave through an unreturned defective core on the same move.
+    const overridden = new Set(
+      (guardContext?.overriddenGuards as string[] | undefined) ?? [],
+    );
 
-    if (transition.guardCode && !overridden) {
-      const guard = WORKFLOW_GUARDS[transition.guardCode];
+    const ctx: WorkflowGuardContext = {
+      companyId,
+      user,
+      ...guardContext,
+      // Supplied last: a guard's repository handle is ours to hand out, not
+      // the caller's to override.
+      prisma: this.prisma,
+    };
+
+    // ALL guards on the edge must pass. Evaluated in declaration order and
+    // short-circuited, so the reported blocker is the first unmet condition —
+    // stable and predictable for the UI, which offers an override for it.
+    for (const code of parseGuardCodes(transition.guardCode)) {
+      if (overridden.has(code)) continue;
+
+      const guard = WORKFLOW_GUARDS[code];
       if (!guard) {
         // Fail CLOSED: an edge naming an unregistered guard never opens.
         return {
           allowed: false,
-          reason: `Transition guard '${transition.guardCode}' is not registered — transition blocked`,
+          reason: `Transition guard '${code}' is not registered — transition blocked`,
           transition: wire,
-          blocked_guard: transition.guardCode,
+          blocked_guard: code,
         };
       }
-      const ctx: WorkflowGuardContext = {
-        companyId,
-        user,
-        ...guardContext,
-        // Supplied last: a guard's repository handle is ours to hand out, not
-        // the caller's to override.
-        prisma: this.prisma,
-      };
-      if (!(await guard(ctx))) {
+
+      const verdict = normalizeVerdict(await guard(ctx));
+      if (!verdict.ok) {
         return {
           allowed: false,
-          reason: `Transition condition '${transition.guardCode}' not satisfied for ${fromState.code} → ${toState.code}`,
+          reason:
+            verdict.reason ??
+            `Transition condition '${code}' not satisfied for ${fromState.code} → ${toState.code}`,
           transition: wire,
           // Machine-readable so a caller can offer the right override.
-          blocked_guard: transition.guardCode,
+          blocked_guard: code,
         };
       }
     }
@@ -486,6 +535,10 @@ function stateToWire(s: WorkflowState): WorkflowStateWire {
     is_terminal: s.isTerminal,
     sort_order: s.sortOrder,
     active: s.active,
+    // SCMS proposal Module 2 — what this column means to the clocks.
+    stage: s.stage,
+    hold_kind: s.holdKind,
+    pauses_sla: s.pausesSla,
     created_at: s.createdAt.toISOString(),
     updated_at: s.updatedAt.toISOString(),
   };

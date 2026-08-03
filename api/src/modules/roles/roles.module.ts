@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { RoleLimitsService } from './role-limits.service';
 import { RolesController } from './roles.controller';
 import { RolesService } from './roles.service';
 
@@ -11,6 +12,9 @@ import { RolesService } from './roles.service';
 @Module({
   imports: [AuthModule],
   controllers: [RolesController],
-  providers: [RolesService],
+  providers: [RolesService, RoleLimitsService],
+  // SCMS proposal Module 5: POS/job code checks a user's ceiling before
+  // letting a discount, adjustment or write-off through.
+  exports: [RoleLimitsService],
 })
 export class RolesModule {}
