@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { apiErrorMessage } from '@/lib/api'
 import { formatDateTime, formatMoney } from '@/lib/format'
 import { publicApi } from '@/lib/public-api'
-import type { PublicQuoteWire } from '@/lib/types'
+import type { PublicQuote } from '@/lib/types'
 
 /**
  * /quote/:token — the customer approving or declining an out-of-warranty
@@ -35,7 +35,7 @@ export function PublicQuotePage() {
   } = useQuery({
     queryKey: quoteKey,
     queryFn: async () => {
-      const res = await publicApi.get<PublicQuoteWire>(`/public/quote/${token}`)
+      const res = await publicApi.get<PublicQuote>(`/public/quote/${token}`)
       return res.data
     },
     retry: false,
@@ -43,7 +43,7 @@ export function PublicQuotePage() {
 
   const decide = useMutation({
     mutationFn: async (decision: 'APPROVED' | 'DECLINED') => {
-      const res = await publicApi.post<PublicQuoteWire>(
+      const res = await publicApi.post<PublicQuote>(
         `/public/quote/${token}/decision`,
         { decision },
       )

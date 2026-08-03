@@ -8,9 +8,12 @@ import {
   ChevronDown,
   ClipboardCheck,
   Factory,
+  GraduationCap,
   KeyRound,
   BookOpen,
   Gauge,
+  MessageSquare,
+  Repeat,
   LayoutDashboard,
   LayoutGrid,
   PlusCircle,
@@ -163,6 +166,10 @@ const NAV_SECTIONS: NavSection[] = [
       // Straight to the board — the bench works the columns, not the list.
       { to: '/jobs?view=board', label: 'Job board', icon: LayoutGrid, end: false, permission: 'job.read', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
       { to: '/inventory/parts', label: 'Parts catalogue', icon: Package, end: false, permission: 'part.read', color: 'bg-teal-500/15 text-teal-600 dark:text-teal-400' },
+      // Replacement units for a BER write-off. Filed under the workshop
+      // rather than Inventory: it is the bench that reaches for one, and it
+      // is stock of DEVICES, not of parts.
+      { to: '/swap-stock', label: 'Swap stock', icon: Repeat, end: false, permission: 'swapstock.read', color: 'bg-orange-500/15 text-orange-600 dark:text-orange-400' },
     ],
   },
   {
@@ -198,6 +205,8 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/workload', label: 'Right now', icon: Gauge, end: false, permission: 'job.read', color: 'bg-rose-500/15 text-rose-600 dark:text-rose-400' },
       { to: '/operations', label: 'Operations', icon: Activity, end: false, permission: 'job.read', color: 'bg-sky-500/15 text-sky-600 dark:text-sky-400' },
       { to: '/approvals', label: 'Approvals', icon: ClipboardCheck, end: false, permission: 'approval.decide', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+      { to: '/consignments', label: 'Consignments', icon: Boxes, end: false, permission: 'consignment.read', color: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400' },
+      { to: '/comms', label: 'Customer messages', icon: MessageSquare, end: false, permission: 'notification.read', color: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
       { to: '/audit', label: 'Audit log', icon: ScrollText, end: false, permission: 'audit.read', color: 'bg-slate-500/15 text-slate-600 dark:text-slate-300' },
     ],
   },
@@ -208,6 +217,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/admin/branches', label: 'Branches', icon: MapPin, end: false, permission: 'config.read', color: 'bg-pink-500/15 text-pink-600 dark:text-pink-400' },
       { to: '/admin/users', label: 'Users', icon: Users, end: false, permission: 'user.read', color: 'bg-blue-500/15 text-blue-600 dark:text-blue-400' },
       { to: '/admin/roles', label: 'Roles & permissions', icon: KeyRound, end: false, permission: 'user.read', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400' },
+      { to: '/admin/skills', label: 'Skill matrix', icon: GraduationCap, end: false, permission: 'user.read', color: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400' },
       { to: '/admin/config', label: 'Configuration', icon: SlidersHorizontal, end: false, permission: 'config.read', color: 'bg-slate-500/15 text-slate-600 dark:text-slate-300' },
     ],
   },

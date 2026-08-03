@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { apiErrorMessage } from '@/lib/api'
 import { publicApi } from '@/lib/public-api'
-import type { PublicCsatWire } from '@/lib/types'
+import type { PublicCsat } from '@/lib/types'
 import { Outcome, PublicShell } from './quote-approval'
 
 /** 1–5, worst to best. The wording is what gets reported on, so it is fixed. */
@@ -41,7 +41,7 @@ export function PublicCsatPage() {
   } = useQuery({
     queryKey: surveyKey,
     queryFn: async () => {
-      const res = await publicApi.get<PublicCsatWire>(`/public/csat/${token}`)
+      const res = await publicApi.get<PublicCsat>(`/public/csat/${token}`)
       return res.data
     },
     retry: false,
@@ -49,7 +49,7 @@ export function PublicCsatPage() {
 
   const submit = useMutation({
     mutationFn: async () => {
-      const res = await publicApi.post<PublicCsatWire>(`/public/csat/${token}`, {
+      const res = await publicApi.post<PublicCsat>(`/public/csat/${token}`, {
         score,
         ...(comment.trim() ? { comment: comment.trim() } : {}),
       })

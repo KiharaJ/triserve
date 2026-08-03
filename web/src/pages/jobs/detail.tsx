@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { BerTab } from './tabs/ber-tab'
 import { CoreExchangeTab } from './tabs/core-exchange-tab'
+import { HandoverTab } from './tabs/handover-tab'
 import { IntakeTab } from './tabs/intake-tab'
 import { QcTab } from './tabs/qc-tab'
 import { api, apiErrorMessage } from '@/lib/api'
@@ -800,6 +801,7 @@ export function JobDetailPage() {
           <TabsTrigger value="intake">Intake</TabsTrigger>
           <TabsTrigger value="qc">QC</TabsTrigger>
           <TabsTrigger value="core">Core exchange</TabsTrigger>
+          <TabsTrigger value="handover">Handover</TabsTrigger>
           {(can('job.ber.evaluate') || can('job.ber.certify')) && (
             <TabsTrigger value="ber">BER</TabsTrigger>
           )}
@@ -832,6 +834,9 @@ export function JobDetailPage() {
         </TabsContent>
         <TabsContent value="core">
           <CoreExchangeTab job={job} />
+        </TabsContent>
+        <TabsContent value="handover">
+          <HandoverTab job={job} />
         </TabsContent>
         {(can('job.ber.evaluate') || can('job.ber.certify')) && (
           <TabsContent value="ber">

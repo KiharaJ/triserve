@@ -6,6 +6,7 @@ import { BranchesPage } from '@/pages/admin/branches'
 import { CompanyPage } from '@/pages/admin/company'
 import { ConfigPage } from '@/pages/admin/config'
 import { RolesPage } from '@/pages/admin/roles'
+import { SkillsPage } from '@/pages/admin/skills'
 import { UsersPage } from '@/pages/admin/users'
 import { ApprovalsPage } from '@/pages/approvals'
 import { AuditPage } from '@/pages/audit'
@@ -28,8 +29,11 @@ import { JobDetailPage } from '@/pages/jobs/detail'
 import { JobsPage } from '@/pages/jobs'
 import { JobIntakePage } from '@/pages/jobs/intake'
 import { LoginPage } from '@/pages/login'
+import { ConsignmentsPage } from '@/pages/logistics/consignments'
+import { CommsLogPage } from '@/pages/oversight/comms-log'
 import { PublicCsatPage } from '@/pages/public/csat'
 import { PublicQuotePage } from '@/pages/public/quote-approval'
+import { SwapStockPage } from '@/pages/workshop/swap-stock'
 import { InvoicesPage } from '@/pages/pos/invoices'
 import { OperationsPage } from '@/pages/operations'
 import { ReportsPage } from '@/pages/reports'
@@ -107,6 +111,9 @@ function App() {
         <Route path="operations" element={<OperationsPage />} />
         <Route path="approvals" element={<ApprovalsPage />} />
         <Route path="audit" element={<AuditPage />} />
+        <Route path="consignments" element={<ConsignmentsPage />} />
+        <Route path="swap-stock" element={<SwapStockPage />} />
+        <Route path="comms" element={<CommsLogPage />} />
         <Route path="security" element={<SecurityPage />} />
         <Route path="admin">
           <Route index element={<Navigate to="/admin/company" replace />} />
@@ -115,6 +122,7 @@ function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="roles" element={<RolesPage />} />
           <Route path="config" element={<ConfigPage />} />
+          <Route path="skills" element={<SkillsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
