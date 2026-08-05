@@ -7,6 +7,12 @@ TriServe is a multi-branch Service Centre Management System with an integrated P
 
 The single source of truth for the design is [`docs/DESIGN.md`](docs/DESIGN.md).
 
+[`docs/SCMS.md`](docs/SCMS.md) documents the seven Service Centre System
+modules layered on top of it — intake integrity, skill routing and a QC gate,
+BER/device-swap, OTP handover and consignments, an async notification outbox,
+SLA metrics, and per-role financial ceilings. It is a companion to DESIGN.md,
+not a replacement.
+
 ## Tech stack
 
 - **Backend:** Node.js + TypeScript + NestJS, Prisma ORM, MySQL 8
@@ -25,7 +31,22 @@ npm workspaces monorepo:
 docker-compose.yml — local MySQL 8 (utf8mb4) + Adminer
 ```
 
-Backend modules live under `api/src/modules/` (auth, companies, branches, users, audit, approvals, accounting — skeletons as of Task 0.0), plus `health/` and `prisma/`.
+Backend modules live under `api/src/modules/`, plus `health/` and `prisma/`:
+
+- **Core:** `auth`, `companies`, `branches`, `users`, `roles`, `audit`,
+  `approvals`, `accounting`, `config-tables`, `storage`, `attachments`
+- **Operations:** `jobs`, `workflow`, `customers`, `devices`, `models`,
+  `dashboard`
+- **Stock & trade:** `inventory`, `procurement`, `suppliers`, `products`, `pos`,
+  `warranty`
+- **Service Centre System** (see [`docs/SCMS.md`](docs/SCMS.md)): `intake`,
+  `bench`, `ber`, `logistics`, `notifications`, `sla`
+
+The in-app **`/guide`** page is the staff-facing version of the same thing — one
+flow per role, each step linking to the screen that performs it. Its content
+lives in `web/src/pages/guide/flows.ts` as data, so a flow can be corrected
+without touching the page. Keep it in step with the process; it is what new
+staff are pointed at.
 
 ### Conventions
 
@@ -66,10 +87,11 @@ Prerequisites: Node.js >= 20, npm >= 10, Docker.
    docker compose up -d
    ```
 
-4. **Prisma:** generate the client and run migrations (no models yet as of Task 0.0):
+4. **Prisma:** generate the client and run migrations:
 
    ```sh
    npm run prisma:migrate        # prisma migrate dev (in /api)
+   npx prisma db seed -w @triserve/api   # built-in roles, workflow, config tables
    ```
 
 5. **Run both apps** in dev mode:
@@ -179,3 +201,43 @@ STORAGE_FORCE_PATH_STYLE=true
 See `api/.env.example` for the full list of `STORAGE_*` variables (upload
 size cap, presigned URL TTL, etc.) — the mime allowlist (PNG/JPEG/WEBP
 images, PDF, MP4) is fixed per DESIGN.md §4.12.
+
+## Deployment
+
+Two hosts, both deploying from `main` — **pushing to `main` deploys to
+production.** There is no staging environment and no CI gate in front of it, so
+run `npm run build:full` and `npm test -w @triserve/api` before you push.
+
+| Part | Host | Config | URL |
+| --- | --- | --- | --- |
+| API | Render | `render.yaml` | `https://triserve-api.onrender.com` |
+| Web | Vercel | `vercel.json` | `https://triserve-web.vercel.app` |
+| Database | Self-hosted MySQL 8 | — | separate host, not managed by either |
+
+**Migrations run on API start.** Render's `startCommand` is
+`prisma migrate deploy && node api/dist/main.js`, so a deploy applies any
+pending migration to the production database before the new code serves
+traffic. Two consequences worth knowing:
+
+- A migration that fails takes the API down with it — the process never reaches
+  `main.js`. Check `_prisma_migrations` before assuming the code is at fault.
+- There is no automatic backup. Take one before deploying anything that alters
+  an existing table:
+
+  ```sh
+  mysqldump -h <host> -u <user> -p --single-transaction --routines --triggers \
+    --events --databases triserve > triserve-prod-$(date +%Y%m%d-%H%M%S).sql
+  ```
+
+  Keep dumps **outside the repo** — they contain full customer records.
+
+**Environment.** Secrets are set in the Render dashboard, not in `render.yaml`
+(`sync: false` entries). `CORS_ORIGIN` must list the Vercel URL, and on the web
+side `VITE_API_BASE_URL` must be set in Vercel to the Render API's `/api/v1` —
+it is baked in at build time, and without it the app falls back to a relative
+`/api/v1` that does not exist on the Vercel domain.
+
+**Known gap:** `STORAGE_DRIVER` is `local` in `render.yaml`, and Render's disks
+are ephemeral — intake photos, condition evidence and handover signatures are
+lost on every redeploy. This wants `s3` (see the section above) before the
+intake and BER evidence trails are relied on.

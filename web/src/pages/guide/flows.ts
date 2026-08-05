@@ -62,7 +62,16 @@ export const FLOWS: Flow[] = [
         to: '/jobs/new',
         who: ['Service advisor'],
         watchOut:
-          'The purchase date is what decides warranty when no registration matches — get it off the receipt while the customer is still standing there.',
+          'The purchase date is what decides warranty when no registration matches — get it off the receipt while the customer is still standing there. A mistyped IMEI is rejected on the spot: 15 digits and the check digit has to agree.',
+      },
+      {
+        title: 'Pick the symptom off the list',
+        detail:
+          'Choose the fault from the symptom list rather than describing it in your own words.',
+        to: '/jobs/new',
+        who: ['Service advisor'],
+        watchOut:
+          'Free text cannot be counted. Picking the node is what lets the centre see that one model keeps coming back for the same fault.',
       },
       {
         title: 'Rule the warranty',
@@ -83,20 +92,31 @@ export const FLOWS: Flow[] = [
           'Accessories are a custody liability. If it is not on the job card, you cannot prove it came in — or that it did not.',
       },
       {
-        title: 'Capture the signature and print',
+        title: 'Mark the damage already on it',
         detail:
-          'The customer signs on screen; print the job ticket with the job number, coverage and accessories.',
+          'Tap the scratches, cracks and dents onto the device diagram before it leaves the counter.',
         to: '/jobs/new',
         who: ['Service advisor'],
+        watchOut:
+          'This is the only thing that settles “it was not like that when I brought it in”. Marking it after the customer has gone is worth nothing.',
+      },
+      {
+        title: 'Capture the signature, terms and print',
+        detail:
+          'The customer accepts the repair terms and signs on screen; print the job ticket with the job number, coverage and accessories.',
+        to: '/jobs/new',
+        who: ['Service advisor'],
+        watchOut:
+          'The job cannot leave intake until the symptom, the condition marks and the accepted terms are all on it — the workshop will not be able to start.',
       },
       {
         title: 'Hand over at collection',
         detail:
-          'When the job is READY, dispatch it: record who collected it and the waybill number.',
+          'When the job is READY, issue the collection PIN, check the one the customer reads back, then record who collected it and the waybill number.',
         to: '/jobs',
         who: ['Service advisor', 'Branch manager'],
         watchOut:
-          'Out-of-warranty work is cash on delivery — take payment before the device leaves.',
+          'No verified PIN, no release — a job number alone is not proof of ownership, and anyone can read one off a ticket. Out-of-warranty work is also cash on delivery: settle before the device leaves.',
       },
     ],
   },
@@ -118,6 +138,8 @@ export const FLOWS: Flow[] = [
           'Your assigned jobs appear on the board. Move it to DIAGNOSING when you start.',
         to: '/jobs',
         who: ['Technician'],
+        watchOut:
+          'Jobs are routed by skill. If a job will not assign to you, you are not signed off on that repair type — ask a supervisor rather than working around it.',
       },
       {
         title: 'Diagnose and record the codes',
@@ -147,11 +169,31 @@ export const FLOWS: Flow[] = [
           'If the part is out of stock the job goes to AWAITING PARTS — raise a purchase order rather than leaving it stuck.',
       },
       {
+        title: 'Return the old part',
+        detail:
+          'Warranty parts are a closed loop: book the faulty part you removed back in against the job.',
+        to: '/jobs',
+        who: ['Technician', 'Storekeeper'],
+        watchOut:
+          'The job will not close with a core still outstanding. Samsung bills the centre for cores that never come back.',
+      },
+      {
+        title: 'Declare what you did',
+        detail:
+          'Record the actual work performed on the job before you send it to QC.',
+        to: '/jobs',
+        who: ['Technician'],
+        watchOut:
+          'This is not the same as the diagnosis. The job is held until the work is declared — QC is checking your work against it.',
+      },
+      {
         title: 'Repair, then QC',
         detail:
-          'Move to IN REPAIR, then QC. QC can send it back to IN REPAIR for rework.',
+          'Move to IN REPAIR, then QC. A second person works the QC checklist and either approves or rejects it back to IN REPAIR for rework.',
         to: '/jobs',
-        who: ['Technician', 'Branch manager'],
+        who: ['Technician', 'Floor supervisor', 'Branch manager'],
+        watchOut:
+          'Every checklist item has to be answered — the job cannot pass QC with items left blank, and a rejection has to say what failed.',
       },
       {
         title: 'Mark it ready',
@@ -159,6 +201,117 @@ export const FLOWS: Flow[] = [
           'READY tells the front desk to call the customer. Take after-photos before it goes.',
         to: '/jobs',
         who: ['Technician'],
+      },
+    ],
+  },
+  {
+    key: 'ber',
+    title: 'Write-offs & swaps',
+    owner: 'Floor supervisor / manager',
+    summary:
+      'When a device is not worth repairing: certify it beyond economic repair, then settle it with the customer.',
+    accent: {
+      dot: 'bg-orange-500',
+      line: 'bg-orange-500/25',
+      chip: 'bg-orange-500/15 text-orange-700 dark:text-orange-300',
+    },
+    steps: [
+      {
+        title: 'Evaluate the repair against the device',
+        detail:
+          'From the job, run the BER evaluation: what the repair would cost versus what the device is worth.',
+        to: '/jobs',
+        who: ['Technician', 'Floor supervisor'],
+        watchOut:
+          'Do this before ordering parts, not after. The point is to stop money going into a device that is already lost.',
+      },
+      {
+        title: 'Certify or reject it',
+        detail:
+          'A manager reviews the assessment and either certifies the write-off or sends it back to be repaired.',
+        to: '/jobs',
+        who: ['Branch manager', 'Owner'],
+        watchOut:
+          'A technician cannot write off a device alone. While an assessment is open the job cannot be completed as a normal repair.',
+      },
+      {
+        title: 'Agree the outcome with the customer',
+        detail:
+          'Record what the customer chose — take the write-off certificate, or accept a replacement unit.',
+        to: '/jobs',
+        who: ['Service advisor', 'Branch manager'],
+      },
+      {
+        title: 'Issue the certificate',
+        detail:
+          'Print the numbered BER certificate for the customer or their insurer.',
+        to: '/jobs',
+        who: ['Service advisor', 'Branch manager'],
+        watchOut:
+          'Certificate numbers run in an unbroken sequence — an insurer can spot a gap, so do not raise one you do not intend to issue.',
+      },
+      {
+        title: 'Issue a swap unit',
+        detail:
+          'If the customer takes a replacement, issue one from swap stock against the job.',
+        to: '/swap-stock',
+        who: ['Storekeeper', 'Branch manager'],
+        watchOut:
+          'The swap is tied to the job. Handing over a unit without recording it here leaves the stock count wrong and the customer with an unregistered device.',
+      },
+    ],
+  },
+  {
+    key: 'logistics',
+    title: 'Moving devices',
+    owner: 'Storekeeper / driver',
+    summary:
+      'Getting devices between branches without losing them: a sealed tote, scanned at each stop.',
+    accent: {
+      dot: 'bg-teal-500',
+      line: 'bg-teal-500/25',
+      chip: 'bg-teal-500/15 text-teal-700 dark:text-teal-300',
+    },
+    steps: [
+      {
+        title: 'Open a consignment',
+        detail:
+          'Create the consignment for the receiving branch and label the tote.',
+        to: '/consignments',
+        who: ['Storekeeper', 'Branch manager'],
+      },
+      {
+        title: 'Put the jobs in it',
+        detail:
+          'Add each job going in the tote. Remove any that get pulled before it leaves.',
+        to: '/consignments',
+        who: ['Storekeeper'],
+        watchOut:
+          'What is in the consignment is what the receiving branch will expect. A device in the tote but not on the list is the one that goes missing.',
+      },
+      {
+        title: 'Dispatch it',
+        detail: 'Seal the tote and dispatch — the devices are now in transit.',
+        to: '/consignments',
+        who: ['Storekeeper', 'Branch manager'],
+      },
+      {
+        title: 'Scan it along the way',
+        detail:
+          'Each handover point scans the tote label, so there is a record of who held it and when.',
+        to: '/consignments',
+        who: ['Driver', 'Storekeeper'],
+        watchOut:
+          'You can look a tote up by its label without knowing its number — scan rather than search.',
+      },
+      {
+        title: 'Book it in on arrival',
+        detail:
+          'The receiving branch marks it arrived and checks the contents against the list.',
+        to: '/consignments',
+        who: ['Storekeeper', 'Branch manager'],
+        watchOut:
+          'Check before you accept. Once it is marked arrived, custody has passed to your branch.',
       },
     ],
   },
@@ -339,10 +492,37 @@ export const FLOWS: Flow[] = [
         who: ['Branch manager', 'Owner'],
       },
       {
+        title: 'Chase what is running late',
+        detail:
+          'Jobs breaching their turnaround target, or about to, are listed with the time already spent at each stage.',
+        to: '/operations',
+        who: ['Branch manager', 'Owner'],
+        watchOut:
+          'The clock runs off the job’s actual stage changes, so a job parked in one column shows up here whether or not anyone reported it.',
+      },
+      {
         title: 'Clear the approvals queue',
         detail:
           'Anything staff cannot do alone is waiting here. A stale queue stalls the workshop.',
         to: '/approvals',
+        who: ['Branch manager', 'Owner'],
+        watchOut:
+          'Each role has its own money ceiling, so quotes escalate to whoever can actually sign for them. Raising someone’s limit is a permanent change — approving one item is not.',
+      },
+      {
+        title: 'Check what the customer was told',
+        detail:
+          'Every message the system sent — quotes, collection PINs, survey links — with whether it actually went out.',
+        to: '/comms',
+        who: ['Branch manager', 'Owner'],
+        watchOut:
+          'Messages queue and send separately, so “sent” here is the proof. If a customer says they heard nothing, this is where you find out whether that is true.',
+      },
+      {
+        title: 'Sign off who can do what',
+        detail:
+          'Keep technician skills current — that is what decides which jobs route to which bench.',
+        to: '/admin/skills',
         who: ['Branch manager', 'Owner'],
       },
       {

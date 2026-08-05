@@ -33,8 +33,10 @@ export function GuidePage() {
       <p className="max-w-3xl text-sm text-muted-foreground">
         A repair moves through the centre in one direction: the front desk takes
         it in, the workshop fixes it, the front desk hands it back, and
-        aftersales gets paid for it. Pick your job below to see your part of
-        that, step by step — every step links to the screen that does it.
+        aftersales gets paid for it. Not every device makes it — some are
+        written off, and some travel between branches to get worked on. Pick
+        your job below to see your part of that, step by step — every step links
+        to the screen that does it.
       </p>
 
       <JobLifecycle />
