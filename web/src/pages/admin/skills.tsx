@@ -66,7 +66,8 @@ export function SkillsPage() {
       (
         await api.get<PaginatedResponse<UserSkill>>('/skills', {
           params: {
-            page_size: 200,
+            // ListQueryDto caps page_size at 100 — anything higher 400s.
+            page_size: 100,
             ...(categoryFilter ? { category: categoryFilter } : {}),
           },
         })
@@ -79,7 +80,7 @@ export function SkillsPage() {
     queryFn: async () =>
       (
         await api.get<PaginatedResponse<UserWire>>('/users', {
-          params: { page_size: 200, active: true },
+          params: { page_size: 100, active: true },
         })
       ).data.data,
   })
