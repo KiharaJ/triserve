@@ -1,13 +1,16 @@
 /**
  * Integration tests (Task 2.2, DESIGN.md §4.5) for reserve/consume of parts on
  * jobs against the REAL MySQL database over HTTP:
- *   - POST /jobs/{id}/parts RESERVES branch stock: available drops by qty,
- *     on_hand unchanged, a RESERVE movement is written, the line is RESERVED;
+ *   - POST /jobs/{id}/parts REQUESTS a part and holds NOTHING; stores raises it
+ *     ({lineId}/issue-request) and an approver signs it off ({lineId}/approve),
+ *     and it is that approval which RESERVES: available drops by qty, on_hand
+ *     unchanged, a RESERVE movement is written, the line becomes RESERVED;
  *   - DELETE releases a reserved line (UNRESERVE): available restored, gone;
  *   - consume moves on_hand −qty AND reserved −qty (available unchanged), flips
  *     the line to CONSUMED, and writes UNRESERVE + CONSUMPTION;
- *   - reserving more than available → 422; a CONSUMED line can't be removed;
- *   - THE LAST UNIT: with available = 1, two PARALLEL reserves → exactly one
+ *   - asking for more than available is ALLOWED (the bench cannot see the
+ *     shelf); the APPROVAL is what 422s, leaving the line awaiting a decision;
+ *   - THE LAST UNIT: with available = 1, two PARALLEL approvals → exactly one
  *     succeeds, the other 422s, final reserved = 1 (the FOR UPDATE lock);
  *   - consume-all consumes every reserved line;
  *   - parts can't be changed on a terminal (closed) job → 422;
@@ -214,6 +217,18 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const testUserIds = Object.values(ids);
+  // Parts requests raise `approvals` rows, whose requested_by FK is NOT
+  // nullable — leaving them behind blocks the user delete below, and the
+  // fixtures then collide with the NEXT run rather than failing here.
+  await raw.approval.deleteMany({
+    where: {
+      OR: [
+        { requestedById: { in: testUserIds } },
+        { refType: 'JobPart' },
+        { refId: { in: createdJobIds } },
+      ],
+    },
+  });
   await raw.jobPart.deleteMany({ where: { jobId: { in: createdJobIds } } });
   await raw.stockMovement.deleteMany({
     where: { partId: { in: createdPartIds } },
@@ -231,18 +246,68 @@ afterAll(async () => {
   await app.close();
 });
 
+/**
+ * Drive a line through the bench request flow to RESERVED.
+ *
+ * The technician asks, the parts clerk raises it for approval, and an approver
+ * signs it off — and it is that approval which fires the RESERVE movement.
+ * Most tests below care about the reserved end state, not the ceremony, so
+ * they go through here. `admin` is a SUPER_ADMIN and so holds both the clerk
+ * permission ('inventory.issue') and the approver one ('job.parts.approve').
+ */
+async function reserveLine(
+  jobId: string,
+  partId: string,
+  qty: number,
+): Promise<PartLine> {
+  const requested = await request(app.getHttpServer())
+    .post(`/api/v1/jobs/${jobId}/parts`)
+    .set('Authorization', `Bearer ${tokens.tech1}`)
+    .send({ part_id: partId, qty })
+    .expect(201);
+  const line = requested.body as PartLine;
+
+  await request(app.getHttpServer())
+    .post(`/api/v1/jobs/${jobId}/parts/${line.id}/issue-request`)
+    .set('Authorization', `Bearer ${tokens.admin}`)
+    .expect(201);
+
+  const approved = await request(app.getHttpServer())
+    .post(`/api/v1/jobs/${jobId}/parts/${line.id}/approve`)
+    .set('Authorization', `Bearer ${tokens.admin}`)
+    .expect(201);
+  return approved.body as PartLine;
+}
+
 describe('Reserve / consume lifecycle', () => {
   it('reserve → consume moves the buckets exactly right', async () => {
     const partId = await makePart(`${TEST_PREFIX}-LIFECYCLE`, 10);
     const jobId = await makeJob(initialStateId, ids.tech1);
 
-    // Reserve 3: available 10 → 7, on_hand still 10.
-    const add = await request(app.getHttpServer())
+    // Request 3 — nothing is held yet, which is the point of the request step.
+    const asked = await request(app.getHttpServer())
       .post(`/api/v1/jobs/${jobId}/parts`)
       .set('Authorization', `Bearer ${tokens.tech1}`)
       .send({ part_id: partId, qty: 3 })
       .expect(201);
-    const line = add.body as PartLine;
+    expect((asked.body as PartLine).status).toBe('REQUESTED');
+    expect((await bucket(partId)).qty_available).toBe(10); // untouched
+
+    // Stores raises it, an approver signs it off — THAT reserves the stock:
+    // available 10 → 7, on_hand still 10.
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/issue-request`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    const approved = await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/approve`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    const line = approved.body as PartLine;
     expect(line.status).toBe('RESERVED');
     expect(line.unit_sell_price).toBe('5000000'); // catalogue default
 
@@ -274,44 +339,76 @@ describe('Reserve / consume lifecycle', () => {
     const partId = await makePart(`${TEST_PREFIX}-RELEASE`, 5);
     const jobId = await makeJob(initialStateId, ids.tech1);
 
-    const add = await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${jobId}/parts`)
-      .set('Authorization', `Bearer ${tokens.tech1}`)
-      .send({ part_id: partId, qty: 2 })
-      .expect(201);
+    const line = await reserveLine(jobId, partId, 2);
     expect((await bucket(partId)).qty_available).toBe(3);
 
     await request(app.getHttpServer())
-      .delete(`/api/v1/jobs/${jobId}/parts/${(add.body as PartLine).id}`)
+      .delete(`/api/v1/jobs/${jobId}/parts/${line.id}`)
       .set('Authorization', `Bearer ${tokens.tech1}`)
       .expect(200);
     expect((await bucket(partId)).qty_available).toBe(5);
   });
 
-  it('cannot reserve more than available', async () => {
+  it('cannot reserve more than available — refused at APPROVAL', async () => {
     const partId = await makePart(`${TEST_PREFIX}-OVER`, 2);
     const jobId = await makeJob(initialStateId, ids.tech1);
-    await request(app.getHttpServer())
+
+    // Asking for more than exists is allowed: the bench may not know what is
+    // on the shelf, and stores/the approver are the ones who find out.
+    const asked = await request(app.getHttpServer())
       .post(`/api/v1/jobs/${jobId}/parts`)
       .set('Authorization', `Bearer ${tokens.tech1}`)
       .send({ part_id: partId, qty: 3 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/issue-request`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+
+    // The reservation is what fails, and the approver is the one told.
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/approve`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
       .expect(422);
-    // Nothing reserved.
+
+    // Nothing reserved, and the line is still awaiting a decision.
     expect((await bucket(partId)).qty_reserved).toBe(0);
+    const after = await raw.jobPart.findFirstOrThrow({ where: { jobId } });
+    expect(after.status).toBe('ISSUE_REQUESTED');
   });
 });
 
 describe('The last unit — concurrent reserves', () => {
-  it('two parallel reserves of the last unit: exactly one wins', async () => {
+  it('two parallel APPROVALS of the last unit: exactly one wins', async () => {
     const partId = await makePart(`${TEST_PREFIX}-LASTUNIT`, 1);
     const jobId = await makeJob(initialStateId, ids.tech1);
 
+    // Both requests are accepted — neither holds stock. The race that matters
+    // is now between the two APPROVALS, because approving is what reserves.
+    const lineIds: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const asked = await request(app.getHttpServer())
+        .post(`/api/v1/jobs/${jobId}/parts`)
+        .set('Authorization', `Bearer ${tokens.tech1}`)
+        .send({ part_id: partId, qty: 1 })
+        .expect(201);
+      const id = (asked.body as PartLine).id;
+      await request(app.getHttpServer())
+        .post(`/api/v1/jobs/${jobId}/parts/${id}/issue-request`)
+        .set('Authorization', `Bearer ${tokens.admin}`)
+        .expect(201);
+      lineIds.push(id);
+    }
+
     const results = await Promise.allSettled(
-      Array.from({ length: 2 }, () =>
+      lineIds.map((id) =>
         request(app.getHttpServer())
-          .post(`/api/v1/jobs/${jobId}/parts`)
-          .set('Authorization', `Bearer ${tokens.tech1}`)
-          .send({ part_id: partId, qty: 1 }),
+          .post(`/api/v1/jobs/${jobId}/parts/${id}/approve`)
+          .set('Authorization', `Bearer ${tokens.admin}`),
       ),
     );
     const statuses = results.map((r) =>
@@ -334,6 +431,7 @@ describe('Consume-all + warranty defaults', () => {
     const partB = await makePart(`${TEST_PREFIX}-IW-B`, 5);
     const jobId = await makeJob(initialStateId, ids.tech1, 'IW');
 
+    // The warranty default is applied at REQUEST time, off the job's coverage.
     const a = await request(app.getHttpServer())
       .post(`/api/v1/jobs/${jobId}/parts`)
       .set('Authorization', `Bearer ${tokens.tech1}`)
@@ -341,11 +439,19 @@ describe('Consume-all + warranty defaults', () => {
       .expect(201);
     expect((a.body as PartLine).is_warranty).toBe(true);
 
+    // Consume-all only reaches APPROVED lines: a request holds no stock, so
+    // there would be nothing to consume.
     await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${jobId}/parts`)
-      .set('Authorization', `Bearer ${tokens.tech1}`)
-      .send({ part_id: partB, qty: 2 })
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(a.body as PartLine).id}/issue-request`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
       .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${(a.body as PartLine).id}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    await reserveLine(jobId, partB, 2);
 
     const consumed = await request(app.getHttpServer())
       .post(`/api/v1/jobs/${jobId}/parts/consume`)
@@ -379,5 +485,175 @@ describe('Guards', () => {
       .set('Authorization', `Bearer ${tokens.tech2}`) // tech2 is not assigned
       .send({ part_id: partId, qty: 1 })
       .expect(404);
+  });
+});
+
+/**
+ * The bench request loop end to end: engineer asks → parts clerk raises it →
+ * approver signs it off (reserving the stock) → clerk hands it over → engineer
+ * signs for it. Plus the refusals that keep each step honest.
+ */
+describe('Bench parts request flow', () => {
+  it('runs the full chain: request → issue-request → approve → issue → acknowledge', async () => {
+    const partId = await makePart(`${TEST_PREFIX}-CHAIN`, 4);
+    const jobId = await makeJob(initialStateId, ids.tech1);
+
+    // 1. The engineer asks. Nothing is held.
+    const asked = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({ part_id: partId, qty: 1, request_note: 'Screen is cracked' })
+      .expect(201);
+    const lineId = (asked.body as PartLine).id;
+    expect((asked.body as PartLine).status).toBe('REQUESTED');
+    expect((await bucket(partId)).qty_available).toBe(4);
+
+    // 2. Stores raises it — and only NOW does an approval row exist.
+    const raised = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/issue-request`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    expect((raised.body as PartLine).status).toBe('ISSUE_REQUESTED');
+    const approvalId = (raised.body as { approval_id: string | null })
+      .approval_id;
+    expect(approvalId).toBeTruthy();
+    expect((await bucket(partId)).qty_available).toBe(4); // still nothing held
+
+    // 3. The approver signs it off — THIS is what reserves.
+    const approved = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    expect((approved.body as PartLine).status).toBe('RESERVED');
+    expect((await bucket(partId)).qty_available).toBe(3);
+
+    // 4. Stores hands it over.
+    const issued = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/issue`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({})
+      .expect(201);
+    expect((issued.body as PartLine).status).toBe('ISSUED');
+
+    // 5. The engineer signs for it — the half stores cannot assert for them.
+    const ack = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/acknowledge`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(201);
+    expect((ack.body as PartLine).status).toBe('ACKNOWLEDGED');
+    expect(
+      (ack.body as { acknowledged_at: string | null }).acknowledged_at,
+    ).toBeTruthy();
+
+    // …and it is still fittable from there.
+    const consumed = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/consume`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(201);
+    expect((consumed.body as PartLine).status).toBe('CONSUMED');
+  });
+
+  it('the generic approvals inbox REFUSES to decide a parts request', async () => {
+    // Approving reserves stock and can fail; a decision taken in the inbox
+    // could not report that, so the inbox lists it but sends you elsewhere.
+    const partId = await makePart(`${TEST_PREFIX}-INBOX`, 2);
+    const jobId = await makeJob(initialStateId, ids.tech1);
+
+    const asked = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({ part_id: partId, qty: 1 })
+      .expect(201);
+    const raised = await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/issue-request`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    const approvalId = (raised.body as { approval_id: string }).approval_id;
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/approvals/${approvalId}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({})
+      .expect(400);
+
+    // Nothing moved: the line is still awaiting its proper decision.
+    expect((await bucket(partId)).qty_reserved).toBe(0);
+  });
+
+  it('stores can decline a request without troubling an approver', async () => {
+    const partId = await makePart(`${TEST_PREFIX}-DECLINE`, 2);
+    const jobId = await makeJob(initialStateId, ids.tech1);
+
+    const asked = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({ part_id: partId, qty: 1 })
+      .expect(201);
+
+    const declined = await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/decline`,
+      )
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ reason: 'Wrong part number for this model' })
+      .expect(201);
+    expect((declined.body as PartLine).status).toBe('REJECTED');
+    expect(
+      (declined.body as { rejection_reason: string | null }).rejection_reason,
+    ).toBe('Wrong part number for this model');
+    expect((await bucket(partId)).qty_reserved).toBe(0);
+  });
+
+  it('rejecting requires a reason, and a REQUESTED line cannot be approved', async () => {
+    const partId = await makePart(`${TEST_PREFIX}-ORDER`, 2);
+    const jobId = await makeJob(initialStateId, ids.tech1);
+    const asked = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({ part_id: partId, qty: 1 })
+      .expect(201);
+    const lineId = (asked.body as PartLine).id;
+
+    // Steps cannot be jumped: stores must raise it before anyone approves.
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/approve`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(409);
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/issue-request`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .expect(201);
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts/${lineId}/reject`)
+      .set('Authorization', `Bearer ${tokens.admin}`)
+      .send({ reason: '' })
+      .expect(400);
+  });
+
+  it('a technician cannot approve their own request', async () => {
+    const partId = await makePart(`${TEST_PREFIX}-SELFAPPROVE`, 2);
+    const jobId = await makeJob(initialStateId, ids.tech1);
+    const asked = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${jobId}/parts`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .send({ part_id: partId, qty: 1 })
+      .expect(201);
+
+    // TECHNICIAN holds neither 'inventory.issue' nor 'job.parts.approve'.
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/issue-request`,
+      )
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(
+        `/api/v1/jobs/${jobId}/parts/${(asked.body as PartLine).id}/approve`,
+      )
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(403);
   });
 });

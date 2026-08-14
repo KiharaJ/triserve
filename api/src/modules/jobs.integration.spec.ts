@@ -692,15 +692,26 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
   it('walking a job to READY stamps ready_at; /dispatch stamps handover fields', async () => {
     const job = await createJob(tokens.admin, {
       branch_id: branchDar,
+      // IN-WARRANTY on purpose: this test is about ready_at/dispatch stamping,
+      // and the DIAGNOSING→IN_REPAIR skip refuses a BILLABLE repair that has
+      // no approved quote. An OW walk belongs in the quote-gate tests, which
+      // cover that refusal directly.
+      warranty_status: 'IW',
       customer: { name: `${TEST_PREFIX} Ready`, phone: '0765440003' },
-      device: { category: 'HHP', imei_serial: '353000000000037' },
+      device: {
+        category: 'HHP',
+        imei_serial: '353000000000037',
+        purchase_date: '2026-05-13',
+      },
     });
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
 
     // admin holds every job.transition.* permission → walk to READY.
     await transition(tokens.admin, job.id, 'DIAGNOSING');
-    await transition(tokens.admin, job.id, 'AWAITING_PARTS');
+    // Straight to repair: this job needs no parts, and the AWAITING_PARTS hold
+    // now refuses a job with nothing on order (`parts_requested`). The skip
+    // edge is exactly what that case is for.
     await transition(tokens.admin, job.id, 'IN_REPAIR');
     // SCMS §3: the bench paperwork + QC checklist gate the way out.
     await passBenchAndQc(tokens.admin, job.id);
@@ -1379,7 +1390,7 @@ describe('seed stays pristine', () => {
     ).toBe(5);
     expect(await raw.workflowState.count({ where: { companyId } })).toBe(11);
     expect(await raw.workflowTransition.count({ where: { companyId } })).toBe(
-      21,
+      22,
     );
     // This suite's jobs exist exactly (scoped to fixtures so pre-existing real
     // data, e.g. imports, doesn't skew the count); cleaned in afterAll.

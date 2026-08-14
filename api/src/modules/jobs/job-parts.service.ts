@@ -11,6 +11,7 @@ import {
   type JobPartStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { ApprovalsService } from '../approvals/approvals.service';
 import type { AuthUser } from '../auth/auth.types';
 import { InventoryService } from '../inventory/inventory.service';
 import { JobsService } from './jobs.service';
@@ -26,8 +27,29 @@ export interface JobPartWire {
   currency: string | null;
   is_warranty: boolean;
   status: JobPartStatus;
-  reserved_at: string;
+  /** NULL until an approver reserves it — a request holds no stock. */
+  reserved_at: string | null;
   consumed_at: string | null;
+
+  // -- The bench request → approval → hand-over trail ------------------------
+  requested_at: string;
+  requested_by: string | null;
+  request_note: string | null;
+  /** The parts clerk who raised it for approval. */
+  issue_requested_at: string | null;
+  issue_requested_by: string | null;
+  /** The `approvals` row this line is gated on (visible in the inbox). */
+  approval_id: string | null;
+  approved_at: string | null;
+  approved_by: string | null;
+  rejected_at: string | null;
+  rejected_by: string | null;
+  rejection_reason: string | null;
+  /** The technician's confirmation that the part reached them. */
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  /** Derived: asked for but not yet in the technician's hands. */
+  awaiting_receipt: boolean;
 
   // -- SCMS proposal Module 3: the closed-loop core exchange ----------------
   /** Bin the storekeeper picks it from, snapshotted at reservation. */
@@ -54,6 +76,8 @@ interface AddInput {
   qty: number;
   unit_sell_price?: string;
   is_warranty?: boolean;
+  /** Why the bench needs it — shown to whoever decides the request. */
+  request_note?: string;
 }
 
 /**
@@ -106,15 +130,39 @@ type JobPartWithPart = Prisma.JobPartGetPayload<{ include: { part: true } }>;
 /**
  * Job parts (Task 2.2, DESIGN.md §4.5) — the bridge between jobs and stock.
  *
- * Adding a part to a job RESERVES branch stock the instant it is committed, so
- * two technicians can never both promise the last unit (available stock drops
- * immediately). Consuming a line fires the CONSUMPTION that removes the unit
- * from on-hand — modelled as an UNRESERVE (release the hold) + a CONSUMPTION
- * (remove the physical unit) so the buckets stay exact. Every stock effect
- * goes through InventoryService.applyMovement (ref_type JOB, ref_id = the job)
- * inside ONE transaction with the job_part row, so a line and its stock effect
- * commit or roll back together. Access is gated through the parent job's
- * company/branch/technician scope (JobsService.loadAccessibleJob).
+ * THE BENCH REQUEST FLOW
+ *
+ *   REQUESTED  technician asks for a part off the back of their diagnosis.
+ *              Nothing is held and no approval is raised yet: an unapproved
+ *              request must never lock stock another job could use, and a
+ *              wrong part number must never reach a manager's queue.
+ *   ISSUE_REQUESTED
+ *              the parts clerk checked it against the shelf and raised it for
+ *              approval — THIS is what creates the `approvals` row, so the
+ *              approver's inbox only holds requests stores has vetted. A clerk
+ *              who spots a wrong or unstocked part declines it back to the
+ *              bench instead.
+ *   RESERVED   an approver said yes — and THAT is what fires the RESERVE
+ *              movement. Approving can therefore fail (422) when the part has
+ *              gone since the request, which is exactly why approval is an
+ *              explicit action here rather than a silent side effect of the
+ *              generic approvals inbox. See `approve`.
+ *   ISSUED     stores picked it and physically handed it over, tagging the new
+ *              part's serial. Custody, not stock: it is already reserved to
+ *              this job and is not gone until it is fitted.
+ *   ACKNOWLEDGED the technician confirmed it reached them. Closes the gap
+ *              between "stores says it handed over" and "the bench has it",
+ *              and is what the `parts_received` guard waits for before the job
+ *              may leave AWAITING_PARTS for IN_REPAIR.
+ *   CONSUMED   fitted — UNRESERVE (release the hold) + CONSUMPTION (remove the
+ *              physical unit) so the buckets stay exact.
+ *   REJECTED   the approver declined, with a reason the bench can read.
+ *
+ * Every stock effect goes through InventoryService.applyMovement (ref_type
+ * JOB, ref_id = the job) inside ONE transaction with the job_part row, so a
+ * line and its stock effect commit or roll back together. Access is gated
+ * through the parent job's company/branch/technician scope
+ * (JobsService.loadAccessibleJob).
  */
 @Injectable()
 export class JobPartsService {
@@ -122,6 +170,7 @@ export class JobPartsService {
     private readonly prisma: PrismaService,
     private readonly jobs: JobsService,
     private readonly inventory: InventoryService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   /** GET /jobs/{id}/parts — the job's committed parts (reserved + consumed). */
@@ -135,8 +184,15 @@ export class JobPartsService {
     return lines.map(toWire);
   }
 
-  /** POST /jobs/{id}/parts — commit a part, RESERVING branch stock. */
-  async add(
+  /**
+   * POST /jobs/{id}/parts — the technician ASKS for a part.
+   *
+   * Deliberately reserves nothing. Availability is reported back so the bench
+   * knows whether to expect a quick hand-over or a wait, but the stock is not
+   * touched until an approver says yes — otherwise an unapproved request would
+   * lock a unit another job could have used.
+   */
+  async request(
     jobId: string,
     input: AddInput,
     user: AuthUser,
@@ -153,31 +209,19 @@ export class JobPartsService {
     const isWarranty = input.is_warranty ?? job.warrantyStatus === 'IW';
 
     // SCMS proposal Module 3, step 3: the picking ticket needs the physical
-    // bin. Snapshotted at reservation so a ticket printed today still reads
-    // true if the shelf is re-labelled next week.
+    // bin. Snapshotted here so a ticket printed later still reads true if the
+    // shelf is re-labelled in the meantime.
     const stock = await this.prisma.inventory.findFirst({
       where: { branchId: job.branchId, partId: part.id },
       select: { binLocation: true },
     });
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      // RESERVE first — this validates availability and throws 422 if the
-      // reservation would push available below zero (nothing else runs then).
-      await this.inventory.applyMovement(
-        {
-          companyId: user.companyId,
-          branchId: job.branchId,
-          partId: part.id,
-          type: 'RESERVE',
-          qty: input.qty,
-          refType: 'JOB',
-          refId: job.id,
-          reason: `Reserved for job ${job.jobNo}`,
-          movedById: user.userId,
-        },
-        tx,
-      );
+    // Stamped from application time, never the column default: the database
+    // host clock runs behind the app, and a request that claims to predate the
+    // job would corrupt every queue sorted by age.
+    const now = new Date();
 
+    const created = await this.prisma.$transaction(async (tx) => {
       return tx.jobPart.create({
         data: {
           companyId: user.companyId,
@@ -187,11 +231,14 @@ export class JobPartsService {
           unitSellPrice,
           currency: unitSellPrice !== null ? 'TZS' : null,
           isWarranty,
-          status: 'RESERVED',
+          status: 'REQUESTED',
+          requestedAt: now,
+          requestedById: user.userId,
+          requestNote: input.request_note?.trim() || null,
           pickBinLocation: stock?.binLocation ?? null,
           // FROZEN on the line, deliberately: re-classifying the catalogue
           // later must not retroactively block — or newly unblock — a job
-          // already in flight. What was true when the part was committed is
+          // already in flight. What was true when the part was asked for is
           // what the interlock enforces.
           coreRequired: part.requiresCoreReturn,
           createdById: user.userId,
@@ -201,10 +248,291 @@ export class JobPartsService {
       });
     });
 
+    // No approval is raised here on purpose: the parts clerk vets the request
+    // against the shelf first and decides what actually reaches a manager
+    // (see `raiseIssueRequest`). Putting every bench request straight into an
+    // approver's queue would bury real decisions under wrong-part typos.
     return toWire(created);
   }
 
-  /** DELETE /jobs/{id}/parts/{lineId} — release a RESERVED line (UNRESERVE). */
+  /**
+   * POST /jobs/{id}/parts/{lineId}/issue-request — the parts clerk picks up a
+   * bench request and puts it in front of an approver.
+   *
+   * This is where the `approvals` row is raised, so the approver's queue only
+   * ever contains requests stores has already looked at. The clerk is also the
+   * first person positioned to catch a wrong part number or something that
+   * simply is not stocked — those get bounced back with `declineRequest`
+   * rather than wasting a manager's decision.
+   */
+  async raiseIssueRequest(
+    jobId: string,
+    lineId: string,
+    user: AuthUser,
+  ): Promise<JobPartWire> {
+    const job = await this.jobs.loadAccessibleJob(jobId, user);
+    const line = await this.loadLineInStatus(
+      jobId,
+      lineId,
+      ['REQUESTED'],
+      'Only a line the bench has requested can be raised for approval',
+    );
+    const part = await this.resolvePart(line.partId);
+    const now = new Date();
+
+    const approval = await this.approvals.request('PARTS_REQUEST', {
+      branchId: job.branchId,
+      refType: 'JobPart',
+      refId: line.id,
+      payload: {
+        job_id: job.id,
+        job_no: job.jobNo,
+        part_id: part.id,
+        part_number: part.partNumber,
+        description: part.description,
+        qty: line.qty,
+        is_warranty: line.isWarranty,
+        requested_by: line.requestedById,
+        request_note: line.requestNote,
+      },
+      reason:
+        line.requestNote?.trim() ||
+        `Parts issue request for job ${job.jobNo}: ${line.qty} × ${part.partNumber}`,
+    });
+
+    const updated = await this.prisma.jobPart.update({
+      where: { id: line.id },
+      data: {
+        status: 'ISSUE_REQUESTED',
+        issueRequestedAt: now,
+        issueRequestedById: user.userId,
+        approvalId: approval.id,
+        updatedById: user.userId,
+      },
+      include: { part: true },
+    });
+    return toWire(updated);
+  }
+
+  /**
+   * POST /jobs/{id}/parts/{lineId}/decline — the parts clerk bounces a bench
+   * request back without troubling an approver (wrong part, not stocked,
+   * duplicate of a line already open).
+   */
+  async declineRequest(
+    jobId: string,
+    lineId: string,
+    reason: string,
+    user: AuthUser,
+  ): Promise<JobPartWire> {
+    await this.jobs.loadAccessibleJob(jobId, user);
+    const line = await this.loadLineInStatus(
+      jobId,
+      lineId,
+      ['REQUESTED'],
+      'Only a line the bench has requested can be declined by stores',
+    );
+    if (!reason?.trim()) {
+      throw new BadRequestException('A reason is required to decline');
+    }
+
+    const updated = await this.prisma.jobPart.update({
+      where: { id: line.id },
+      data: {
+        status: 'REJECTED',
+        rejectedAt: new Date(),
+        rejectedById: user.userId,
+        rejectionReason: reason.trim(),
+        updatedById: user.userId,
+      },
+      include: { part: true },
+    });
+    return toWire(updated);
+  }
+
+  /**
+   * POST /jobs/{id}/parts/{lineId}/approve — the approver says yes, and the
+   * stock is reserved in the same breath.
+   *
+   * Decided HERE rather than through the generic approvals inbox because the
+   * reservation can fail: between the request and the decision the last unit
+   * may have gone to another job. The approver has to see that, so it must be
+   * a failable call, not a notification. The generic inbox still lists the
+   * request — it just refuses to decide it (see ApprovalsService.decide).
+   */
+  async approve(
+    jobId: string,
+    lineId: string,
+    user: AuthUser,
+  ): Promise<JobPartWire> {
+    const job = await this.jobs.loadAccessibleJob(jobId, user);
+    const line = await this.loadLineInStatus(
+      jobId,
+      lineId,
+      ['ISSUE_REQUESTED'],
+      'Only a line stores has raised for approval can be approved',
+    );
+    const now = new Date();
+
+    // The decision first: it validates 'approval.decide', branch access and
+    // the double-decide race. If the stock then turns out to be gone, the
+    // whole thing rolls back and the request stays PENDING for a retry once
+    // stock arrives.
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await this.inventory.applyMovement(
+        {
+          companyId: user.companyId,
+          branchId: job.branchId,
+          partId: line.partId,
+          type: 'RESERVE',
+          qty: line.qty,
+          refType: 'JOB',
+          refId: job.id,
+          reason: `Approved for job ${job.jobNo}`,
+          movedById: user.userId,
+        },
+        tx,
+      );
+      return tx.jobPart.update({
+        where: { id: line.id },
+        data: {
+          status: 'RESERVED',
+          reservedAt: now,
+          approvedAt: now,
+          approvedById: user.userId,
+          updatedById: user.userId,
+        },
+        include: { part: true },
+      });
+    });
+
+    if (line.approvalId) {
+      await this.approvals.decide(
+        line.approvalId,
+        'APPROVED',
+        user,
+        undefined,
+        {
+          fromOwningService: true,
+        },
+      );
+    }
+    return toWire(updated);
+  }
+
+  /**
+   * POST /jobs/{id}/parts/{lineId}/reject — decline the request, with a reason
+   * the bench can act on. Nothing to release: a REQUESTED line never held any
+   * stock.
+   */
+  async reject(
+    jobId: string,
+    lineId: string,
+    reason: string,
+    user: AuthUser,
+  ): Promise<JobPartWire> {
+    await this.jobs.loadAccessibleJob(jobId, user);
+    const line = await this.loadLineInStatus(
+      jobId,
+      lineId,
+      ['ISSUE_REQUESTED'],
+      'Only a line stores has raised for approval can be rejected',
+    );
+    if (!reason?.trim()) {
+      throw new BadRequestException('A reason is required to reject');
+    }
+    const now = new Date();
+
+    const updated = await this.prisma.jobPart.update({
+      where: { id: line.id },
+      data: {
+        status: 'REJECTED',
+        rejectedAt: now,
+        rejectedById: user.userId,
+        rejectionReason: reason.trim(),
+        updatedById: user.userId,
+      },
+      include: { part: true },
+    });
+
+    if (line.approvalId) {
+      await this.approvals.decide(
+        line.approvalId,
+        'REJECTED',
+        user,
+        reason.trim(),
+        { fromOwningService: true },
+      );
+    }
+    return toWire(updated);
+  }
+
+  /**
+   * POST /jobs/{id}/parts/{lineId}/acknowledge — the technician confirms the
+   * part is physically in their hands.
+   *
+   * Separate from `issue` on purpose: issuing is what STORES asserts, and a
+   * hand-over recorded by the person giving the part away is not evidence the
+   * person receiving it got it. This is the other half, and it is what the
+   * `parts_received` guard waits for before the job may start repair.
+   */
+  async acknowledge(
+    jobId: string,
+    lineId: string,
+    user: AuthUser,
+  ): Promise<JobPartWire> {
+    await this.jobs.loadAccessibleJob(jobId, user);
+    const line = await this.prisma.jobPart.findFirst({
+      where: { id: lineId, jobId },
+    });
+    if (!line) {
+      throw new NotFoundException('Job part line not found');
+    }
+    if (line.status !== 'ISSUED') {
+      throw new ConflictException(
+        `Only an ISSUED line can be acknowledged (status=${line.status})`,
+      );
+    }
+
+    const updated = await this.prisma.jobPart.update({
+      where: { id: line.id },
+      data: {
+        status: 'ACKNOWLEDGED',
+        acknowledgedAt: new Date(),
+        acknowledgedById: user.userId,
+        updatedById: user.userId,
+      },
+      include: { part: true },
+    });
+    return toWire(updated);
+  }
+
+  /** Load a line and assert it is in one of the states this step accepts. */
+  private async loadLineInStatus(
+    jobId: string,
+    lineId: string,
+    allowed: JobPartStatus[],
+    message: string,
+  ) {
+    const line = await this.prisma.jobPart.findFirst({
+      where: { id: lineId, jobId },
+    });
+    if (!line) {
+      throw new NotFoundException('Job part line not found');
+    }
+    if (!allowed.includes(line.status)) {
+      throw new ConflictException(`${message} (status=${line.status})`);
+    }
+    return line;
+  }
+
+  /**
+   * DELETE /jobs/{id}/parts/{lineId} — withdraw a request, or release a
+   * RESERVED line (UNRESERVE).
+   *
+   * A REQUESTED line never held stock, so withdrawing it is just a deletion
+   * plus cancelling the pending approval — no movement to reverse.
+   */
   async remove(
     jobId: string,
     lineId: string,
@@ -212,6 +540,24 @@ export class JobPartsService {
   ): Promise<{ removed: true }> {
     const job = await this.jobs.loadAccessibleJob(jobId, user);
     this.assertMutable(job.state.isTerminal);
+
+    const pending = await this.prisma.jobPart.findFirst({
+      where: { id: lineId, jobId },
+    });
+    if (pending?.status === 'REQUESTED') {
+      await this.prisma.jobPart.delete({ where: { id: pending.id } });
+      if (pending.approvalId) {
+        await this.approvals.decide(
+          pending.approvalId,
+          'REJECTED',
+          user,
+          'Request withdrawn by the bench',
+          { fromOwningService: true },
+        );
+      }
+      return { removed: true };
+    }
+
     const line = await this.loadReservedLine(jobId, lineId);
 
     await this.prisma.$transaction(async (tx) => {
@@ -259,17 +605,18 @@ export class JobPartsService {
     const job = await this.jobs.loadAccessibleJob(jobId, user);
     this.assertMutable(job.state.isTerminal);
 
-    // ISSUED lines are included: a core-exchange part picked from its bin and
-    // handed to the technician is exactly a part about to be fitted, and
+    // ISSUED and ACKNOWLEDGED lines are included: a part picked from its bin,
+    // handed over and signed for is exactly a part about to be fitted, and
     // "consume everything on completion" that skipped them would leave the
-    // stock ledger permanently wrong.
+    // stock ledger permanently wrong. REQUESTED lines are NOT included — they
+    // hold no stock, so there is nothing to consume.
     const reserved = await this.prisma.jobPart.findMany({
-      where: { jobId, status: { in: ['RESERVED', 'ISSUED'] } },
+      where: { jobId, status: { in: ['RESERVED', 'ISSUED', 'ACKNOWLEDGED'] } },
       include: { part: true },
     });
     if (reserved.length === 0) {
       throw new UnprocessableEntityException(
-        'This job has no reserved parts to consume',
+        'This job has no reserved parts to consume — a request must be approved before it can be fitted',
       );
     }
 
@@ -695,9 +1042,16 @@ export class JobPartsService {
       include: { part: true },
     });
     if (!line) throw new NotFoundException('Job part not found');
-    if (line.status !== 'RESERVED' && line.status !== 'ISSUED') {
+    // ACKNOWLEDGED is the normal pre-fitting state now that stores hands over
+    // explicitly; RESERVED and ISSUED remain open because a cheap consumable
+    // can be fitted without waiting on the full hand-over ceremony. REQUESTED
+    // is NOT open: nothing has been reserved, so there is nothing to consume.
+    const open: JobPartStatus[] = ['RESERVED', 'ISSUED', 'ACKNOWLEDGED'];
+    if (!open.includes(line.status)) {
       throw new ConflictException(
-        `This part is already ${line.status.toLowerCase()} and cannot be changed`,
+        line.status === 'REQUESTED'
+          ? 'This part has not been approved yet — it holds no stock and cannot be fitted'
+          : `This part is already ${line.status.toLowerCase()} and cannot be changed`,
       );
     }
     return line;
@@ -714,7 +1068,7 @@ export class JobPartsService {
     lineId: string,
   ): Promise<JobPartWithPart> {
     const line = await this.loadOpenLine(jobId, lineId);
-    if (line.status === 'ISSUED') {
+    if (line.status === 'ISSUED' || line.status === 'ACKNOWLEDGED') {
       throw new ConflictException(
         'This part has already been issued to the bench — it must be returned to the store before the line can be removed',
       );
@@ -724,6 +1078,8 @@ export class JobPartsService {
 
   private async resolvePart(partId: string): Promise<{
     id: string;
+    partNumber: string;
+    description: string;
     sellPriceTzs: bigint | null;
     requiresCoreReturn: boolean;
     isSerialized: boolean;
@@ -732,6 +1088,10 @@ export class JobPartsService {
       where: { id: partId, deletedAt: null, active: true },
       select: {
         id: true,
+        // Snapshotted into the approval payload so the approver reads a part
+        // number, not a UUID, without a second query.
+        partNumber: true,
+        description: true,
         sellPriceTzs: true,
         requiresCoreReturn: true,
         isSerialized: true,
@@ -761,8 +1121,26 @@ function toWire(line: JobPartWithPart): JobPartWire {
     currency: line.currency,
     is_warranty: line.isWarranty,
     status: line.status,
-    reserved_at: line.reservedAt.toISOString(),
+    reserved_at: line.reservedAt?.toISOString() ?? null,
     consumed_at: line.consumedAt?.toISOString() ?? null,
+    requested_at: line.requestedAt.toISOString(),
+    requested_by: line.requestedById,
+    request_note: line.requestNote,
+    issue_requested_at: line.issueRequestedAt?.toISOString() ?? null,
+    issue_requested_by: line.issueRequestedById,
+    approval_id: line.approvalId,
+    approved_at: line.approvedAt?.toISOString() ?? null,
+    approved_by: line.approvedById,
+    rejected_at: line.rejectedAt?.toISOString() ?? null,
+    rejected_by: line.rejectedById,
+    rejection_reason: line.rejectionReason,
+    acknowledged_at: line.acknowledgedAt?.toISOString() ?? null,
+    acknowledged_by: line.acknowledgedById,
+    // What the bench is still waiting on: asked for but not yet in hand.
+    // Mirrors the `parts_received` guard exactly.
+    awaiting_receipt: (
+      ['REQUESTED', 'ISSUE_REQUESTED', 'RESERVED', 'ISSUED'] as JobPartStatus[]
+    ).includes(line.status),
     pick_bin_location: line.pickBinLocation,
     issued_at: line.issuedAt?.toISOString() ?? null,
     issued_by: line.issuedById,

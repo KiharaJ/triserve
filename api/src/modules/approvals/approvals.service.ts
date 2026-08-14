@@ -74,6 +74,20 @@ export interface ApprovalRequirement {
 const DEFAULT_PAGE_SIZE = 20;
 
 /**
+ * Approval types that must NOT be decided through the generic inbox.
+ *
+ * The framework's contract is that deciding an approval has no side effects —
+ * the requester retries the action carrying the approval id. That breaks down
+ * when approving IS the action and the action can fail: approving a parts
+ * request reserves stock, which 422s if the part has gone. Those types own a
+ * dedicated endpoint that decides and acts in one transaction, so the approver
+ * sees the failure. Listing is unaffected; only `decide` is refused here.
+ */
+const DEDICATED_DECISION_TYPES: ReadonlySet<ApprovalType> = new Set([
+  'PARTS_REQUEST',
+]);
+
+/**
  * PURE threshold check (unit-testable without a DB): does `rule` gate an
  * action with the given context? Thresholds are OR-ed and INCLUSIVE
  * (amount/percent >= threshold ⇒ approval required). No rule or a disabled
@@ -192,14 +206,27 @@ export class ApprovalsService {
     decision: 'APPROVED' | 'REJECTED',
     decider: AuthUser,
     reason?: string,
+    /**
+     * Set by the service that OWNS a dedicated-decision type, calling from the
+     * endpoint that performs the side effect. Everyone else — the generic
+     * inbox included — leaves it unset and is refused below.
+     */
+    options?: { fromOwningService?: boolean },
   ): Promise<ApprovalEntry> {
-    const canDecide = await this.resolver.has(
-      decider.companyId,
-      decider.role,
-      'approval.decide',
-    );
-    if (!canDecide) {
-      throw new ForbiddenException('Missing permission(s): approval.decide');
+    // The owning service reaches here having already enforced its OWN, more
+    // specific permission at its endpoint ('job.parts.approve' for a parts
+    // request). Re-checking 'approval.decide' would silently require parts
+    // approvers to also be refund approvers, which is the coupling the
+    // dedicated permission exists to avoid.
+    if (!options?.fromOwningService) {
+      const canDecide = await this.resolver.has(
+        decider.companyId,
+        decider.role,
+        'approval.decide',
+      );
+      if (!canDecide) {
+        throw new ForbiddenException('Missing permission(s): approval.decide');
+      }
     }
     if (decision === 'REJECTED' && !reason?.trim()) {
       throw new BadRequestException('A reason is required to reject');
@@ -216,6 +243,22 @@ export class ApprovalsService {
     if (before.status !== 'PENDING') {
       throw new ConflictException(
         `Approval already decided (status=${before.status})`,
+      );
+    }
+
+    // Types whose approval has a SIDE EFFECT THAT CAN FAIL are decided through
+    // their own endpoint, which performs the effect in the same transaction
+    // and can report the failure. Approving a parts request reserves stock,
+    // and the last unit may have gone since the request was raised — deciding
+    // it here would leave the approval APPROVED and the line unreserved, with
+    // nobody told. The inbox still LISTS these, so approvers keep one place to
+    // see everything pending; it just sends them to the right button.
+    if (
+      !options?.fromOwningService &&
+      DEDICATED_DECISION_TYPES.has(before.type)
+    ) {
+      throw new BadRequestException(
+        `A ${before.type} is decided from the request itself rather than the approvals inbox — open the job's parts list to approve or reject it`,
       );
     }
     // Branch-scoped deciders may only decide their own branch's approvals.

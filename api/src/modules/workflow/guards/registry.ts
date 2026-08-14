@@ -117,7 +117,11 @@ const intakeEvidenceComplete: WorkflowGuard = async (ctx) => {
 
   // One query for both attachment facts rather than two round trips.
   const files = await prisma.attachment.findMany({
-    where: { ownerType: 'JOB', ownerId: job.id, kind: { in: ['PHOTO_BEFORE', 'SIGNATURE'] } },
+    where: {
+      ownerType: 'JOB',
+      ownerId: job.id,
+      kind: { in: ['PHOTO_BEFORE', 'SIGNATURE'] },
+    },
     select: { kind: true },
   });
   if (!files.some((f) => f.kind === 'PHOTO_BEFORE')) {
@@ -288,7 +292,11 @@ const qcChecklistPassed: WorkflowGuard = async (ctx) => {
 
   if (needsLogFile) {
     const logs = await prisma.attachment.count({
-      where: { ownerType: 'JOB', ownerId: job.id, kind: { in: ['DOC', 'PHOTO_AFTER'] } },
+      where: {
+        ownerType: 'JOB',
+        ownerId: job.id,
+        kind: { in: ['DOC', 'PHOTO_AFTER'] },
+      },
     });
     if (logs === 0) {
       outstanding.push('the raw calibration log file (upload it to the job)');
@@ -315,6 +323,90 @@ const qcFailureLogged: WorkflowGuard = (ctx) => {
   if (job.qcFailureReason?.trim()) return ALLOW;
   return deny(
     'Record the specific failure reason before rejecting the unit back to the bench.',
+  );
+};
+
+// ---------------------------------------------------------------------------
+// The bench parts request loop — the two ends of the AWAITING_PARTS hold
+// ---------------------------------------------------------------------------
+
+/**
+ * → AWAITING_PARTS: don't park a job in a parts hold with no parts on order.
+ *
+ * AWAITING_PARTS pauses the SLA clock, so moving a job into it is a
+ * commercially meaningful act, not a label. Requiring at least one live
+ * request makes the hold mean what it says: somebody has actually asked for
+ * something and the job is waiting on it. Without this a job could sit in a
+ * paused state indefinitely with nothing on order and nobody accountable.
+ *
+ * A REJECTED or withdrawn request does not count — if the approver said no,
+ * the job is not waiting for parts, it needs a new decision.
+ */
+const partsRequested: WorkflowGuard = async (ctx) => {
+  const { job, prisma } = ctx;
+  if (!job) return deny('Job context unavailable');
+
+  const live = await prisma.jobPart.count({
+    where: {
+      jobId: job.id,
+      status: {
+        in: [
+          'REQUESTED',
+          'ISSUE_REQUESTED',
+          'RESERVED',
+          'ISSUED',
+          'ACKNOWLEDGED',
+        ],
+      },
+    },
+  });
+  if (live > 0) return ALLOW;
+
+  return deny(
+    'No parts have been requested for this job — raise the parts request first, then move it to Awaiting Parts.',
+  );
+};
+
+/**
+ * AWAITING_PARTS → IN_REPAIR: the bench must actually HAVE the parts.
+ *
+ * "Issued" is what stores asserts; ACKNOWLEDGED is the technician confirming
+ * it arrived. Repair may not start while any requested line is still waiting
+ * on a decision, on a picker, or on that confirmation — otherwise a job walks
+ * into repair against parts nobody has handed over, and the shortfall surfaces
+ * only when the technician reaches for a part that is not there.
+ *
+ * REJECTED lines are resolved, not outstanding: the approver said no and the
+ * bench proceeded anyway, which is their call to make.
+ */
+const partsReceived: WorkflowGuard = async (ctx) => {
+  const { job, prisma } = ctx;
+  if (!job) return deny('Job context unavailable');
+
+  const pending = await prisma.jobPart.findMany({
+    where: {
+      jobId: job.id,
+      status: { in: ['REQUESTED', 'ISSUE_REQUESTED', 'RESERVED', 'ISSUED'] },
+    },
+    select: {
+      status: true,
+      part: { select: { partNumber: true, description: true } },
+    },
+    take: 10,
+  });
+  if (pending.length === 0) return ALLOW;
+
+  const waiting: Record<string, string> = {
+    REQUESTED: 'awaiting stores',
+    ISSUE_REQUESTED: 'awaiting approval',
+    RESERVED: 'approved, not yet picked',
+    ISSUED: 'issued, not yet acknowledged',
+  };
+  const list = pending
+    .map((l) => `${l.part.partNumber} (${waiting[l.status]})`)
+    .join(', ');
+  return deny(
+    `Parts are still outstanding — the bench must have them in hand before repair starts: ${list}.`,
   );
 };
 
@@ -456,7 +548,12 @@ const berNotBlocking: WorkflowGuard = async (ctx) => {
   const ber = await prisma.berAssessment.findFirst({
     where: { jobId: job.id, status: { in: ['FLAGGED', 'CERTIFIED'] } },
     orderBy: { flaggedAt: 'desc' },
-    select: { status: true, outcome: true, ratioPercent: true, thresholdPercent: true },
+    select: {
+      status: true,
+      outcome: true,
+      ratioPercent: true,
+      thresholdPercent: true,
+    },
   });
   if (!ber) return ALLOW;
 
@@ -531,6 +628,9 @@ export const WORKFLOW_GUARDS: Readonly<Record<string, WorkflowGuard>> = {
   qc_failure_logged: qcFailureLogged,
   // Proposal Module 3
   core_returns_complete: coreReturnsComplete,
+  // The bench parts request loop — the two ends of the AWAITING_PARTS hold.
+  parts_requested: partsRequested,
+  parts_received: partsReceived,
   // Proposal Module 4
   ber_not_blocking: berNotBlocking,
   // Proposal Module 6

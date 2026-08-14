@@ -12,9 +12,12 @@ import {
 } from 'class-validator';
 
 /**
- * POST /jobs/{id}/parts — commit a part to a job, RESERVING branch stock.
- * `unit_sell_price` (TZS minor-unit string) defaults to the part's catalogue
- * price; `is_warranty` defaults from the job's warranty status.
+ * POST /jobs/{id}/parts — the technician REQUESTS a part for a job.
+ *
+ * Holds no stock: the request goes to an approver, and approving is what fires
+ * the reservation. `unit_sell_price` (TZS minor-unit string) defaults to the
+ * part's catalogue price; `is_warranty` defaults from the job's warranty
+ * status.
  */
 export class AddJobPartDto {
   @IsUUID()
@@ -34,6 +37,26 @@ export class AddJobPartDto {
   @IsOptional()
   @IsBoolean()
   is_warranty?: boolean;
+
+  /** Why the bench needs it — the approver reads this when deciding. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  request_note?: string;
+}
+
+/**
+ * POST /jobs/{id}/parts/{lineId}/reject — declining a bench request.
+ *
+ * The reason is MANDATORY: a technician told only "no" cannot act on it, and
+ * the whole point of routing the request through an approver is that the
+ * answer carries information back to the bench.
+ */
+export class RejectJobPartDto {
+  @IsString()
+  @MinLength(3)
+  @MaxLength(500)
+  reason!: string;
 }
 
 /**

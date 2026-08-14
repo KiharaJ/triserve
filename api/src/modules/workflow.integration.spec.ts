@@ -2,7 +2,8 @@
  * Integration tests (Task 1.2, DESIGN.md §4.10/§5/E7) for the configurable
  * workflow engine against the REAL MySQL database over HTTP + the service:
  *   - GET /workflow/graph returns the seeded default lifecycle (11 states
- *     ordered by sort_order, 21 edges incl. step-back reverse edges) to ANY
+ *     ordered by sort_order, 22 edges incl. step-back reverse edges and
+ *     the DIAGNOSING→IN_REPAIR skip) to ANY
  *     authenticated user;
  *   - canTransition: legal move allowed; RECEIVED→CLOSED rejected as
  *     illegal (no edge); a TECHNICIAN cannot take the front-desk-only
@@ -281,7 +282,7 @@ describe('GET /workflow/graph (§4.10 — board rendering)', () => {
     const body = res.body as GraphWire;
 
     expect(body.states.map((s) => s.code)).toEqual(SEEDED_STATE_CODES); // sort_order
-    expect(body.transitions).toHaveLength(21);
+    expect(body.transitions).toHaveLength(22);
 
     const received = body.states.find((s) => s.code === 'RECEIVED');
     expect(received).toMatchObject({ is_initial: true, is_terminal: false });
@@ -890,7 +891,7 @@ describe('POST /workflow/states + /workflow/transitions (admin config)', () => {
 });
 
 describe('seed stays pristine', () => {
-  it('the seeded default workflow is intact (11 states / 21 edges) and only test fixtures were added', async () => {
+  it('the seeded default workflow is intact (11 states / 22 edges) and only test fixtures were added', async () => {
     const seededStates = await raw.workflowState.count({
       where: {
         companyId,
@@ -906,7 +907,7 @@ describe('seed stays pristine', () => {
       },
     });
     expect(seededStates).toBe(11);
-    expect(seededTransitions).toBe(21);
+    expect(seededTransitions).toBe(22);
 
     // Every extra row this suite created is test-prefixed (removed in afterAll).
     const extraStates = await raw.workflowState.count({

@@ -64,6 +64,12 @@ enum ApprovalType {
   /// Proposal Module 5: a commercial write-off above the actor's role ceiling
   /// (see `role_limits`) — the Centre Manager is the only approver.
   WRITE_OFF
+  /// A technician asking for a part off the shelf. DECIDED THROUGH ITS OWN
+  /// ENDPOINT (POST /jobs/{id}/parts/{lineId}/approve|reject), not the generic
+  /// inbox: approving is what reserves the stock, and that can fail if the
+  /// part has gone since the request. The generic inbox still LISTS it so
+  /// approvers have one place to see everything pending.
+  PARTS_REQUEST
 }
 
 enum ApprovalStatus {
@@ -279,24 +285,24 @@ model Company {
   roles                 Role[]
 
   // -- SCMS proposal modules ------------------------------------------------
-  symptomNodes          SymptomNode[]           // M1 symptom tree
-  conditionZones        ConditionZone[]         // M1 condition-map hotspots
-  jobConditionMarks     JobConditionMark[]      // M1 recorded damage
-  userSkills            UserSkill[]             // M2 skill matrix
-  jobStateEvents        JobStateEvent[]         // M2 SLA/KPI clocks
-  qcChecklistItems      QcChecklistItem[]       // M2 calibration templates
-  jobQcChecks           JobQcCheck[]            // M2 calibration results
-  berAssessments        BerAssessment[]         // M4 BER
-  swapUnits             SwapUnit[]              // M4 swap buffer stock
-  deviceSwaps           DeviceSwap[]            // M4 replacements
-  roleLimits            RoleLimit[]             // M5 financial ceilings
-  collectionOtps        JobCollectionOtp[]      // M6 handover PINs
-  consignments          Consignment[]           // M6 totes/manifests
+  symptomNodes          SymptomNode[] // M1 symptom tree
+  conditionZones        ConditionZone[] // M1 condition-map hotspots
+  jobConditionMarks     JobConditionMark[] // M1 recorded damage
+  userSkills            UserSkill[] // M2 skill matrix
+  jobStateEvents        JobStateEvent[] // M2 SLA/KPI clocks
+  qcChecklistItems      QcChecklistItem[] // M2 calibration templates
+  jobQcChecks           JobQcCheck[] // M2 calibration results
+  berAssessments        BerAssessment[] // M4 BER
+  swapUnits             SwapUnit[] // M4 swap buffer stock
+  deviceSwaps           DeviceSwap[] // M4 replacements
+  roleLimits            RoleLimit[] // M5 financial ceilings
+  collectionOtps        JobCollectionOtp[] // M6 handover PINs
+  consignments          Consignment[] // M6 totes/manifests
   consignmentJobs       ConsignmentJob[]
   consignmentScans      ConsignmentScan[]
-  csatSurveys           CsatSurvey[]            // M6 CSAT
-  notificationTemplates NotificationTemplate[]  // M7 templates
-  notifications         Notification[]          // M7 outbox + comms log
+  csatSurveys           CsatSurvey[] // M6 CSAT
+  notificationTemplates NotificationTemplate[] // M7 templates
+  notifications         Notification[] // M7 outbox + comms log
 
   @@map("companies")
 }
@@ -349,15 +355,15 @@ model Branch {
   warrantyRegistrations WarrantyRegistration[]
 
   // -- SCMS proposal modules ------------------------------------------------
-  jobStateEvents        JobStateEvent[]    // M2 clocks (branch = job's branch)
-  berAssessments        BerAssessment[]    // M4
-  swapUnits             SwapUnit[]         // M4 swap buffer held here
-  deviceSwaps           DeviceSwap[]       // M4
-  collectionOtps        JobCollectionOtp[] // M6
-  consignmentsOut       Consignment[]      @relation("ConsignmentFromBranch")
-  consignmentsIn        Consignment[]      @relation("ConsignmentToBranch")
-  csatSurveys           CsatSurvey[]       // M6
-  notifications         Notification[]     // M7
+  jobStateEvents  JobStateEvent[] // M2 clocks (branch = job's branch)
+  berAssessments  BerAssessment[] // M4
+  swapUnits       SwapUnit[] // M4 swap buffer held here
+  deviceSwaps     DeviceSwap[] // M4
+  collectionOtps  JobCollectionOtp[] // M6
+  consignmentsOut Consignment[]      @relation("ConsignmentFromBranch")
+  consignmentsIn  Consignment[]      @relation("ConsignmentToBranch")
+  csatSurveys     CsatSurvey[] // M6
+  notifications   Notification[] // M7
 
   @@unique([companyId, code])
   @@map("branches")
@@ -490,46 +496,51 @@ model User {
 
   // -- SCMS proposal modules ------------------------------------------------
   // M1 — intake evidence + the symptom/condition config behind it.
-  conditionCapturedJobs    Job[]                @relation("JobConditionCapturedBy")
-  createdSymptomNodes      SymptomNode[]        @relation("SymptomNodeCreatedBy")
-  updatedSymptomNodes      SymptomNode[]        @relation("SymptomNodeUpdatedBy")
-  createdConditionZones    ConditionZone[]      @relation("ConditionZoneCreatedBy")
-  updatedConditionZones    ConditionZone[]      @relation("ConditionZoneUpdatedBy")
-  createdConditionMarks    JobConditionMark[]   @relation("JobConditionMarkCreatedBy")
-  updatedConditionMarks    JobConditionMark[]   @relation("JobConditionMarkUpdatedBy")
+  conditionCapturedJobs        Job[]                  @relation("JobConditionCapturedBy")
+  createdSymptomNodes          SymptomNode[]          @relation("SymptomNodeCreatedBy")
+  updatedSymptomNodes          SymptomNode[]          @relation("SymptomNodeUpdatedBy")
+  createdConditionZones        ConditionZone[]        @relation("ConditionZoneCreatedBy")
+  updatedConditionZones        ConditionZone[]        @relation("ConditionZoneUpdatedBy")
+  createdConditionMarks        JobConditionMark[]     @relation("JobConditionMarkCreatedBy")
+  updatedConditionMarks        JobConditionMark[]     @relation("JobConditionMarkUpdatedBy")
   // M2 — skills + QC authority.
-  skills                   UserSkill[]          @relation("UserSkillUser")
-  createdUserSkills        UserSkill[]          @relation("UserSkillCreatedBy")
-  updatedUserSkills        UserSkill[]          @relation("UserSkillUpdatedBy")
-  createdQcChecklistItems  QcChecklistItem[]    @relation("QcChecklistItemCreatedBy")
-  updatedQcChecklistItems  QcChecklistItem[]    @relation("QcChecklistItemUpdatedBy")
-  recordedQcChecks         JobQcCheck[]         @relation("JobQcCheckRecordedBy")
-  qcApprovedJobs           Job[]                @relation("JobQcApprovedBy")
+  skills                       UserSkill[]            @relation("UserSkillUser")
+  createdUserSkills            UserSkill[]            @relation("UserSkillCreatedBy")
+  updatedUserSkills            UserSkill[]            @relation("UserSkillUpdatedBy")
+  createdQcChecklistItems      QcChecklistItem[]      @relation("QcChecklistItemCreatedBy")
+  updatedQcChecklistItems      QcChecklistItem[]      @relation("QcChecklistItemUpdatedBy")
+  recordedQcChecks             JobQcCheck[]           @relation("JobQcCheckRecordedBy")
+  qcApprovedJobs               Job[]                  @relation("JobQcApprovedBy")
   // M3 — core exchange actors.
-  issuedJobParts           JobPart[]            @relation("JobPartIssuedBy")
-  coreReturnedJobParts     JobPart[]            @relation("JobPartCoreReturnedBy")
+  issuedJobParts               JobPart[]              @relation("JobPartIssuedBy")
+  coreReturnedJobParts         JobPart[]              @relation("JobPartCoreReturnedBy")
+  requestedJobParts            JobPart[]              @relation("JobPartRequestedBy")
+  issueRequestedJobParts       JobPart[]              @relation("JobPartIssueRequestedBy")
+  approvedJobParts             JobPart[]              @relation("JobPartApprovedBy")
+  rejectedJobParts             JobPart[]              @relation("JobPartRejectedBy")
+  acknowledgedJobParts         JobPart[]              @relation("JobPartAcknowledgedBy")
   // M4 — BER + swaps.
-  reviewedBerAssessments   BerAssessment[]      @relation("BerAssessmentReviewedBy")
-  createdBerAssessments    BerAssessment[]      @relation("BerAssessmentCreatedBy")
-  updatedBerAssessments    BerAssessment[]      @relation("BerAssessmentUpdatedBy")
-  issuedSwapUnits          SwapUnit[]           @relation("SwapUnitIssuedBy")
-  createdSwapUnits         SwapUnit[]           @relation("SwapUnitCreatedBy")
-  updatedSwapUnits         SwapUnit[]           @relation("SwapUnitUpdatedBy")
-  authorizedDeviceSwaps    DeviceSwap[]         @relation("DeviceSwapAuthorizedBy")
-  createdDeviceSwaps       DeviceSwap[]         @relation("DeviceSwapCreatedBy")
+  reviewedBerAssessments       BerAssessment[]        @relation("BerAssessmentReviewedBy")
+  createdBerAssessments        BerAssessment[]        @relation("BerAssessmentCreatedBy")
+  updatedBerAssessments        BerAssessment[]        @relation("BerAssessmentUpdatedBy")
+  issuedSwapUnits              SwapUnit[]             @relation("SwapUnitIssuedBy")
+  createdSwapUnits             SwapUnit[]             @relation("SwapUnitCreatedBy")
+  updatedSwapUnits             SwapUnit[]             @relation("SwapUnitUpdatedBy")
+  authorizedDeviceSwaps        DeviceSwap[]           @relation("DeviceSwapAuthorizedBy")
+  createdDeviceSwaps           DeviceSwap[]           @relation("DeviceSwapCreatedBy")
   // M5 — role ceilings.
-  createdRoleLimits        RoleLimit[]          @relation("RoleLimitCreatedBy")
-  updatedRoleLimits        RoleLimit[]          @relation("RoleLimitUpdatedBy")
+  createdRoleLimits            RoleLimit[]            @relation("RoleLimitCreatedBy")
+  updatedRoleLimits            RoleLimit[]            @relation("RoleLimitUpdatedBy")
   // M6 — handover + logistics.
-  verifiedCollectionOtps   JobCollectionOtp[]   @relation("JobCollectionOtpVerifiedBy")
-  createdCollectionOtps    JobCollectionOtp[]   @relation("JobCollectionOtpCreatedBy")
-  dispatchedConsignments   Consignment[]        @relation("ConsignmentDispatchedBy")
-  arrivedConsignments      Consignment[]        @relation("ConsignmentArrivedBy")
-  createdConsignments      Consignment[]        @relation("ConsignmentCreatedBy")
-  updatedConsignments      Consignment[]        @relation("ConsignmentUpdatedBy")
-  addedConsignmentJobs     ConsignmentJob[]     @relation("ConsignmentJobAddedBy")
-  checkedInConsignmentJobs ConsignmentJob[]     @relation("ConsignmentJobCheckedInBy")
-  consignmentScans         ConsignmentScan[]    @relation("ConsignmentScanScannedBy")
+  verifiedCollectionOtps       JobCollectionOtp[]     @relation("JobCollectionOtpVerifiedBy")
+  createdCollectionOtps        JobCollectionOtp[]     @relation("JobCollectionOtpCreatedBy")
+  dispatchedConsignments       Consignment[]          @relation("ConsignmentDispatchedBy")
+  arrivedConsignments          Consignment[]          @relation("ConsignmentArrivedBy")
+  createdConsignments          Consignment[]          @relation("ConsignmentCreatedBy")
+  updatedConsignments          Consignment[]          @relation("ConsignmentUpdatedBy")
+  addedConsignmentJobs         ConsignmentJob[]       @relation("ConsignmentJobAddedBy")
+  checkedInConsignmentJobs     ConsignmentJob[]       @relation("ConsignmentJobCheckedInBy")
+  consignmentScans             ConsignmentScan[]      @relation("ConsignmentScanScannedBy")
   // M7 — notification templates.
   createdNotificationTemplates NotificationTemplate[] @relation("NotificationTemplateCreatedBy")
   updatedNotificationTemplates NotificationTemplate[] @relation("NotificationTemplateUpdatedBy")
@@ -1038,14 +1049,14 @@ model WorkflowState {
 
   /// Proposal Module 2: the semantic bucket this state falls in, driving the
   /// CTD / HFP / TAT metrics and the SLA colour bands.
-  stage    WorkflowStage @default(INTAKE)
-  holdKind HoldKind      @default(NONE) @map("hold_kind")
+  stage     WorkflowStage @default(INTAKE)
+  holdKind  HoldKind      @default(NONE) @map("hold_kind")
   /// When true, time spent here does NOT burn the customer-facing SLA (the
   /// proposal's "any pause state halts customer SLA countdowns but runs an
   /// internal secondary tracking clock"). Defaults from `stage = HOLD` at
   /// seed time but is independently editable — a company may decide a
   /// parts hold IS on their clock.
-  pausesSla Boolean      @default(false) @map("pauses_sla")
+  pausesSla Boolean       @default(false) @map("pauses_sla")
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -1160,8 +1171,8 @@ model FaultCode {
   createdBy   User?     @relation("FaultCodeCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("FaultCodeUpdatedBy", fields: [updatedById], references: [id])
 
-  company Company @relation(fields: [companyId], references: [id])
-  jobs    Job[]
+  company      Company       @relation(fields: [companyId], references: [id])
+  jobs         Job[]
   /// SCMS Module 1: symptom-tree leaves that resolve to this fault code.
   symptomNodes SymptomNode[]
 
@@ -1221,8 +1232,8 @@ model ServiceCategory {
   createdBy   User?     @relation("ServiceCategoryCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?     @relation("ServiceCategoryUpdatedBy", fields: [updatedById], references: [id])
 
-  company Company @relation(fields: [companyId], references: [id])
-  jobs    Job[]
+  company      Company       @relation(fields: [companyId], references: [id])
+  jobs         Job[]
   /// SCMS Module 1/2: symptom-tree branches and technician skills narrowed
   /// to this service line.
   symptomNodes SymptomNode[]
@@ -1380,27 +1391,27 @@ model Job {
   // -- Proposal Module 2: bench clocks + QC ---------------------------------
   /// First entry into a DIAGNOSIS-stage state — the end of Clock-to-Diagnosis
   /// and the start of the SLA labour timer.
-  diagnosisStartedAt     DateTime? @map("diagnosis_started_at") @db.DateTime(3)
+  diagnosisStartedAt DateTime? @map("diagnosis_started_at") @db.DateTime(3)
   /// First entry into a REPAIR-stage state.
-  repairStartedAt        DateTime? @map("repair_started_at") @db.DateTime(3)
+  repairStartedAt    DateTime? @map("repair_started_at") @db.DateTime(3)
   /// Most recent submission for verification (IN_REPAIR → QC).
-  qcSubmittedAt          DateTime? @map("qc_submitted_at") @db.DateTime(3)
+  qcSubmittedAt      DateTime? @map("qc_submitted_at") @db.DateTime(3)
   /// Actual hands-on labour the technician declares when submitting for QC —
   /// mandatory (guard `repair_work_declared`). DECIMAL, not money.
-  labourHours            Decimal?  @map("labour_hours") @db.Decimal(6, 2)
+  labourHours        Decimal?  @map("labour_hours") @db.Decimal(6, 2)
   /// The Quality Assurer's mandatory reason on the most recent QC rejection.
-  qcFailureReason        String?   @map("qc_failure_reason") @db.Text
+  qcFailureReason    String?   @map("qc_failure_reason") @db.Text
   /// How many times QC has bounced this job — the first-time-fix metric.
-  qcRejectCount          Int       @default(0) @map("qc_reject_count")
-  qcApprovedById         String?   @map("qc_approved_by") @db.Char(36)
-  qcApprovedAt           DateTime? @map("qc_approved_at") @db.DateTime(3)
+  qcRejectCount      Int       @default(0) @map("qc_reject_count")
+  qcApprovedById     String?   @map("qc_approved_by") @db.Char(36)
+  qcApprovedAt       DateTime? @map("qc_approved_at") @db.DateTime(3)
 
   /// Proposal Modules 4 & 5: the bench is LOCKED OUT. Set when a BER review
   /// transfers ownership to the supervisor, or when an OW job is holding for
   /// the customer's quote decision. While true the technician may read the
   /// job but not mutate it or move it forward.
-  techLocked             Boolean   @default(false) @map("tech_locked")
-  techLockReason         String?   @map("tech_lock_reason") @db.VarChar(255)
+  techLocked     Boolean @default(false) @map("tech_locked")
+  techLockReason String? @map("tech_lock_reason") @db.VarChar(255)
 
   /// GSPN diagnostic codes (§4.7) — all six are required to file a claim.
   /// FKs → service_codes; `repairDescription` is the free-text counterpart to
@@ -1473,27 +1484,27 @@ model Job {
   warrantyClaims WarrantyClaim[]
 
   // -- Proposal modules -----------------------------------------------------
-  symptomNode        SymptomNode?      @relation(fields: [symptomNodeId], references: [id])
-  conditionCapturedBy User?            @relation("JobConditionCapturedBy", fields: [conditionCapturedById], references: [id])
-  qcApprovedBy       User?             @relation("JobQcApprovedBy", fields: [qcApprovedById], references: [id])
+  symptomNode         SymptomNode?       @relation(fields: [symptomNodeId], references: [id])
+  conditionCapturedBy User?              @relation("JobConditionCapturedBy", fields: [conditionCapturedById], references: [id])
+  qcApprovedBy        User?              @relation("JobQcApprovedBy", fields: [qcApprovedById], references: [id])
   /// Module 1: the visual damage map captured at the counter.
-  conditionMarks     JobConditionMark[]
+  conditionMarks      JobConditionMark[]
   /// Module 2: the append-only state log the SLA/KPI clocks are computed from.
-  stateEvents        JobStateEvent[]
+  stateEvents         JobStateEvent[]
   /// Module 2: calibration / flash / structural checks recorded at QC.
-  qcChecks           JobQcCheck[]
+  qcChecks            JobQcCheck[]
   /// Module 4: BER evaluations (one per evaluation run; latest wins).
-  berAssessments     BerAssessment[]
+  berAssessments      BerAssessment[]
   /// Module 4: the replacement, if this repair resolved as a swap.
-  deviceSwaps        DeviceSwap[]
+  deviceSwaps         DeviceSwap[]
   /// Module 6: single-use collection PINs issued for this job.
-  collectionOtps     JobCollectionOtp[]
+  collectionOtps      JobCollectionOtp[]
   /// Module 6: consignment memberships (satellite ↔ hub legs).
-  consignmentJobs    ConsignmentJob[]
+  consignmentJobs     ConsignmentJob[]
   /// Module 6: the post-closure satisfaction survey.
-  csatSurveys        CsatSurvey[]
+  csatSurveys         CsatSurvey[]
   /// Module 7: everything ever sent to the customer about this job.
-  notifications      Notification[]
+  notifications       Notification[]
 
   @@unique([companyId, jobNo])
   @@index([companyId, branchId, stateId])
@@ -1740,11 +1751,32 @@ model Part {
 /// RESERVED (allocated, still on the shelf) → ISSUED (physically picked from
 /// its bin and handed to the technician) → CONSUMED (installed). CANCELLED
 /// releases the reservation without consuming.
+/// The bench parts lifecycle. A technician REQUESTS, an approver approves
+/// (which is what RESERVES the stock), stores ISSUES it, the technician
+/// ACKNOWLEDGES receipt, and fitting it CONSUMES it.
+///
+/// Stock is deliberately held at APPROVAL, not at request: an unapproved
+/// request must never lock inventory another job could use. The corollary is
+/// that approving can fail when the part has gone in the meantime — which is
+/// why approval is an explicit, failable action rather than a side effect of
+/// the generic approvals inbox.
 enum JobPartStatus {
+  /// Asked for by the bench; nothing held yet, awaiting the parts clerk.
+  REQUESTED
+  /// The parts clerk checked the request against the shelf and raised it for
+  /// approval. This is the state an approver acts on — the clerk, not the
+  /// engineer, decides what actually gets put in front of a manager.
+  ISSUE_REQUESTED
+  /// Approved — this is where the RESERVE movement fires.
   RESERVED
+  /// Picked and physically handed over by stores ("Issued to Tech").
   ISSUED
+  /// The technician has confirmed the part is in their hands.
+  ACKNOWLEDGED
   CONSUMED
   CANCELLED
+  /// An approver declined the request; terminal, carries a reason.
+  REJECTED
 }
 
 /// A part committed to a job (§4.5). Adding a line RESERVES branch stock;
@@ -1764,35 +1796,63 @@ model JobPart {
   unitSellPrice BigInt?       @map("unit_sell_price") @db.BigInt
   currency      String?       @db.Char(3)
   isWarranty    Boolean       @default(false) @map("is_warranty")
-  status        JobPartStatus @default(RESERVED)
-  reservedAt    DateTime      @default(now()) @map("reserved_at") @db.DateTime(3)
+  status        JobPartStatus @default(REQUESTED)
+  /// When the APPROVAL fired the RESERVE movement. NULL while REQUESTED or
+  /// REJECTED — nothing is held then.
+  reservedAt    DateTime?     @map("reserved_at") @db.DateTime(3)
   consumedAt    DateTime?     @map("consumed_at") @db.DateTime(3)
+
+  // -- The bench request → approval → hand-over trail ------------------------
+  /// Who asked for the part, and when. Set on creation and never cleared.
+  requestedAt        DateTime  @default(now()) @map("requested_at") @db.DateTime(3)
+  requestedById      String?   @map("requested_by") @db.Char(36)
+  /// Why the bench needs it — shown to the approver deciding the request.
+  requestNote        String?   @map("request_note") @db.VarChar(500)
+  /// The parts clerk raising the bench's request for approval, having checked
+  /// it against the shelf. The engineer asks; the clerk decides what actually
+  /// reaches a manager's queue.
+  issueRequestedAt   DateTime? @map("issue_requested_at") @db.DateTime(3)
+  issueRequestedById String?   @map("issue_requested_by") @db.Char(36)
+  /// The PENDING/decided `approvals` row this line is gated on. One approval
+  /// per line, so a partially-approved multi-part request is expressible.
+  /// Raised by the CLERK, not the engineer.
+  approvalId         String?   @map("approval_id") @db.Char(36)
+  approvedAt         DateTime? @map("approved_at") @db.DateTime(3)
+  approvedById       String?   @map("approved_by") @db.Char(36)
+  rejectedAt         DateTime? @map("rejected_at") @db.DateTime(3)
+  rejectedById       String?   @map("rejected_by") @db.Char(36)
+  /// Mandatory on rejection — the bench must be told why.
+  rejectionReason    String?   @map("rejection_reason") @db.VarChar(500)
+  /// The technician confirming the part reached them. Closes the custody gap
+  /// between "stores says it handed over" and "the bench says it arrived".
+  acknowledgedAt     DateTime? @map("acknowledged_at") @db.DateTime(3)
+  acknowledgedById   String?   @map("acknowledged_by") @db.Char(36)
 
   // -- Proposal Module 3: the closed-loop core exchange ----------------------
   /// Where the storekeeper picks it from, captured on the picking ticket
   /// (copied from `inventory.bin_location` at reservation so the ticket still
   /// reads true if the bin is re-labelled later).
-  pickBinLocation   String?   @map("pick_bin_location") @db.VarChar(50)
+  pickBinLocation  String?   @map("pick_bin_location") @db.VarChar(50)
   /// Physically picked from the bin and handed over: "Issued to Tech" (step 3).
-  issuedAt          DateTime? @map("issued_at") @db.DateTime(3)
-  issuedById        String?   @map("issued_by") @db.Char(36)
+  issuedAt         DateTime? @map("issued_at") @db.DateTime(3)
+  issuedById       String?   @map("issued_by") @db.Char(36)
   /// The NEW part's unique tracking serial, tagged to this repair ticket
   /// (step 2). `partUnitId` is the `part_units` row when the part is
   /// serial-tracked; `newSerialNo` also carries a hand-keyed serial for parts
   /// that are not in the unit register.
-  partUnitId        String?   @map("part_unit_id") @db.Char(36)
-  newSerialNo       String?   @map("new_serial_no") @db.VarChar(100)
+  partUnitId       String?   @map("part_unit_id") @db.Char(36)
+  newSerialNo      String?   @map("new_serial_no") @db.VarChar(100)
   /// Snapshot of `parts.requires_core_return` at reservation time. Frozen on
   /// the line so re-classifying the catalogue later cannot retroactively
   /// unblock — or newly block — a job already in flight.
-  coreRequired      Boolean   @default(false) @map("core_required")
+  coreRequired     Boolean   @default(false) @map("core_required")
   /// The OLD component's serial, scanned as it goes into the secure return
   /// bin (step 4). Together with `newSerialNo` this is the "New Part Serial
   /// Out vs Old Part Serial In" pair Samsung audits.
-  coreSerialNo      String?   @map("core_serial_no") @db.VarChar(100)
-  coreReturnedAt    DateTime? @map("core_returned_at") @db.DateTime(3)
-  coreReturnedById  String?   @map("core_returned_by") @db.Char(36)
-  coreBinLocation   String?   @map("core_bin_location") @db.VarChar(50)
+  coreSerialNo     String?   @map("core_serial_no") @db.VarChar(100)
+  coreReturnedAt   DateTime? @map("core_returned_at") @db.DateTime(3)
+  coreReturnedById String?   @map("core_returned_by") @db.Char(36)
+  coreBinLocation  String?   @map("core_bin_location") @db.VarChar(50)
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -1801,12 +1861,18 @@ model JobPart {
   createdBy   User?    @relation("JobPartCreatedBy", fields: [createdById], references: [id])
   updatedBy   User?    @relation("JobPartUpdatedBy", fields: [updatedById], references: [id])
 
-  company Company @relation(fields: [companyId], references: [id])
-  job     Job     @relation(fields: [jobId], references: [id])
-  part    Part    @relation(fields: [partId], references: [id])
+  company          Company @relation(fields: [companyId], references: [id])
+  job              Job     @relation(fields: [jobId], references: [id])
+  part             Part    @relation(fields: [partId], references: [id])
   // Proposal Module 3 — who picked it, who scanned the core back in.
-  issuedBy       User? @relation("JobPartIssuedBy", fields: [issuedById], references: [id])
-  coreReturnedBy User? @relation("JobPartCoreReturnedBy", fields: [coreReturnedById], references: [id])
+  issuedBy         User?   @relation("JobPartIssuedBy", fields: [issuedById], references: [id])
+  coreReturnedBy   User?   @relation("JobPartCoreReturnedBy", fields: [coreReturnedById], references: [id])
+  // The bench request trail — who asked, who decided, who confirmed receipt.
+  requestedBy      User?   @relation("JobPartRequestedBy", fields: [requestedById], references: [id])
+  issueRequestedBy User?   @relation("JobPartIssueRequestedBy", fields: [issueRequestedById], references: [id])
+  approvedBy       User?   @relation("JobPartApprovedBy", fields: [approvedById], references: [id])
+  rejectedBy       User?   @relation("JobPartRejectedBy", fields: [rejectedById], references: [id])
+  acknowledgedBy   User?   @relation("JobPartAcknowledgedBy", fields: [acknowledgedById], references: [id])
 
   @@index([companyId, jobId])
   @@index([partId])
@@ -1819,21 +1885,21 @@ model JobPart {
 /// derived (`qty_on_hand − qty_reserved − qty_damaged`) in the service, never
 /// stored. `reorder_level` triggers the low-stock alert / suggested reorder.
 model Inventory {
-  id             String  @id @default(uuid()) @db.Char(36)
-  companyId      String  @map("company_id") @db.Char(36)
-  branchId       String  @map("branch_id") @db.Char(36)
-  partId         String  @map("part_id") @db.Char(36)
-  binLocation    String? @map("bin_location") @db.VarChar(50)
-  qtyOnHand      Int     @default(0) @map("qty_on_hand")
-  qtyReserved    Int     @default(0) @map("qty_reserved")
-  qtyInTransitIn Int     @default(0) @map("qty_in_transit_in")
-  qtyDamaged     Int     @default(0) @map("qty_damaged")
-  reorderLevel   Int     @default(0) @map("reorder_level")
+  id              String  @id @default(uuid()) @db.Char(36)
+  companyId       String  @map("company_id") @db.Char(36)
+  branchId        String  @map("branch_id") @db.Char(36)
+  partId          String  @map("part_id") @db.Char(36)
+  binLocation     String? @map("bin_location") @db.VarChar(50)
+  qtyOnHand       Int     @default(0) @map("qty_on_hand")
+  qtyReserved     Int     @default(0) @map("qty_reserved")
+  qtyInTransitIn  Int     @default(0) @map("qty_in_transit_in")
+  qtyDamaged      Int     @default(0) @map("qty_damaged")
+  reorderLevel    Int     @default(0) @map("reorder_level")
   /// Proposal Module 3 — the Scrap/Return Warehouse bucket: defective cores
   /// scanned back in and held for the manufacturer. Deliberately OUTSIDE the
   /// available-stock formula (on_hand − reserved − damaged): these units are
   /// faulty and owed to Samsung, so they must never be pickable.
-  qtyCoreReturned Int    @default(0) @map("qty_core_returned")
+  qtyCoreReturned Int     @default(0) @map("qty_core_returned")
   /// Where cores are physically held pending shipment (e.g. `RET-A1`).
   coreBinLocation String? @map("core_bin_location") @db.VarChar(50)
 
@@ -2366,25 +2432,25 @@ model Invoice {
   // `customerApprovedAt` — an unsent, unanswered quote no longer counts as
   // consent, which is what the earlier "a quote row exists" check meant.
   /// When the secure approval link was issued to the customer.
-  quoteSentAt        DateTime? @map("quote_sent_at") @db.DateTime(3)
-  quoteSentTo        String?   @map("quote_sent_to") @db.VarChar(255)
+  quoteSentAt                   DateTime? @map("quote_sent_at") @db.DateTime(3)
+  quoteSentTo                   String?   @map("quote_sent_to") @db.VarChar(255)
   /// SHA-256 hex of the approval token — the raw token only ever exists in
   /// the SMS/email link, never at rest, exactly like the collection OTP.
-  approvalTokenHash  String?   @map("approval_token_hash") @db.VarChar(64)
-  approvalExpiresAt  DateTime? @map("approval_expires_at") @db.DateTime(3)
+  approvalTokenHash             String?   @map("approval_token_hash") @db.VarChar(64)
+  approvalExpiresAt             DateTime? @map("approval_expires_at") @db.DateTime(3)
   /// The customer's decision.
-  customerApprovedAt DateTime? @map("customer_approved_at") @db.DateTime(3)
-  customerDeclinedAt DateTime? @map("customer_declined_at") @db.DateTime(3)
+  customerApprovedAt            DateTime? @map("customer_approved_at") @db.DateTime(3)
+  customerDeclinedAt            DateTime? @map("customer_declined_at") @db.DateTime(3)
   /// How consent was captured: PORTAL (they clicked the link), COUNTER (they
   /// signed in person), PHONE (agent recorded a verbal yes), PREPAYMENT
   /// (money arrived, which the proposal accepts in place of a signature).
-  approvalVia        String?   @map("approval_via") @db.VarChar(20)
+  approvalVia                   String?   @map("approval_via") @db.VarChar(20)
   /// The signature attachment captured with a COUNTER/PORTAL approval.
-  approvalSignatureAttachmentId String? @map("approval_signature_attachment_id") @db.Char(36)
+  approvalSignatureAttachmentId String?   @map("approval_signature_attachment_id") @db.Char(36)
   /// Who recorded a COUNTER/PHONE approval (NULL for a customer self-service
   /// PORTAL approval — nobody on staff touched it).
-  approvalRecordedById String?  @map("approval_recorded_by") @db.Char(36)
-  approvalNote       String?    @map("approval_note") @db.VarChar(500)
+  approvalRecordedById          String?   @map("approval_recorded_by") @db.Char(36)
+  approvalNote                  String?   @map("approval_note") @db.VarChar(500)
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -2800,16 +2866,16 @@ model Product {
 // ---------------------------------------------------------------------------
 
 model SymptomNode {
-  id        String  @id @default(uuid()) @db.Char(36)
-  companyId String  @map("company_id") @db.Char(36)
-  parentId  String? @map("parent_id") @db.Char(36)
+  id        String          @id @default(uuid()) @db.Char(36)
+  companyId String          @map("company_id") @db.Char(36)
+  parentId  String?         @map("parent_id") @db.Char(36)
   /// Stable machine key, unique per company (e.g. `DISPLAY.BACKLIGHT.WARM_FLICKER`).
-  code      String  @db.VarChar(120)
-  label     String  @db.VarChar(255)
+  code      String          @db.VarChar(120)
+  label     String          @db.VarChar(255)
   /// 1 = category, 2 = sub-category, 3+ = symptom trigger.
-  level     Int     @default(1)
+  level     Int             @default(1)
   /// Only leaves are selectable on a job.
-  isLeaf    Boolean @default(false) @map("is_leaf")
+  isLeaf    Boolean         @default(false) @map("is_leaf")
   /// Restrict this branch of the tree to one device class (NULL = all).
   category  DeviceCategory?
 
@@ -2833,14 +2899,14 @@ model SymptomNode {
   createdById String?   @map("created_by") @db.Char(36)
   updatedById String?   @map("updated_by") @db.Char(36)
 
-  company           Company          @relation(fields: [companyId], references: [id])
-  parent            SymptomNode?     @relation("SymptomNodeParent", fields: [parentId], references: [id])
-  children          SymptomNode[]    @relation("SymptomNodeParent")
-  faultCode         FaultCode?       @relation(fields: [faultCodeId], references: [id])
-  serviceCategory   ServiceCategory? @relation(fields: [serviceCategoryId], references: [id])
-  createdBy         User?            @relation("SymptomNodeCreatedBy", fields: [createdById], references: [id])
-  updatedBy         User?            @relation("SymptomNodeUpdatedBy", fields: [updatedById], references: [id])
-  jobs              Job[]
+  company         Company          @relation(fields: [companyId], references: [id])
+  parent          SymptomNode?     @relation("SymptomNodeParent", fields: [parentId], references: [id])
+  children        SymptomNode[]    @relation("SymptomNodeParent")
+  faultCode       FaultCode?       @relation(fields: [faultCodeId], references: [id])
+  serviceCategory ServiceCategory? @relation(fields: [serviceCategoryId], references: [id])
+  createdBy       User?            @relation("SymptomNodeCreatedBy", fields: [createdById], references: [id])
+  updatedBy       User?            @relation("SymptomNodeUpdatedBy", fields: [updatedById], references: [id])
+  jobs            Job[]
 
   @@unique([companyId, code])
   @@index([companyId, parentId, sortOrder])
@@ -2959,20 +3025,20 @@ model JobConditionMark {
 // ---------------------------------------------------------------------------
 
 model UserSkill {
-  id        String         @id @default(uuid()) @db.Char(36)
-  companyId String         @map("company_id") @db.Char(36)
-  userId    String         @map("user_id") @db.Char(36)
-  category  DeviceCategory
+  id                String         @id @default(uuid()) @db.Char(36)
+  companyId         String         @map("company_id") @db.Char(36)
+  userId            String         @map("user_id") @db.Char(36)
+  category          DeviceCategory
   /// Optional narrowing to one service line (NULL = the whole device class).
-  serviceCategoryId String? @map("service_category_id") @db.Char(36)
+  serviceCategoryId String?        @map("service_category_id") @db.Char(36)
   /// 1 = trainee … 5 = master. The assignment guard requires >= 1; routing
   /// prefers the highest.
-  level     Int            @default(1)
+  level             Int            @default(1)
   /// May approve the QC gate for this device class (Senior Quality Assurer).
-  canQc     Boolean        @default(false) @map("can_qc")
-  certifiedAt DateTime?    @map("certified_at") @db.Date
-  notes     String?        @db.VarChar(255)
-  active    Boolean        @default(true)
+  canQc             Boolean        @default(false) @map("can_qc")
+  certifiedAt       DateTime?      @map("certified_at") @db.Date
+  notes             String?        @db.VarChar(255)
+  active            Boolean        @default(true)
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3068,24 +3134,24 @@ enum QcCheckResult {
 }
 
 model QcChecklistItem {
-  id        String         @id @default(uuid()) @db.Char(36)
-  companyId String         @map("company_id") @db.Char(36)
-  category  DeviceCategory
-  code      String         @db.VarChar(60)
-  label     String         @db.VarChar(255)
+  id                 String         @id @default(uuid()) @db.Char(36)
+  companyId          String         @map("company_id") @db.Char(36)
+  category           DeviceCategory
+  code               String         @db.VarChar(60)
+  label              String         @db.VarChar(255)
   /// Short instruction shown to the Quality Assurer.
-  help      String?        @db.VarChar(500)
+  help               String?        @db.VarChar(500)
   /// A measured reading must be typed in (e.g. pressure test kPa), not just
   /// a tick.
-  requiresValue Boolean    @default(false) @map("requires_value")
+  requiresValue      Boolean        @default(false) @map("requires_value")
   /// A raw log/measurement FILE must be attached to the job before the item
   /// can pass — the proposal's "raw log files uploaded to the record".
-  requiresAttachment Boolean @default(false) @map("requires_attachment")
+  requiresAttachment Boolean        @default(false) @map("requires_attachment")
   /// When false the item is advisory: it must be ANSWERED but may be failed
   /// or marked N/A without blocking the gate.
-  blocking  Boolean        @default(true)
-  sortOrder Int            @default(0) @map("sort_order")
-  active    Boolean        @default(true)
+  blocking           Boolean        @default(true)
+  sortOrder          Int            @default(0) @map("sort_order")
+  active             Boolean        @default(true)
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3184,11 +3250,11 @@ model BerAssessment {
   certificateNo String? @map("certificate_no") @db.VarChar(50)
 
   // -- The formula, snapshotted (all minor units of `currency`) -------------
-  partsCost   BigInt  @map("parts_cost") @db.BigInt
-  labourCost  BigInt  @map("labour_cost") @db.BigInt
-  totalCost   BigInt  @map("total_cost") @db.BigInt
-  deviceValue BigInt  @map("device_value") @db.BigInt
-  currency    String  @db.Char(3)
+  partsCost        BigInt  @map("parts_cost") @db.BigInt
+  labourCost       BigInt  @map("labour_cost") @db.BigInt
+  totalCost        BigInt  @map("total_cost") @db.BigInt
+  deviceValue      BigInt  @map("device_value") @db.BigInt
+  currency         String  @db.Char(3)
   /// totalCost / deviceValue as a percentage, to 2 dp.
   ratioPercent     Decimal @map("ratio_percent") @db.Decimal(9, 2)
   /// The company threshold in force when this ran (default 70).
@@ -3200,15 +3266,15 @@ model BerAssessment {
 
   status BerStatus @default(FLAGGED)
 
-  flaggedAt   DateTime  @default(now()) @map("flagged_at") @db.DateTime(3)
-  reviewedById String?  @map("reviewed_by") @db.Char(36)
-  reviewedAt   DateTime? @map("reviewed_at") @db.DateTime(3)
-  decisionNotes String?  @map("decision_notes") @db.Text
+  flaggedAt     DateTime  @default(now()) @map("flagged_at") @db.DateTime(3)
+  reviewedById  String?   @map("reviewed_by") @db.Char(36)
+  reviewedAt    DateTime? @map("reviewed_at") @db.DateTime(3)
+  decisionNotes String?   @map("decision_notes") @db.Text
 
-  outcome            BerOutcome? 
-  customerRespondedAt DateTime?  @map("customer_responded_at") @db.DateTime(3)
+  outcome             BerOutcome?
+  customerRespondedAt DateTime?   @map("customer_responded_at") @db.DateTime(3)
   /// Salvage value offered / trade-up discount, minor units of `currency`.
-  offerAmount        BigInt?     @map("offer_amount") @db.BigInt
+  offerAmount         BigInt?     @map("offer_amount") @db.BigInt
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3275,27 +3341,27 @@ model SwapUnit {
   /// Where the unit physically sits.
   branchId  String @map("branch_id") @db.Char(36)
 
-  modelId    String? @map("model_id") @db.Char(36)
+  modelId    String?        @map("model_id") @db.Char(36)
   /// Free-text model when it predates the catalogue entry.
-  modelLabel String? @map("model_label") @db.VarChar(150)
+  modelLabel String?        @map("model_label") @db.VarChar(150)
   category   DeviceCategory @default(HHP)
   /// The replacement unit's own IMEI/serial — becomes the customer's new
   /// primary tracking identity on issue. Normalised like `devices.imei_serial`.
-  imeiSerial String  @map("imei_serial") @db.VarChar(100)
-  color      String? @db.VarChar(50)
+  imeiSerial String         @map("imei_serial") @db.VarChar(100)
+  color      String?        @db.VarChar(50)
 
   /// Acquisition cost, minor units of `currency` (for the swap's COGS).
   cost     BigInt? @db.BigInt
   currency String? @db.Char(3)
 
-  status          SwapUnitStatus @default(IN_STOCK)
-  allocatedJobId  String?        @map("allocated_job_id") @db.Char(36)
-  allocatedAt     DateTime?      @map("allocated_at") @db.DateTime(3)
-  issuedAt        DateTime?      @map("issued_at") @db.DateTime(3)
-  issuedById      String?        @map("issued_by") @db.Char(36)
+  status         SwapUnitStatus @default(IN_STOCK)
+  allocatedJobId String?        @map("allocated_job_id") @db.Char(36)
+  allocatedAt    DateTime?      @map("allocated_at") @db.DateTime(3)
+  issuedAt       DateTime?      @map("issued_at") @db.DateTime(3)
+  issuedById     String?        @map("issued_by") @db.Char(36)
   /// Provenance (which delivery it arrived on) — no FK, like PartUnit.
-  grnId           String?        @map("grn_id") @db.Char(36)
-  notes           String?        @db.VarChar(500)
+  grnId          String?        @map("grn_id") @db.Char(36)
+  notes          String?        @db.VarChar(500)
 
   createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3402,13 +3468,13 @@ model RoleLimit {
   type      RoleLimitType
 
   /// Ceiling in minor units of `currency`. NULL = no amount ceiling.
-  maxAmount BigInt? @map("max_amount") @db.BigInt
-  currency  String? @db.Char(3)
+  maxAmount  BigInt?  @map("max_amount") @db.BigInt
+  currency   String?  @db.Char(3)
   /// Ceiling as a percentage of the document total (discounts). NULL = none.
   maxPercent Decimal? @map("max_percent") @db.Decimal(6, 3)
   /// false = this role has NO ceiling for this action (unlimited). Distinct
   /// from a missing row, which denies.
-  enabled   Boolean @default(true)
+  enabled    Boolean  @default(true)
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3446,21 +3512,21 @@ model JobCollectionOtp {
   jobId     String @map("job_id") @db.Char(36)
 
   /// SHA-256 hex of the 6-digit PIN — see header note.
-  codeHash  String @map("code_hash") @db.VarChar(64)
+  codeHash String @map("code_hash") @db.VarChar(64)
   /// Last 2 digits, shown to staff so they can help a customer who says
   /// "…ends in 47" without ever revealing the full code.
-  codeHint  String @map("code_hint") @db.Char(2)
+  codeHint String @map("code_hint") @db.Char(2)
 
   /// Where it was sent (the customer's number at the time of issue).
-  sentTo      String?   @map("sent_to") @db.VarChar(50)
-  sentAt      DateTime? @map("sent_at") @db.DateTime(3)
-  expiresAt   DateTime  @map("expires_at") @db.DateTime(3)
-  attempts    Int       @default(0)
-  verifiedAt  DateTime? @map("verified_at") @db.DateTime(3)
-  verifiedById String?  @map("verified_by") @db.Char(36)
+  sentTo       String?   @map("sent_to") @db.VarChar(50)
+  sentAt       DateTime? @map("sent_at") @db.DateTime(3)
+  expiresAt    DateTime  @map("expires_at") @db.DateTime(3)
+  attempts     Int       @default(0)
+  verifiedAt   DateTime? @map("verified_at") @db.DateTime(3)
+  verifiedById String?   @map("verified_by") @db.Char(36)
   /// Set when a newer PIN supersedes this one, or the attempt cap is hit.
-  voidedAt    DateTime? @map("voided_at") @db.DateTime(3)
-  voidReason  String?   @map("void_reason") @db.VarChar(255)
+  voidedAt     DateTime? @map("voided_at") @db.DateTime(3)
+  voidReason   String?   @map("void_reason") @db.VarChar(255)
 
   createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3521,8 +3587,8 @@ model Consignment {
   /// that is currently in flight.
   toteLabel     String @map("tote_label") @db.VarChar(60)
 
-  fromBranchId String @map("from_branch_id") @db.Char(36)
-  toBranchId   String @map("to_branch_id") @db.Char(36)
+  fromBranchId String               @map("from_branch_id") @db.Char(36)
+  toBranchId   String               @map("to_branch_id") @db.Char(36)
   direction    ConsignmentDirection
 
   status ConsignmentStatus @default(OPEN)
@@ -3568,13 +3634,13 @@ model ConsignmentJob {
   consignmentId String @map("consignment_id") @db.Char(36)
   jobId         String @map("job_id") @db.Char(36)
 
-  addedAt    DateTime  @default(now()) @map("added_at") @db.DateTime(3)
-  addedById  String?   @map("added_by") @db.Char(36)
+  addedAt       DateTime  @default(now()) @map("added_at") @db.DateTime(3)
+  addedById     String?   @map("added_by") @db.Char(36)
   /// Checked off against the manifest on arrival. A NULL here on an ARRIVED
   /// consignment is a MISSING DEVICE — the whole point of the manifest.
-  checkedInAt DateTime? @map("checked_in_at") @db.DateTime(3)
-  checkedInById String? @map("checked_in_by") @db.Char(36)
-  note        String?   @db.VarChar(255)
+  checkedInAt   DateTime? @map("checked_in_at") @db.DateTime(3)
+  checkedInById String?   @map("checked_in_by") @db.Char(36)
+  note          String?   @db.VarChar(255)
 
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -3607,14 +3673,14 @@ model ConsignmentScan {
   companyId     String @map("company_id") @db.Char(36)
   consignmentId String @map("consignment_id") @db.Char(36)
 
-  scanPoint  ScanPoint @map("scan_point")
-  location   String?   @db.VarChar(255)
-  scannedAt  DateTime  @default(now()) @map("scanned_at") @db.DateTime(3)
+  scanPoint   ScanPoint @map("scan_point")
+  location    String?   @db.VarChar(255)
+  scannedAt   DateTime  @default(now()) @map("scanned_at") @db.DateTime(3)
   /// NULL when a courier's own handheld posted the scan via an integration
   /// rather than a logged-in user.
-  scannedById String?  @map("scanned_by") @db.Char(36)
-  handlerName String?  @map("handler_name") @db.VarChar(120)
-  note        String?  @db.VarChar(500)
+  scannedById String?   @map("scanned_by") @db.Char(36)
+  handlerName String?   @map("handler_name") @db.VarChar(120)
+  note        String?   @db.VarChar(500)
 
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
@@ -3651,10 +3717,10 @@ model ConsignmentCounter {
 // ---------------------------------------------------------------------------
 
 model CsatSurvey {
-  id        String @id @default(uuid()) @db.Char(36)
-  companyId String @map("company_id") @db.Char(36)
-  branchId  String @map("branch_id") @db.Char(36)
-  jobId     String @map("job_id") @db.Char(36)
+  id         String @id @default(uuid()) @db.Char(36)
+  companyId  String @map("company_id") @db.Char(36)
+  branchId   String @map("branch_id") @db.Char(36)
+  jobId      String @map("job_id") @db.Char(36)
   customerId String @map("customer_id") @db.Char(36)
 
   /// URL-safe random token identifying the public survey link.
@@ -3772,16 +3838,16 @@ model Notification {
   /// render, and deliberately free-form.
   payload   Json?
 
-  status   NotificationStatus @default(QUEUED)
-  attempts Int                @default(0)
+  status      NotificationStatus @default(QUEUED)
+  attempts    Int                @default(0)
   /// Earliest time a worker may pick this up — the retry backoff lives here.
-  availableAt DateTime        @default(now()) @map("available_at") @db.DateTime(3)
-  sentAt      DateTime?       @map("sent_at") @db.DateTime(3)
+  availableAt DateTime           @default(now()) @map("available_at") @db.DateTime(3)
+  sentAt      DateTime?          @map("sent_at") @db.DateTime(3)
   /// Provider message id (Beem/Africa's Talking), for delivery-report lookup.
-  providerRef String?         @map("provider_ref") @db.VarChar(255)
-  lastError   String?         @map("last_error") @db.Text
+  providerRef String?            @map("provider_ref") @db.VarChar(255)
+  lastError   String?            @map("last_error") @db.Text
   /// Set while a worker holds the row; a stale lease is reclaimable.
-  leasedUntil DateTime?       @map("leased_until") @db.DateTime(3)
+  leasedUntil DateTime?          @map("leased_until") @db.DateTime(3)
 
   createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(3)

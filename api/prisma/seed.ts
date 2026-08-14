@@ -554,42 +554,298 @@ const CONDITION_ZONES: Array<{
   sortOrder: number;
 }> = [
   // Handset — front
-  { category: 'HHP', code: 'SCREEN_TL', label: 'Screen — top left', x: 0.28, y: 0.2, face: 'FRONT', sortOrder: 10 },
-  { category: 'HHP', code: 'SCREEN_TR', label: 'Screen — top right', x: 0.72, y: 0.2, face: 'FRONT', sortOrder: 20 },
-  { category: 'HHP', code: 'SCREEN_C', label: 'Screen — centre', x: 0.5, y: 0.5, face: 'FRONT', sortOrder: 30 },
-  { category: 'HHP', code: 'SCREEN_BL', label: 'Screen — bottom left', x: 0.28, y: 0.8, face: 'FRONT', sortOrder: 40 },
-  { category: 'HHP', code: 'SCREEN_BR', label: 'Screen — bottom right', x: 0.72, y: 0.8, face: 'FRONT', sortOrder: 50 },
-  { category: 'HHP', code: 'EARPIECE', label: 'Earpiece / front camera', x: 0.5, y: 0.07, face: 'FRONT', sortOrder: 60 },
+  {
+    category: 'HHP',
+    code: 'SCREEN_TL',
+    label: 'Screen — top left',
+    x: 0.28,
+    y: 0.2,
+    face: 'FRONT',
+    sortOrder: 10,
+  },
+  {
+    category: 'HHP',
+    code: 'SCREEN_TR',
+    label: 'Screen — top right',
+    x: 0.72,
+    y: 0.2,
+    face: 'FRONT',
+    sortOrder: 20,
+  },
+  {
+    category: 'HHP',
+    code: 'SCREEN_C',
+    label: 'Screen — centre',
+    x: 0.5,
+    y: 0.5,
+    face: 'FRONT',
+    sortOrder: 30,
+  },
+  {
+    category: 'HHP',
+    code: 'SCREEN_BL',
+    label: 'Screen — bottom left',
+    x: 0.28,
+    y: 0.8,
+    face: 'FRONT',
+    sortOrder: 40,
+  },
+  {
+    category: 'HHP',
+    code: 'SCREEN_BR',
+    label: 'Screen — bottom right',
+    x: 0.72,
+    y: 0.8,
+    face: 'FRONT',
+    sortOrder: 50,
+  },
+  {
+    category: 'HHP',
+    code: 'EARPIECE',
+    label: 'Earpiece / front camera',
+    x: 0.5,
+    y: 0.07,
+    face: 'FRONT',
+    sortOrder: 60,
+  },
   // Handset — back & sides
-  { category: 'HHP', code: 'BACK_GLASS', label: 'Back panel', x: 0.5, y: 0.55, face: 'BACK', sortOrder: 70 },
-  { category: 'HHP', code: 'CAMERA_BUMP', label: 'Rear camera housing', x: 0.28, y: 0.14, face: 'BACK', sortOrder: 80 },
-  { category: 'HHP', code: 'FRAME_LEFT', label: 'Left frame / volume keys', x: 0.04, y: 0.35, face: 'SIDE', sortOrder: 90 },
-  { category: 'HHP', code: 'FRAME_RIGHT', label: 'Right frame / power key', x: 0.96, y: 0.35, face: 'SIDE', sortOrder: 100 },
-  { category: 'HHP', code: 'PORT', label: 'Charging port / speaker', x: 0.5, y: 0.97, face: 'SIDE', sortOrder: 110 },
-  { category: 'HHP', code: 'SIM_TRAY', label: 'SIM tray', x: 0.04, y: 0.12, face: 'SIDE', sortOrder: 120 },
-  { category: 'HHP', code: 'LDI', label: 'Liquid damage indicator', x: 0.1, y: 0.9, face: 'SIDE', sortOrder: 130 },
+  {
+    category: 'HHP',
+    code: 'BACK_GLASS',
+    label: 'Back panel',
+    x: 0.5,
+    y: 0.55,
+    face: 'BACK',
+    sortOrder: 70,
+  },
+  {
+    category: 'HHP',
+    code: 'CAMERA_BUMP',
+    label: 'Rear camera housing',
+    x: 0.28,
+    y: 0.14,
+    face: 'BACK',
+    sortOrder: 80,
+  },
+  {
+    category: 'HHP',
+    code: 'FRAME_LEFT',
+    label: 'Left frame / volume keys',
+    x: 0.04,
+    y: 0.35,
+    face: 'SIDE',
+    sortOrder: 90,
+  },
+  {
+    category: 'HHP',
+    code: 'FRAME_RIGHT',
+    label: 'Right frame / power key',
+    x: 0.96,
+    y: 0.35,
+    face: 'SIDE',
+    sortOrder: 100,
+  },
+  {
+    category: 'HHP',
+    code: 'PORT',
+    label: 'Charging port / speaker',
+    x: 0.5,
+    y: 0.97,
+    face: 'SIDE',
+    sortOrder: 110,
+  },
+  {
+    category: 'HHP',
+    code: 'SIM_TRAY',
+    label: 'SIM tray',
+    x: 0.04,
+    y: 0.12,
+    face: 'SIDE',
+    sortOrder: 120,
+  },
+  {
+    category: 'HHP',
+    code: 'LDI',
+    label: 'Liquid damage indicator',
+    x: 0.1,
+    y: 0.9,
+    face: 'SIDE',
+    sortOrder: 130,
+  },
   // TV / consumer electronics
-  { category: 'CE', code: 'PANEL_TL', label: 'Panel — top left', x: 0.25, y: 0.25, face: 'FRONT', sortOrder: 10 },
-  { category: 'CE', code: 'PANEL_C', label: 'Panel — centre', x: 0.5, y: 0.45, face: 'FRONT', sortOrder: 20 },
-  { category: 'CE', code: 'PANEL_BR', label: 'Panel — bottom right', x: 0.75, y: 0.7, face: 'FRONT', sortOrder: 30 },
-  { category: 'CE', code: 'BEZEL', label: 'Bezel / frame', x: 0.5, y: 0.05, face: 'FRONT', sortOrder: 40 },
-  { category: 'CE', code: 'STAND', label: 'Stand / wall mount', x: 0.5, y: 0.95, face: 'FRONT', sortOrder: 50 },
-  { category: 'CE', code: 'PORTS', label: 'Rear port bank', x: 0.75, y: 0.55, face: 'BACK', sortOrder: 60 },
-  { category: 'CE', code: 'BACK_COVER', label: 'Rear cover', x: 0.4, y: 0.5, face: 'BACK', sortOrder: 70 },
+  {
+    category: 'CE',
+    code: 'PANEL_TL',
+    label: 'Panel — top left',
+    x: 0.25,
+    y: 0.25,
+    face: 'FRONT',
+    sortOrder: 10,
+  },
+  {
+    category: 'CE',
+    code: 'PANEL_C',
+    label: 'Panel — centre',
+    x: 0.5,
+    y: 0.45,
+    face: 'FRONT',
+    sortOrder: 20,
+  },
+  {
+    category: 'CE',
+    code: 'PANEL_BR',
+    label: 'Panel — bottom right',
+    x: 0.75,
+    y: 0.7,
+    face: 'FRONT',
+    sortOrder: 30,
+  },
+  {
+    category: 'CE',
+    code: 'BEZEL',
+    label: 'Bezel / frame',
+    x: 0.5,
+    y: 0.05,
+    face: 'FRONT',
+    sortOrder: 40,
+  },
+  {
+    category: 'CE',
+    code: 'STAND',
+    label: 'Stand / wall mount',
+    x: 0.5,
+    y: 0.95,
+    face: 'FRONT',
+    sortOrder: 50,
+  },
+  {
+    category: 'CE',
+    code: 'PORTS',
+    label: 'Rear port bank',
+    x: 0.75,
+    y: 0.55,
+    face: 'BACK',
+    sortOrder: 60,
+  },
+  {
+    category: 'CE',
+    code: 'BACK_COVER',
+    label: 'Rear cover',
+    x: 0.4,
+    y: 0.5,
+    face: 'BACK',
+    sortOrder: 70,
+  },
   // Air conditioning
-  { category: 'AC', code: 'INDOOR_FASCIA', label: 'Indoor unit fascia', x: 0.5, y: 0.3, face: 'FRONT', sortOrder: 10 },
-  { category: 'AC', code: 'LOUVRE', label: 'Air louvre / vanes', x: 0.5, y: 0.6, face: 'FRONT', sortOrder: 20 },
-  { category: 'AC', code: 'FILTER', label: 'Filter housing', x: 0.3, y: 0.45, face: 'FRONT', sortOrder: 30 },
-  { category: 'AC', code: 'OUTDOOR_FINS', label: 'Outdoor unit fins', x: 0.5, y: 0.5, face: 'BACK', sortOrder: 40 },
-  { category: 'AC', code: 'PIPEWORK', label: 'Pipework / insulation', x: 0.8, y: 0.75, face: 'BACK', sortOrder: 50 },
+  {
+    category: 'AC',
+    code: 'INDOOR_FASCIA',
+    label: 'Indoor unit fascia',
+    x: 0.5,
+    y: 0.3,
+    face: 'FRONT',
+    sortOrder: 10,
+  },
+  {
+    category: 'AC',
+    code: 'LOUVRE',
+    label: 'Air louvre / vanes',
+    x: 0.5,
+    y: 0.6,
+    face: 'FRONT',
+    sortOrder: 20,
+  },
+  {
+    category: 'AC',
+    code: 'FILTER',
+    label: 'Filter housing',
+    x: 0.3,
+    y: 0.45,
+    face: 'FRONT',
+    sortOrder: 30,
+  },
+  {
+    category: 'AC',
+    code: 'OUTDOOR_FINS',
+    label: 'Outdoor unit fins',
+    x: 0.5,
+    y: 0.5,
+    face: 'BACK',
+    sortOrder: 40,
+  },
+  {
+    category: 'AC',
+    code: 'PIPEWORK',
+    label: 'Pipework / insulation',
+    x: 0.8,
+    y: 0.75,
+    face: 'BACK',
+    sortOrder: 50,
+  },
   // Refrigeration
-  { category: 'REF', code: 'DOOR_UPPER', label: 'Upper door', x: 0.5, y: 0.25, face: 'FRONT', sortOrder: 10 },
-  { category: 'REF', code: 'DOOR_LOWER', label: 'Lower door', x: 0.5, y: 0.7, face: 'FRONT', sortOrder: 20 },
-  { category: 'REF', code: 'GASKET', label: 'Door gasket / seal', x: 0.12, y: 0.45, face: 'FRONT', sortOrder: 30 },
-  { category: 'REF', code: 'HANDLE', label: 'Handle', x: 0.85, y: 0.4, face: 'FRONT', sortOrder: 40 },
-  { category: 'REF', code: 'INTERIOR', label: 'Interior / shelving', x: 0.5, y: 0.5, face: 'FRONT', sortOrder: 50 },
-  { category: 'REF', code: 'COMPRESSOR', label: 'Compressor bay', x: 0.5, y: 0.9, face: 'BACK', sortOrder: 60 },
-  { category: 'REF', code: 'SIDE_PANEL', label: 'Side panel', x: 0.05, y: 0.5, face: 'SIDE', sortOrder: 70 },
+  {
+    category: 'REF',
+    code: 'DOOR_UPPER',
+    label: 'Upper door',
+    x: 0.5,
+    y: 0.25,
+    face: 'FRONT',
+    sortOrder: 10,
+  },
+  {
+    category: 'REF',
+    code: 'DOOR_LOWER',
+    label: 'Lower door',
+    x: 0.5,
+    y: 0.7,
+    face: 'FRONT',
+    sortOrder: 20,
+  },
+  {
+    category: 'REF',
+    code: 'GASKET',
+    label: 'Door gasket / seal',
+    x: 0.12,
+    y: 0.45,
+    face: 'FRONT',
+    sortOrder: 30,
+  },
+  {
+    category: 'REF',
+    code: 'HANDLE',
+    label: 'Handle',
+    x: 0.85,
+    y: 0.4,
+    face: 'FRONT',
+    sortOrder: 40,
+  },
+  {
+    category: 'REF',
+    code: 'INTERIOR',
+    label: 'Interior / shelving',
+    x: 0.5,
+    y: 0.5,
+    face: 'FRONT',
+    sortOrder: 50,
+  },
+  {
+    category: 'REF',
+    code: 'COMPRESSOR',
+    label: 'Compressor bay',
+    x: 0.5,
+    y: 0.9,
+    face: 'BACK',
+    sortOrder: 60,
+  },
+  {
+    category: 'REF',
+    code: 'SIDE_PANEL',
+    label: 'Side panel',
+    x: 0.05,
+    y: 0.5,
+    face: 'SIDE',
+    sortOrder: 70,
+  },
 ];
 
 /**
@@ -863,7 +1119,12 @@ const WORKFLOW_STATES: Array<{
     sortOrder: 10,
     stage: 'INTAKE',
   },
-  { code: 'DIAGNOSING', label: 'Diagnosing', sortOrder: 20, stage: 'DIAGNOSIS' },
+  {
+    code: 'DIAGNOSING',
+    label: 'Diagnosing',
+    sortOrder: 20,
+    stage: 'DIAGNOSIS',
+  },
   {
     code: 'AWAITING_CUSTOMER_APPROVAL',
     label: 'Awaiting Customer Approval',
@@ -969,6 +1230,21 @@ const WORKFLOW_TRANSITIONS: Array<{
     from: 'DIAGNOSING',
     to: 'AWAITING_PARTS',
     requiredPermission: 'job.transition',
+    // Don't park a job in an SLA-PAUSING hold with nothing on order: the bench
+    // must have raised a parts request first, so the hold means what it says.
+    guardCode: 'parts_requested',
+  },
+  {
+    // Skip the parts hold entirely when the bench needs nothing, or needs only
+    // what is already on the shelf. Without this edge every job had to pass
+    // through AWAITING_PARTS or AWAITING_CUSTOMER_APPROVAL to reach repair,
+    // pausing the SLA clock for a wait that was not happening. Still fully
+    // gated: an out-of-warranty job needs its approved quote, a BER-flagged
+    // device is blocked, and nothing may be outstanding from stores.
+    from: 'DIAGNOSING',
+    to: 'IN_REPAIR',
+    requiredPermission: 'job.transition.repair',
+    guardCode: 'ow_quote_approved,ber_not_blocking,parts_received',
   },
   {
     from: 'DIAGNOSING',
@@ -1004,7 +1280,10 @@ const WORKFLOW_TRANSITIONS: Array<{
     from: 'AWAITING_PARTS',
     to: 'IN_REPAIR',
     requiredPermission: 'job.transition.repair',
-    guardCode: 'ber_not_blocking',
+    // The bench must actually HAVE the parts: approved, picked, handed over
+    // and acknowledged. "Issued" is what stores asserts; the acknowledgement
+    // is the technician confirming it arrived.
+    guardCode: 'ber_not_blocking,parts_received',
   },
   {
     from: 'IN_REPAIR',
@@ -1593,7 +1872,9 @@ async function main(): Promise<void> {
     // Depth is derived, not declared: it can only ever be the parent's depth
     // plus one, and a hand-maintained `level` column would drift.
     const level = n.parent
-      ? (SYMPTOM_TREE.find((x) => x.code === n.parent)?.parent ? 3 : 2)
+      ? SYMPTOM_TREE.find((x) => x.code === n.parent)?.parent
+        ? 3
+        : 2
       : 1;
     // A node is a LEAF when nothing else names it as a parent — computed, so
     // adding a child to a former leaf automatically demotes it.
@@ -1743,7 +2024,9 @@ async function main(): Promise<void> {
       },
     });
   }
-  console.log(`templates:      ${NOTIFICATION_TEMPLATES.length} notification templates`);
+  console.log(
+    `templates:      ${NOTIFICATION_TEMPLATES.length} notification templates`,
+  );
 
   console.log('Seed complete.');
 }
