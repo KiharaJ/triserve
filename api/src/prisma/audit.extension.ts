@@ -3,6 +3,11 @@ import {
   getCurrentUser,
   getRequestMeta,
 } from '../common/context/request-context';
+import {
+  getAuditTx,
+  runWithoutAuditTx,
+  type AuditTxClient,
+} from './audit-tx-context';
 
 /**
  * Audit-log Prisma client extension (Task 0.4, DESIGN.md §4.8).
@@ -34,13 +39,18 @@ import {
  *     out-of-scope update still fails with P2025, before any audit write).
  *   - ATOMIC: mutation + audit row commit or roll back together.
  *
+ * CALLER-MANAGED TRANSACTIONS: an audited mutation inside
+ * `PrismaService.$transaction(...)` JOINS the caller's transaction instead of
+ * opening its own — {@link PrismaService.$transaction} publishes its tx client
+ * on AsyncLocalStorage and the hook picks it up via `getAuditTx()`. Mutation,
+ * before-read and audit row then commit or roll back as one unit on one
+ * connection. Always mutate through the `tx` handle the callback was given;
+ * see audit-tx-context.ts for why, and for the deadlock this replaced.
+ *
  * KNOWN LIMITATIONS (documented tradeoff of same-transaction interception):
- *   - Audited mutations must NOT be wrapped in a caller-managed
- *     `$transaction` (interactive or batch array): the hook opens its own
- *     transaction on the inner client, which would escape the caller's tx
- *     (and the batch form requires PrismaPromise, which the hook no longer
- *     returns). No service does this today; when one needs to, use
- *     AuditService.record(...) inside its own tx instead.
+ *   - The BATCH array form of `$transaction([...])` still cannot carry an
+ *     audited mutation: it requires PrismaPromise, which the hook does not
+ *     return. Use the interactive callback form.
  *   - `createMany` on audited models THROWS (fail closed): MySQL cannot
  *     return the created rows, so their after-state could not be captured.
  *     Use `create` in a loop (or the raw seed client, which bypasses the
@@ -339,6 +349,111 @@ function entityIdOf(row: Row, model: Prisma.ModelName, operation: string) {
   return id;
 }
 
+/**
+ * Run the audit bookkeeping for one mutation ON AN EXISTING transaction.
+ *
+ * Mirrors the per-operation logic of the self-managed path below, with two
+ * differences: the mutation itself is performed by `mutate()` (the hook's own
+ * `query(args)`, which runs on the caller's transaction without re-entering
+ * this hook), and the before/after reads plus the audit insert go through the
+ * caller's tx client. Reads are not audited operations, so they pass straight
+ * through the hook untouched — no recursion.
+ */
+async function auditOnTx(
+  tx: AuditTxClient,
+  p: {
+    model: Prisma.ModelName;
+    operation: string;
+    args: unknown;
+    where: unknown;
+    dk: string;
+    mutate: () => Promise<Row>;
+  },
+): Promise<unknown> {
+  const { model, operation, where } = p;
+  const d = tx[p.dk] as Delegate;
+  const txLike = tx as unknown as TxLike;
+
+  switch (operation) {
+    case 'create': {
+      const result = await p.mutate();
+      const id = entityIdOf(result, model, operation);
+      const after = await d.findUnique({ where: { id } });
+      await writeAudit(txLike, model, 'CREATE', id, null, after);
+      return result;
+    }
+    case 'update': {
+      const before = await d.findUnique({ where });
+      const result = await p.mutate(); // P2025 if out of scope
+      const id = entityIdOf(before ?? result, model, operation);
+      const after = await d.findUnique({ where: { id } });
+      await writeAudit(txLike, model, 'UPDATE', id, before, after);
+      return result;
+    }
+    case 'upsert': {
+      const before = await d.findUnique({ where });
+      const result = await p.mutate();
+      const id = entityIdOf(before ?? result, model, operation);
+      const after = await d.findUnique({ where: { id } });
+      await writeAudit(
+        txLike,
+        model,
+        before ? 'UPDATE' : 'CREATE',
+        id,
+        before,
+        after,
+      );
+      return result;
+    }
+    case 'delete': {
+      const before = await d.findUnique({ where });
+      const result = await p.mutate();
+      const id = entityIdOf(before ?? result, model, operation);
+      await writeAudit(txLike, model, 'DELETE', id, before ?? result, null);
+      return result;
+    }
+    case 'updateMany': {
+      const beforeRows = await d.findMany({ where });
+      const result = await p.mutate();
+      const ids = beforeRows.map((r) => r.id as string);
+      const afterRows = ids.length
+        ? await d.findMany({ where: { id: { in: ids } } })
+        : [];
+      const afterById = new Map(afterRows.map((r) => [r.id as string, r]));
+      for (const before of beforeRows) {
+        const id = before.id as string;
+        await writeAudit(
+          txLike,
+          model,
+          'UPDATE',
+          id,
+          before,
+          afterById.get(id) ?? null,
+        );
+      }
+      return result;
+    }
+    case 'deleteMany': {
+      const beforeRows = await d.findMany({ where });
+      const result = await p.mutate();
+      for (const before of beforeRows) {
+        await writeAudit(
+          txLike,
+          model,
+          'DELETE',
+          before.id as string,
+          before,
+          null,
+        );
+      }
+      return result;
+    }
+    /* istanbul ignore next -- unreachable, set-guarded by the caller */
+    default:
+      return p.mutate();
+  }
+}
+
 export const auditExtension = Prisma.defineExtension((client) => {
   // The inner client (company-scoped, WITHOUT this hook) — all re-dispatch
   // and audit writes go through it, which is what prevents recursion.
@@ -374,101 +489,124 @@ export const auditExtension = Prisma.defineExtension((client) => {
           const where = whereOf(args);
           const dk = delegateKey(model);
 
+          // A caller-managed transaction is already in flight: JOIN it rather
+          // than opening a second one on another connection. Opening our own
+          // here deadlocks against the caller's locks and half-commits the
+          // write — see audit-tx-context.ts for the full mechanism.
+          const callerTx = getAuditTx();
+          if (callerTx) {
+            // `query(args)` performs the mutation on the caller's transaction
+            // WITHOUT re-entering this hook; the reads and the audit insert go
+            // through the same tx client, so all of it is one unit of work.
+            return auditOnTx(callerTx, {
+              model,
+              operation,
+              args,
+              where,
+              dk,
+              mutate: () => query(args) as Promise<Row>,
+            });
+          }
+
           // Mutation + before-read + audit insert: ONE transaction on the
           // inner client (company-scope applies inside; no audit recursion).
-          return inner.$transaction(async (tx) => {
-            const d = tx[dk] as Delegate;
+          // `runWithoutAuditTx` keeps this tx private to the hook — it must
+          // never be mistaken for a caller transaction by a nested call.
+          return runWithoutAuditTx(() =>
+            inner.$transaction(async (tx) => {
+              const d = tx[dk] as Delegate;
 
-            switch (operation) {
-              case 'create': {
-                const result = await d.create(args);
-                const id = entityIdOf(result, model, operation);
-                // Snapshot from a fresh full read so caller `select`/
-                // `include` never truncates the audit record.
-                const after = await d.findUnique({ where: { id } });
-                await writeAudit(tx, model, 'CREATE', id, null, after);
-                return result;
-              }
-              case 'update': {
-                const before = await d.findUnique({ where });
-                const result = await d.update(args); // P2025 if out of scope
-                const id = entityIdOf(before ?? result, model, operation);
-                const after = await d.findUnique({ where: { id } });
-                await writeAudit(tx, model, 'UPDATE', id, before, after);
-                return result;
-              }
-              case 'upsert': {
-                const before = await d.findUnique({ where });
-                const result = await d.upsert(args);
-                const id = entityIdOf(before ?? result, model, operation);
-                const after = await d.findUnique({ where: { id } });
-                await writeAudit(
-                  tx,
-                  model,
-                  before ? 'UPDATE' : 'CREATE',
-                  id,
-                  before,
-                  after,
-                );
-                return result;
-              }
-              case 'delete': {
-                const before = await d.findUnique({ where });
-                const result = await d.delete(args);
-                const id = entityIdOf(before ?? result, model, operation);
-                await writeAudit(
-                  tx,
-                  model,
-                  'DELETE',
-                  id,
-                  before ?? result,
-                  null,
-                );
-                return result;
-              }
-              case 'updateMany': {
-                const beforeRows = await d.findMany({ where });
-                const result = await d.updateMany(args);
-                const ids = beforeRows.map((r) => r.id as string);
-                const afterRows = ids.length
-                  ? await d.findMany({ where: { id: { in: ids } } })
-                  : [];
-                const afterById = new Map(
-                  afterRows.map((r) => [r.id as string, r]),
-                );
-                for (const before of beforeRows) {
-                  const id = before.id as string;
+              switch (operation) {
+                case 'create': {
+                  const result = await d.create(args);
+                  const id = entityIdOf(result, model, operation);
+                  // Snapshot from a fresh full read so caller `select`/
+                  // `include` never truncates the audit record.
+                  const after = await d.findUnique({ where: { id } });
+                  await writeAudit(tx, model, 'CREATE', id, null, after);
+                  return result;
+                }
+                case 'update': {
+                  const before = await d.findUnique({ where });
+                  const result = await d.update(args); // P2025 if out of scope
+                  const id = entityIdOf(before ?? result, model, operation);
+                  const after = await d.findUnique({ where: { id } });
+                  await writeAudit(tx, model, 'UPDATE', id, before, after);
+                  return result;
+                }
+                case 'upsert': {
+                  const before = await d.findUnique({ where });
+                  const result = await d.upsert(args);
+                  const id = entityIdOf(before ?? result, model, operation);
+                  const after = await d.findUnique({ where: { id } });
                   await writeAudit(
                     tx,
                     model,
-                    'UPDATE',
+                    before ? 'UPDATE' : 'CREATE',
                     id,
                     before,
-                    afterById.get(id) ?? null,
+                    after,
                   );
+                  return result;
                 }
-                return result;
-              }
-              case 'deleteMany': {
-                const beforeRows = await d.findMany({ where });
-                const result = await d.deleteMany(args);
-                for (const before of beforeRows) {
+                case 'delete': {
+                  const before = await d.findUnique({ where });
+                  const result = await d.delete(args);
+                  const id = entityIdOf(before ?? result, model, operation);
                   await writeAudit(
                     tx,
                     model,
                     'DELETE',
-                    before.id as string,
-                    before,
+                    id,
+                    before ?? result,
                     null,
                   );
+                  return result;
                 }
-                return result;
+                case 'updateMany': {
+                  const beforeRows = await d.findMany({ where });
+                  const result = await d.updateMany(args);
+                  const ids = beforeRows.map((r) => r.id as string);
+                  const afterRows = ids.length
+                    ? await d.findMany({ where: { id: { in: ids } } })
+                    : [];
+                  const afterById = new Map(
+                    afterRows.map((r) => [r.id as string, r]),
+                  );
+                  for (const before of beforeRows) {
+                    const id = before.id as string;
+                    await writeAudit(
+                      tx,
+                      model,
+                      'UPDATE',
+                      id,
+                      before,
+                      afterById.get(id) ?? null,
+                    );
+                  }
+                  return result;
+                }
+                case 'deleteMany': {
+                  const beforeRows = await d.findMany({ where });
+                  const result = await d.deleteMany(args);
+                  for (const before of beforeRows) {
+                    await writeAudit(
+                      tx,
+                      model,
+                      'DELETE',
+                      before.id as string,
+                      before,
+                      null,
+                    );
+                  }
+                  return result;
+                }
+                /* istanbul ignore next -- unreachable, set-guarded above */
+                default:
+                  return query(args);
               }
-              /* istanbul ignore next -- unreachable, set-guarded above */
-              default:
-                return query(args);
-            }
-          });
+            }),
+          );
         },
       },
     },

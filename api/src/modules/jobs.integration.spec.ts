@@ -297,7 +297,8 @@ async function verifyCollectionOtp(
   const code = [...(sms.body ?? '').matchAll(/\d{6}/g)]
     .map((m) => m[0])
     .find(
-      (c) => createHash('sha256').update(c, 'utf8').digest('hex') === live.codeHash,
+      (c) =>
+        createHash('sha256').update(c, 'utf8').digest('hex') === live.codeHash,
     );
   if (!code) throw new Error(`No PIN matching the stored hash in: ${sms.body}`);
 
@@ -729,6 +730,61 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
     expect(row.dispatchedAt).not.toBeNull();
   });
 
+  /**
+   * A state move writes THREE things that must agree: `jobs.state_id`, the SLA
+   * clock rows, and a semantic TRANSITION audit row. They used to be able to
+   * disagree — the audited job UPDATE escaped the caller's transaction, so the
+   * job advanced while the clock rows rolled back and the request 500'd before
+   * the TRANSITION row was ever written. Asserting only `state_code` (as the
+   * walk test above does) cannot see that, so assert the whole set.
+   */
+  it('a transition commits the state, the SLA clock and the TRANSITION audit row together', async () => {
+    const job = await createJob(tokens.admin, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Atomic`, phone: '0765440060' },
+      device: { category: 'HHP', imei_serial: '353000000000060' },
+    });
+    await completeIntake(tokens.advisorDar, job.id);
+
+    const moved = await transition(tokens.admin, job.id, 'DIAGNOSING');
+    expect(moved.job.state_code).toBe('DIAGNOSING');
+
+    const events = await raw.jobStateEvent.findMany({
+      where: { jobId: job.id },
+      include: { state: true },
+      orderBy: { enteredAt: 'asc' },
+    });
+
+    // Exactly ONE open row, and it is the state the job is actually in.
+    const open = events.filter((e) => e.exitedAt === null);
+    expect(open).toHaveLength(1);
+    expect(open[0].state.code).toBe('DIAGNOSING');
+
+    // The row it replaced was closed, with a duration written.
+    const closed = events.filter((e) => e.exitedAt !== null);
+    expect(closed.length).toBeGreaterThanOrEqual(1);
+    expect(closed[closed.length - 1].state.code).toBe('RECEIVED');
+    expect(closed[closed.length - 1].durationMs).not.toBeNull();
+
+    // The semantic TRANSITION row (written after the transaction commits) —
+    // its absence is what proved the move had thrown midway.
+    const transitions = await raw.auditLog.findMany({
+      where: { entityType: 'Job', entityId: job.id, action: 'TRANSITION' },
+    });
+    expect(transitions).toHaveLength(1);
+    expect(transitions[0].afterJson).toMatchObject({
+      state_code: 'DIAGNOSING',
+    });
+
+    // And the job row agrees with the clock.
+    const row = await raw.job.findUniqueOrThrow({
+      where: { id: job.id },
+      include: { state: true },
+    });
+    expect(row.state.code).toBe('DIAGNOSING');
+    expect(row.diagnosisStartedAt).not.toBeNull();
+  });
+
   it('a TECHNICIAN cannot dispatch (lacks job.transition.dispatch) → 403', async () => {
     await request(app.getHttpServer())
       .post(`/api/v1/jobs/${createdJobIds[0]}/dispatch`)
@@ -800,7 +856,7 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
       .expect(200);
     const codes = ((res.body as JobBody).allowed_next_transitions ?? []).map(
       (t) => t.to_state_code,
-    )
+    );
     expect(codes).toContain('RECEIVED');
   });
 });

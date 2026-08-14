@@ -1,7 +1,14 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { runWithAuditTx, type AuditTxClient } from './audit-tx-context';
 import { auditExtension } from './audit.extension';
 import { companyScopeExtension } from './company-scope.extension';
+
+/** The interactive-callback form of `$transaction`. */
+type InteractiveTx = (
+  fn: (tx: unknown) => Promise<unknown>,
+  options?: unknown,
+) => Promise<unknown>;
 
 /**
  * PrismaClient with the company/branch scoping extension (Task 0.3) AND the
@@ -21,6 +28,13 @@ import { companyScopeExtension } from './company-scope.extension';
  * (company-scoped, audit-free) client in one transaction — see
  * audit.extension.ts for why this composes without recursion.
  *
+ * `$transaction` IS WRAPPED (interactive form only) to publish its transaction
+ * client on AsyncLocalStorage. That lets the audit hook JOIN a caller-managed
+ * transaction rather than opening a second one on another connection, which
+ * used to deadlock and half-commit the write — see audit-tx-context.ts. The
+ * batch array form is passed through untouched (it cannot carry an audited
+ * mutation anyway).
+ *
  * Scoping bypass for system code (seeds, no-context tests) is documented in
  * company-scope.extension.ts / request-context.ts.
  *
@@ -31,9 +45,34 @@ import { companyScopeExtension } from './company-scope.extension';
 export class PrismaService extends PrismaClient implements OnModuleDestroy {
   constructor() {
     super();
-    return this.$extends(companyScopeExtension).$extends(
+    const extended = this.$extends(companyScopeExtension).$extends(
       auditExtension,
-    ) as unknown as this;
+    );
+
+    // Bound BEFORE the proxy below, so the wrapper calls the real
+    // implementation instead of recursing into itself.
+    const original = (extended.$transaction as unknown as InteractiveTx).bind(
+      extended,
+    );
+
+    const wrapped: InteractiveTx = (fn, options) => {
+      // Batch array form: pass through — `fn` is an array of PrismaPromise,
+      // not a callback, and no audited mutation can appear in one.
+      if (typeof fn !== 'function') {
+        return original(fn, options);
+      }
+      return original(
+        (tx) => runWithAuditTx(tx as AuditTxClient, () => fn(tx)),
+        options,
+      );
+    };
+
+    return new Proxy(extended, {
+      get(target, prop, receiver) {
+        if (prop === '$transaction') return wrapped;
+        return Reflect.get(target, prop, receiver) as unknown;
+      },
+    }) as unknown as this;
   }
 
   async onModuleDestroy(): Promise<void> {
