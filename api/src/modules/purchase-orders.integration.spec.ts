@@ -7,7 +7,8 @@
  *   - submit records requires_approval from the PURCHASE_ORDER threshold;
  *   - a small PO (no rule) goes submit → order directly;
  *   - a large PO must be APPROVED before order (order → 422 until approved);
- *     approve needs po.approve (a STOREKEEPER is 403, a BRANCH_MANAGER 200);
+ *     approve needs po.approve (a STOREKEEPER is 403, a BRANCH_MANAGER 200,
+ *     and a company-defined role granted it in the matrix 201);
  *   - order stamps order_date + expected_date (supplier lead time);
  *   - cancel a DRAFT; state-machine guards (submit non-DRAFT, approve non-
  *     SUBMITTED) → 409;
@@ -36,7 +37,15 @@ const EMAILS = {
   storeDar: 'test-2-6-store-dar@triserve.test',
   mgrDar: 'test-2-6-mgr-dar@triserve.test',
   storeKrk: 'test-2-6-store-krk@triserve.test',
+  procMgr: 'test-2-6-proc-mgr@triserve.test',
 };
+
+/**
+ * A COMPANY-DEFINED role (E17): no entry in the static ROLE_PERMISSIONS
+ * matrix, so every permission it holds comes from a `granted` row in
+ * `role_permissions`. See the approve regression test below.
+ */
+const CUSTOM_ROLE = 'TEST_2_6_PROC_MGR';
 
 const raw = new PrismaClient();
 
@@ -107,6 +116,25 @@ beforeAll(async () => {
     await raw.branch.findFirstOrThrow({ where: { companyId, code: 'KRK' } })
   ).id;
 
+  // Registered BEFORE the app is built, so nothing has cached this company's
+  // override set yet and no resolver invalidation is needed.
+  await raw.role.create({
+    data: {
+      companyId,
+      key: CUSTOM_ROLE,
+      label: `${TEST_PREFIX} Procurement Manager`,
+      isSystem: false,
+    },
+  });
+  await raw.rolePermission.createMany({
+    data: ['po.read', 'po.approve'].map((permission) => ({
+      companyId,
+      role: CUSTOM_ROLE,
+      permission,
+      granted: true,
+    })),
+  });
+
   const passwordHash = await argon2.hash(PASSWORD, { type: argon2.argon2id });
   const mk = (
     email: string,
@@ -126,16 +154,18 @@ beforeAll(async () => {
       },
     });
 
-  const [admin, storeDar, mgrDar, storeKrk] = await Promise.all([
+  const [admin, storeDar, mgrDar, storeKrk, procMgr] = await Promise.all([
     mk(EMAILS.admin, 'SUPER_ADMIN', 'group', null),
     mk(EMAILS.storeDar, 'STOREKEEPER', 'branch', branchDar),
     mk(EMAILS.mgrDar, 'BRANCH_MANAGER', 'branch', branchDar),
     mk(EMAILS.storeKrk, 'STOREKEEPER', 'branch', branchKrk),
+    mk(EMAILS.procMgr, CUSTOM_ROLE, 'branch', branchDar),
   ]);
   ids.admin = admin.id;
   ids.storeDar = storeDar.id;
   ids.mgrDar = mgrDar.id;
   ids.storeKrk = storeKrk.id;
+  ids.procMgr = procMgr.id;
 
   const supplier = await raw.supplier.create({
     data: {
@@ -180,6 +210,7 @@ beforeAll(async () => {
   tokens.storeDar = await login(EMAILS.storeDar);
   tokens.mgrDar = await login(EMAILS.mgrDar);
   tokens.storeKrk = await login(EMAILS.storeKrk);
+  tokens.procMgr = await login(EMAILS.procMgr);
 });
 
 afterAll(async () => {
@@ -198,6 +229,10 @@ afterAll(async () => {
   await raw.user.deleteMany({
     where: { email: { in: Object.values(EMAILS) } },
   });
+  await raw.rolePermission.deleteMany({
+    where: { companyId, role: CUSTOM_ROLE },
+  });
+  await raw.role.deleteMany({ where: { companyId, key: CUSTOM_ROLE } });
   await raw.$disconnect();
   await app.close();
 });
@@ -303,6 +338,25 @@ describe('Approval gate + state machine', () => {
     await raw.approvalRule.deleteMany({
       where: { companyId, type: 'PURCHASE_ORDER' },
     });
+  });
+
+  /**
+   * Regression (E17): approve() re-checked 'po.approve' with the STATIC
+   * ROLE_PERMISSIONS helper after the endpoint's PermissionsGuard had already
+   * cleared it against the EFFECTIVE matrix. A company-defined role has no
+   * static entry, so it passed the guard and was then refused 403 by the
+   * service — for a permission its company had explicitly granted it.
+   */
+  it('a custom role granted po.approve can approve (not just the built-ins)', async () => {
+    const po = await createPo(tokens.storeDar, {
+      branch_id: branchDar,
+      supplier_id: supplierId,
+      lines: [{ part_id: partA, qty_ordered: 2, unit_cost: '250' }],
+    });
+    await act(tokens.storeDar, po.id, 'submit').expect(201);
+
+    const approved = await act(tokens.procMgr, po.id, 'approve').expect(201);
+    expect((approved.body as PoBody).status).toBe('APPROVED');
   });
 
   it('cancels a DRAFT and rejects editing a non-DRAFT', async () => {

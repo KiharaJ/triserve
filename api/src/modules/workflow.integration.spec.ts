@@ -9,6 +9,9 @@
  *     READY→DISPATCHED edge while a SERVICE_ADVISOR can; an advisor cannot
  *     take the bench-only AWAITING_PARTS→IN_REPAIR edge while a tech can;
  *   - assertTransition throws 422 with a clear message;
+ *   - edge permissions resolve through the EFFECTIVE matrix (E17), so a
+ *     company-defined role's granted override opens an edge and a revoked
+ *     override closes one the built-in default would have opened;
  *   - the guard registry is consulted on guarded edges (stub spied on),
  *     a failing guard blocks the move, an UNREGISTERED guard fails closed;
  *   - POST /workflow/states|transitions are admin-gated ('config.manage'),
@@ -27,6 +30,7 @@ import type { App } from 'supertest/types';
 import { AppModule } from '../app.module';
 import { AllExceptionsFilter } from '../common/filters/all-exceptions.filter';
 import type { AuthUser } from './auth/auth.types';
+import { PermissionResolverService } from './roles/permission-resolver.service';
 import {
   WORKFLOW_GUARDS,
   type WorkflowGuard,
@@ -63,6 +67,7 @@ const raw = new PrismaClient();
 
 let app: INestApplication<App>;
 let workflow: WorkflowService;
+let resolver: PermissionResolverService;
 let companyId: string; // seeded "Samsung ASC Group"
 let companyBId: string; // __TEST_1_2__ second tenant
 let branchDar: string;
@@ -212,6 +217,7 @@ beforeAll(async () => {
   app.useGlobalFilters(new AllExceptionsFilter()); // same as main.ts
   await app.init();
   workflow = app.get(WorkflowService);
+  resolver = app.get(PermissionResolverService);
 
   adminToken = await login(ADMIN_EMAIL);
   advisorToken = await login(ADVISOR_EMAIL);
@@ -441,7 +447,7 @@ describe('WorkflowService.canTransition (§4.10 engine semantics)', () => {
       'AWAITING_PARTS',
       'IN_REPAIR',
       techUser,
-      { job: { id: 'job-ctx-no-ber', companyId } },
+      { job: { id: 'job-ctx-no-ber', companyId, coverage: 'FULL' as const } },
     );
     expect(techCheck.allowed).toBe(true);
   });
@@ -465,6 +471,132 @@ describe('WorkflowService.canTransition (§4.10 engine semantics)', () => {
         where: { companyId, code: 'QC' },
         data: { active: true },
       });
+    }
+  });
+});
+
+/**
+ * Regression: a COMPANY-DEFINED role has no entry in the static
+ * ROLE_PERMISSIONS matrix, so its permissions come entirely from `granted`
+ * rows in `role_permissions` (E17). canTransition used to test the edge's
+ * `required_permission` with `roleHasPermission`, which reads only the
+ * built-in defaults — so every custom role was refused EVERY edge, with a
+ * reason naming the very permission the matrix had granted it, while the
+ * endpoint's PermissionsGuard (which resolves the effective matrix) let the
+ * request through. Both gates must now answer the same question.
+ */
+describe('custom-role permissions on transition edges (E17 regression)', () => {
+  const SUP_ROLE = 'TEST_1_2_TECH_SUP'; // custom, granted the bench permission
+  const BARE_ROLE = 'TEST_1_2_BARE'; // custom, granted nothing
+
+  let supUser: AuthUser;
+  let bareUser: AuthUser;
+
+  beforeAll(async () => {
+    await raw.role.createMany({
+      data: [
+        {
+          companyId,
+          key: SUP_ROLE,
+          label: `${TEST_PREFIX} Technical Supervisor`,
+          isSystem: false,
+        },
+        {
+          companyId,
+          key: BARE_ROLE,
+          label: `${TEST_PREFIX} Bare Role`,
+          isSystem: false,
+        },
+      ],
+    });
+    await raw.rolePermission.createMany({
+      data: ['job.transition', 'job.transition.repair'].map((permission) => ({
+        companyId,
+        role: SUP_ROLE,
+        permission,
+        granted: true,
+      })),
+    });
+    // Earlier tests in this suite may already have cached this company's
+    // override set (30s TTL); the app invalidates on every write through
+    // RolesService, and a raw insert has to do the same by hand.
+    resolver.invalidate(companyId);
+
+    // canTransition reads the role off the AuthUser and never loads the user
+    // row, so these reuse an existing fixture id rather than adding users.
+    supUser = authUser(techId, SUP_ROLE, 'branch', branchDar);
+    bareUser = authUser(techId, BARE_ROLE, 'branch', branchDar);
+  });
+
+  afterAll(async () => {
+    await raw.rolePermission.deleteMany({
+      where: { companyId, role: { in: [SUP_ROLE, BARE_ROLE] } },
+    });
+    await raw.role.deleteMany({
+      where: { companyId, key: { in: [SUP_ROLE, BARE_ROLE] } },
+    });
+    resolver.invalidate(companyId);
+  });
+
+  it('honours a granted override: the custom role clears the bench edge', async () => {
+    const check = await workflow.canTransition(
+      companyId,
+      'AWAITING_PARTS',
+      'IN_REPAIR',
+      supUser,
+      { job: { id: 'job-ctx-no-ber', companyId, coverage: 'FULL' as const } },
+    );
+    // Same context the TECHNICIAN is allowed through with above — so any
+    // refusal here could only come from the permission layer.
+    expect(check.reason).toBeUndefined();
+    expect(check.allowed).toBe(true);
+  });
+
+  it('still REFUSES a custom role that was granted nothing', async () => {
+    const check = await workflow.canTransition(
+      companyId,
+      'AWAITING_PARTS',
+      'IN_REPAIR',
+      bareUser,
+      { job: { id: 'job-ctx-no-ber', companyId, coverage: 'FULL' as const } },
+    );
+    expect(check.allowed).toBe(false);
+    expect(check.reason).toBe(
+      "Not authorized: AWAITING_PARTS → IN_REPAIR requires permission 'job.transition.repair'",
+    );
+  });
+
+  it('a REVOKED override closes an edge the built-in default opens', async () => {
+    // The mirror image: overrides must subtract as well as add, which the
+    // static helper could never see either.
+    await raw.rolePermission.create({
+      data: {
+        companyId,
+        role: 'TECHNICIAN',
+        permission: 'job.transition.repair',
+        granted: false,
+      },
+    });
+    resolver.invalidate(companyId);
+    try {
+      const check = await workflow.canTransition(
+        companyId,
+        'AWAITING_PARTS',
+        'IN_REPAIR',
+        techUser,
+        { job: { id: 'job-ctx-no-ber', companyId, coverage: 'FULL' as const } },
+      );
+      expect(check.allowed).toBe(false);
+      expect(check.reason).toContain("'job.transition.repair'");
+    } finally {
+      await raw.rolePermission.deleteMany({
+        where: {
+          companyId,
+          role: 'TECHNICIAN',
+          permission: 'job.transition.repair',
+        },
+      });
+      resolver.invalidate(companyId);
     }
   });
 });

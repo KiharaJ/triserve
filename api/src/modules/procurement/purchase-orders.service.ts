@@ -7,13 +7,14 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { Prisma, type PurchaseOrderStatus } from '@prisma/client';
-import { roleHasPermission, type PaginatedResponse } from '@triserve/shared';
+import { type PaginatedResponse } from '@triserve/shared';
 import { randomUUID } from 'node:crypto';
 import { assertBranchAccess } from '../../common/authz/branch-access';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuditService } from '../audit/audit.service';
 import type { AuthUser } from '../auth/auth.types';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import type {
   CreatePurchaseOrderDto,
   PoLineInput,
@@ -89,6 +90,7 @@ export class PurchaseOrdersService {
     private readonly prisma: PrismaService,
     private readonly approvals: ApprovalsService,
     private readonly audit: AuditService,
+    private readonly permissions: PermissionResolverService,
   ) {}
 
   // ------------------------------------------------------------------ queries
@@ -276,7 +278,12 @@ export class PurchaseOrdersService {
 
   /** POST /purchase-orders/{id}/approve — SUBMITTED → APPROVED (po.approve). */
   async approve(id: string, user: AuthUser): Promise<PurchaseOrderWire> {
-    if (!roleHasPermission(user.role, 'po.approve')) {
+    // Resolved through the effective matrix, not the static defaults — a
+    // company-defined role granted 'po.approve' must actually be able to
+    // approve. See the same fix in WorkflowService.canTransition.
+    if (
+      !(await this.permissions.has(user.companyId, user.role, 'po.approve'))
+    ) {
       throw new ForbiddenException('Missing permission(s): po.approve');
     }
     const po = await this.load(id);

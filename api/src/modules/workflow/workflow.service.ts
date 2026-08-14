@@ -10,13 +10,10 @@ import {
   type WorkflowState,
   type WorkflowTransition,
 } from '@prisma/client';
-import {
-  roleHasPermission,
-  type PaginatedResponse,
-  type Permission,
-} from '@triserve/shared';
+import { type PaginatedResponse, type Permission } from '@triserve/shared';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { AuthUser } from '../auth/auth.types';
+import { PermissionResolverService } from '../roles/permission-resolver.service';
 import type {
   CreateWorkflowStateDto,
   CreateWorkflowTransitionDto,
@@ -126,7 +123,10 @@ type TransitionWithStates = WorkflowTransition & {
  *      active;
  *   2. an edge from→to exists (otherwise ILLEGAL);
  *   3. the acting user's role holds the edge's `required_permission`, if
- *      any (otherwise UNAUTHORIZED);
+ *      any (otherwise UNAUTHORIZED). Resolved through
+ *      {@link PermissionResolverService} — the same EFFECTIVE matrix the
+ *      {@link PermissionsGuard} enforces, so a custom role or a company's
+ *      matrix edit is honoured here exactly as it is on the endpoint;
  *   4. the edge's `guard_code` (if any) resolves in the guard registry and
  *      its predicate passes — unknown guard codes fail CLOSED.
  *
@@ -135,7 +135,10 @@ type TransitionWithStates = WorkflowTransition & {
  */
 @Injectable()
 export class WorkflowService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissions: PermissionResolverService,
+  ) {}
 
   // -------------------------------------------------------------- queries
 
@@ -425,9 +428,18 @@ export class WorkflowService {
 
     const wire = transitionToWire(transition);
 
+    // Resolved, NOT static: `roleHasPermission` reads only the built-in
+    // ROLE_PERMISSIONS defaults, so a company-defined role (empty default,
+    // grants entirely from `role_permissions`) failed EVERY edge here while
+    // sailing through the endpoint's PermissionsGuard, which resolves the
+    // effective matrix. Both gates must ask the same question.
     if (
       transition.requiredPermission &&
-      !roleHasPermission(user.role, transition.requiredPermission as Permission)
+      !(await this.permissions.has(
+        companyId,
+        user.role,
+        transition.requiredPermission as Permission,
+      ))
     ) {
       return {
         allowed: false,
