@@ -201,6 +201,21 @@ function SymptomTreeEditor({
     )
   }, [form, category, nodeById, existingCodes])
 
+  // Native browser autocomplete on the Code field itself — broader than the
+  // context-filtered chips above (every known code for this category,
+  // typed-to-filter), for when the admin already knows what they want to
+  // type rather than browsing the suggestion chips.
+  const codeOptions = useMemo(() => {
+    const codes = new Set<string>(existingCodes)
+    for (const s of SYMPTOM_SUGGESTIONS[category]) codes.add(s.code)
+    return Array.from(codes).sort()
+  }, [existingCodes, category])
+
+  const labelBySuggestionCode = useMemo(
+    () => new Map(SYMPTOM_SUGGESTIONS[category].map((s) => [s.code, s.label])),
+    [category],
+  )
+
   const save = useMutation({
     mutationFn: async (f: SymptomFormState) => {
       const body = {
@@ -381,13 +396,35 @@ function SymptomTreeEditor({
               )}
               <FormField
                 label="Code"
-                hint="Uppercase letters, digits, dots, dashes or underscores."
+                hint="Uppercase letters, digits, dots, dashes or underscores. Start typing for suggestions."
               >
                 <Input
                   value={form.code}
-                  onChange={(e) => setForm({ ...form, code: e.target.value })}
+                  list="symptom-code-suggestions"
+                  onChange={(e) => {
+                    const code = e.target.value
+                    // Picking (or typing exactly) a known suggestion code
+                    // fills the label too — only when the admin hasn't
+                    // already written one, so it never clobbers real work.
+                    const knownLabel = labelBySuggestionCode.get(
+                      code.trim().toUpperCase(),
+                    )
+                    setForm({
+                      ...form,
+                      code,
+                      label:
+                        knownLabel && !form.label.trim()
+                          ? knownLabel
+                          : form.label,
+                    })
+                  }}
                   placeholder="e.g. DISPLAY.BLANK.DEAD"
                 />
+                <datalist id="symptom-code-suggestions">
+                  {codeOptions.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
               </FormField>
               <FormField label="Label">
                 <Input
