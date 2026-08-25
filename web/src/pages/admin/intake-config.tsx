@@ -720,6 +720,7 @@ function ConditionZoneEditor({
         <ZoneDialog
           category={category}
           face={face}
+          existingCodes={existingZoneCodes}
           initial={{
             code: createAt.code ?? '',
             label: createAt.label ?? '',
@@ -742,6 +743,7 @@ function ConditionZoneEditor({
           category={category}
           face={face}
           zoneId={editingZone.id}
+          existingCodes={existingZoneCodes}
           initial={{
             code: editingZone.code,
             label: editingZone.label,
@@ -767,6 +769,7 @@ function ZoneDialog({
   category,
   face,
   zoneId,
+  existingCodes,
   initial,
   onClose,
   onSaved,
@@ -774,11 +777,28 @@ function ZoneDialog({
   category: DeviceCategory
   face: string
   zoneId?: string
+  existingCodes: Set<string>
   initial: ZoneFormValues
   onClose: () => void
   onSaved: () => void | Promise<void>
 }) {
   const [values, setValues] = useState(initial)
+
+  // Native browser autocomplete on the Code field — every code already used
+  // for this device class plus the full suggestion library, for when the
+  // admin already knows what they want to type rather than clicking a
+  // suggestion chip. Picking (or typing exactly) a known code also fills the
+  // label, but only when it's still empty, so it never overwrites real work.
+  const codeOptions = useMemo(() => {
+    const codes = new Set<string>(existingCodes)
+    for (const s of ZONE_SUGGESTIONS[category]) codes.add(s.code)
+    return Array.from(codes).sort()
+  }, [existingCodes, category])
+
+  const labelBySuggestionCode = useMemo(
+    () => new Map(ZONE_SUGGESTIONS[category].map((s) => [s.code, s.label])),
+    [category],
+  )
 
   const save = useMutation({
     mutationFn: async () => {
@@ -815,13 +835,32 @@ function ZoneDialog({
         <div className="grid gap-3">
           <FormField
             label="Code"
-            hint="Uppercase letters, digits or underscores."
+            hint="Uppercase letters, digits or underscores. Start typing for suggestions."
           >
             <Input
               value={values.code}
-              onChange={(e) => setValues({ ...values, code: e.target.value })}
+              list="zone-code-suggestions"
+              onChange={(e) => {
+                const code = e.target.value
+                const knownLabel = labelBySuggestionCode.get(
+                  code.trim().toUpperCase(),
+                )
+                setValues({
+                  ...values,
+                  code,
+                  label:
+                    knownLabel && !values.label.trim()
+                      ? knownLabel
+                      : values.label,
+                })
+              }}
               placeholder="e.g. SCREEN_TOP_LEFT"
             />
+            <datalist id="zone-code-suggestions">
+              {codeOptions.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </FormField>
           <FormField label="Label">
             <Input
