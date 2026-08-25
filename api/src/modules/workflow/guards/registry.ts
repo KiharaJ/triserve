@@ -93,18 +93,21 @@ const ALLOW: GuardVerdict = { ok: true };
  * The proposal is blunt about why this gate exists: "The intake process
  * dictates system data integrity. If weak, inconsistent, or unverified
  * information is entered at the counter, downstream operations will instantly
- * fragment." So RECEIVED → DIAGNOSING requires the whole evidence pack:
+ * fragment." So RECEIVED → DIAGNOSING requires:
  *
  *   - the visual condition map was walked (§2 step 3),
- *   - at least one before-photo is on file (§2 step 3: "forces the agent to
- *     capture and upload high-resolution proof photos before proceeding"),
  *   - a symptom-tree LEAF was picked, not free text (§2 step 4),
- *   - the customer signed the terms, and the signature is on file (§2 step 5).
+ *   - the customer agreed to the terms, and something evidencing that is on
+ *     file (§2 step 5) — a real signature, or the recorded-agreement
+ *     attestation when the customer could not physically sign.
  *
- * Note what is NOT required: condition MARKS. A device can genuinely arrive
- * unmarked, and forcing a fake tick would corrupt the very evidence this
- * protects. `condition_captured_at` records that the agent LOOKED, which is
- * the checkable fact.
+ * Note what is NOT required: condition MARKS, or a before-photo. A device can
+ * genuinely arrive unmarked, and forcing a fake tick would corrupt the very
+ * evidence this protects — `condition_captured_at` records that the agent
+ * LOOKED, which is the checkable fact. A before-photo is still worth taking
+ * (see the Intake tab) but is not on the counter's critical path: plenty of
+ * real intakes happen without a camera to hand, and this guard should not be
+ * the thing that stalls them.
  */
 const intakeEvidenceComplete: WorkflowGuard = async (ctx) => {
   const { job, prisma } = ctx;
@@ -115,19 +118,11 @@ const intakeEvidenceComplete: WorkflowGuard = async (ctx) => {
   if (!job.symptomNodeId) missing.push('a symptom-tree selection');
   if (!job.termsAcceptedAt) missing.push("the customer's acceptance of terms");
 
-  // One query for both attachment facts rather than two round trips.
   const files = await prisma.attachment.findMany({
-    where: {
-      ownerType: 'JOB',
-      ownerId: job.id,
-      kind: { in: ['PHOTO_BEFORE', 'SIGNATURE'] },
-    },
+    where: { ownerType: 'JOB', ownerId: job.id, kind: 'SIGNATURE' },
     select: { kind: true },
   });
-  if (!files.some((f) => f.kind === 'PHOTO_BEFORE')) {
-    missing.push('at least one before-photo');
-  }
-  if (!files.some((f) => f.kind === 'SIGNATURE')) {
+  if (files.length === 0) {
     missing.push("the customer's signature");
   }
 

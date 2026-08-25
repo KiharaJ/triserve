@@ -600,7 +600,8 @@ export class IntakeService {
   /**
    * GET /jobs/{id}/intake-readiness — the same conditions the
    * `intake_evidence_complete` guard applies, as a checklist. Kept in step
-   * with the guard by construction: both read the same five facts, and the
+   * with the guard by construction: both read the same five facts (though
+   * before-photo is tracked but not blocking, on both sides), and the
    * guard's message is generated from the same wording.
    */
   async readiness(jobId: string, user: AuthUser): Promise<IntakeReadinessWire> {
@@ -621,10 +622,13 @@ export class IntakeService {
     const hasBeforePhoto = files.some((f) => f.kind === 'PHOTO_BEFORE');
     const hasSignature = files.some((f) => f.kind === 'SIGNATURE');
 
+    // Before-photo is tracked (has_before_photo) and shown on the checklist,
+    // but — like condition marks — is not on the counter's critical path, so
+    // it never blocks `ready` or appears in `outstanding`. See
+    // intakeEvidenceComplete's doc comment for why.
     const outstanding: string[] = [];
     if (!conditionCaptured) outstanding.push('the visual condition check');
     if (!symptomSelected) outstanding.push('a symptom-tree selection');
-    if (!hasBeforePhoto) outstanding.push('at least one before-photo');
     if (!hasSignature) outstanding.push("the customer's signature");
     if (!termsAccepted) outstanding.push("the customer's acceptance of terms");
 

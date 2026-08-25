@@ -899,15 +899,17 @@ export function JobDetailPage() {
       <Tabs defaultValue="details">
         <TabsList>
           <TabsTrigger value="details">Details</TabsTrigger>
+          {/* SCMS proposal tabs. Intake and QC are the two every job passes
+              through; core exchange and BER only apply to some, but they are
+              shown to whoever may act on them rather than hidden until a row
+              exists — an empty tab is how you learn the step is available.
+              Intake comes right after Details — it's the first thing a job
+              needs, before there's a tech report or parts to speak of. */}
+          <TabsTrigger value="intake">Intake</TabsTrigger>
           <TabsTrigger value="tech">Tech report</TabsTrigger>
           <TabsTrigger value="attachments">Attachments</TabsTrigger>
           {can('audit.read') && <TabsTrigger value="history">History</TabsTrigger>}
           <TabsTrigger value="parts">Parts</TabsTrigger>
-          {/* SCMS proposal tabs. Intake and QC are the two every job passes
-              through; core exchange and BER only apply to some, but they are
-              shown to whoever may act on them rather than hidden until a row
-              exists — an empty tab is how you learn the step is available. */}
-          <TabsTrigger value="intake">Intake</TabsTrigger>
           <TabsTrigger value="qc">QC</TabsTrigger>
           <TabsTrigger value="core">Core exchange</TabsTrigger>
           <TabsTrigger value="handover">Handover</TabsTrigger>
@@ -920,6 +922,9 @@ export function JobDetailPage() {
         </TabsList>
         <TabsContent value="details">
           <DetailsTab job={job} />
+        </TabsContent>
+        <TabsContent value="intake">
+          <IntakeTab job={job} />
         </TabsContent>
         <TabsContent value="tech">
           <TechReportTab job={job} />
@@ -934,9 +939,6 @@ export function JobDetailPage() {
         )}
         <TabsContent value="parts">
           <PartsTab job={job} />
-        </TabsContent>
-        <TabsContent value="intake">
-          <IntakeTab job={job} />
         </TabsContent>
         <TabsContent value="qc">
           <QcTab job={job} />

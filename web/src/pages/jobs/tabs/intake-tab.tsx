@@ -73,7 +73,6 @@ function ReadinessCard({ readiness }: { readiness?: IntakeReadiness }) {
 
   const items: Array<[string, boolean]> = [
     ['Visual condition check', readiness.condition_captured],
-    ['Before-photo on file', readiness.has_before_photo],
     ['Symptom recorded', readiness.symptom_selected],
     ['Customer signature', readiness.has_signature],
     ['Terms accepted', readiness.terms_accepted],
