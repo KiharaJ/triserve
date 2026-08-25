@@ -20,6 +20,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatMoney } from '@/lib/format'
+import {
+  SYMPTOM_SUGGESTIONS,
+  ZONE_SUGGESTIONS,
+} from '@/lib/intake-suggestions'
 import { cn } from '@/lib/utils'
 import type { ConditionZone, DeviceCategory, SymptomNode } from '@/lib/types'
 
@@ -158,6 +162,24 @@ function SymptomTreeEditor({
     () => new Map((nodes.data ?? []).map((n) => [n.id, n])),
     [nodes.data],
   )
+
+  const existingCodes = useMemo(
+    () => new Set((nodes.data ?? []).map((n) => n.code)),
+    [nodes.data],
+  )
+
+  // Suggestions relevant to WHERE the dialog is adding — root-level examples
+  // when adding a root, or examples filed under a matching parent code when
+  // adding a child — with anything the company already has filtered out.
+  const suggestions = useMemo(() => {
+    if (!form || form.id) return []
+    const parentCode = form.parent_id
+      ? (nodeById.get(form.parent_id)?.code ?? null)
+      : null
+    return SYMPTOM_SUGGESTIONS[category].filter(
+      (s) => s.parentCode === parentCode && !existingCodes.has(s.code),
+    )
+  }, [form, category, nodeById, existingCodes])
 
   const save = useMutation({
     mutationFn: async (f: SymptomFormState) => {
@@ -311,6 +333,30 @@ function SymptomTreeEditor({
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-3">
+              {suggestions.length > 0 && (
+                <div>
+                  <p className="mb-1.5 text-sm font-medium">
+                    Suggestions — click to fill in, then adjust as needed
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {suggestions.map((s) => (
+                      <Button
+                        key={s.code}
+                        type="button"
+                        size="xs"
+                        variant="outline"
+                        onClick={() =>
+                          setForm(
+                            form && { ...form, code: s.code, label: s.label },
+                          )
+                        }
+                      >
+                        {s.label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <FormField
                 label="Code"
                 hint="Uppercase letters, digits, dots, dashes or underscores."
@@ -410,9 +456,12 @@ function ConditionZoneEditor({
 }) {
   const queryClient = useQueryClient()
   const [face, setFace] = useState('FRONT')
-  const [createAt, setCreateAt] = useState<{ x: number; y: number } | null>(
-    null,
-  )
+  const [createAt, setCreateAt] = useState<{
+    x: number
+    y: number
+    code?: string
+    label?: string
+  } | null>(null)
   const [editingZone, setEditingZone] = useState<ConditionZone | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
 
@@ -427,6 +476,14 @@ function ConditionZoneEditor({
   })
 
   const faceZones = (zones.data ?? []).filter((z) => z.face === face)
+
+  const existingZoneCodes = useMemo(
+    () => new Set((zones.data ?? []).map((z) => z.code)),
+    [zones.data],
+  )
+  const zoneSuggestions = ZONE_SUGGESTIONS[category].filter(
+    (s) => s.face === face && !existingZoneCodes.has(s.code),
+  )
 
   const remove = useMutation({
     mutationFn: async (id: string) => api.delete(`/condition-zones/${id}`),
@@ -551,6 +608,34 @@ function ConditionZoneEditor({
               )}
             </div>
           ))}
+
+          {canManage && zoneSuggestions.length > 0 && (
+            <div className="mt-2">
+              <p className="mb-1.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                Suggested hotspots for this face
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {zoneSuggestions.map((s) => (
+                  <Button
+                    key={s.code}
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      setCreateAt({
+                        x: s.x,
+                        y: s.y,
+                        code: s.code,
+                        label: s.label,
+                      })
+                    }
+                  >
+                    + {s.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </CardContent>
 
@@ -559,8 +644,8 @@ function ConditionZoneEditor({
           category={category}
           face={face}
           initial={{
-            code: '',
-            label: '',
+            code: createAt.code ?? '',
+            label: createAt.label ?? '',
             x: createAt.x,
             y: createAt.y,
             sort_order: 0,
