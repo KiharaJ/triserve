@@ -361,6 +361,47 @@ function BeforePhotosCard({
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A system-generated attestation image, filed as the SIGNATURE attachment
+ * when the customer genuinely cannot sign in person (dropped off remotely,
+ * booked by phone, no pad on hand) — not a substitute for a real signature
+ * when one IS possible, just a different, still-on-record piece of evidence
+ * for the same "someone confirmed these terms" requirement the intake guard
+ * enforces. Records WHO recorded it and WHEN, same as a real signature would
+ * carry a name and a timestamp.
+ */
+function renderAgreementAttestation(
+  customerName: string,
+  staffName: string,
+): string {
+  const canvas = document.createElement('canvas')
+  canvas.width = 600
+  canvas.height = 220
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('Canvas is not supported in this browser')
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.strokeStyle = '#d4d4d8'
+  ctx.lineWidth = 2
+  ctx.strokeRect(1, 1, canvas.width - 2, canvas.height - 2)
+
+  ctx.fillStyle = '#111111'
+  ctx.font = 'bold 20px sans-serif'
+  ctx.fillText('No physical signature captured', 24, 44)
+
+  ctx.font = '16px sans-serif'
+  ctx.fillText(`Customer: ${customerName}`, 24, 84)
+  ctx.fillText(
+    `Terms agreed to verbally / remotely, recorded by ${staffName}`,
+    24,
+    112,
+  )
+  ctx.fillText(formatDateTime(new Date()), 24, 140)
+
+  return canvas.toDataURL('image/png')
+}
+
 function AgreementCard({
   job,
   disabled,
@@ -370,11 +411,17 @@ function AgreementCard({
   disabled: boolean
   onSaved: () => void
 }) {
+  const { user } = useAuth()
   const queryClient = useQueryClient()
   const padRef = useRef<SignaturePadHandle>(null)
   const [hasInk, setHasInk] = useState(false)
   const [symptom, setSymptom] = useState<SymptomNode | null>(null)
   const [estimate, setEstimate] = useState('')
+  // Not every customer can physically sign — dropped off remotely, booked by
+  // phone, no pad on hand. This swaps the pad for a plain confirmation that
+  // still files a timestamped, staff-attributed record as the SIGNATURE
+  // attachment, rather than blocking intake on a signature nobody can give.
+  const [noSignature, setNoSignature] = useState(false)
 
   const attachments = useQuery({
     queryKey: ['attachments', 'JOB', job.id],
@@ -392,17 +439,28 @@ function AgreementCard({
     mutationFn: async () => {
       // The signature has to EXIST before terms can reference it — the API
       // verifies the attachment belongs to this job and really is a signature,
-      // so a terms stamp can never stand on nothing.
+      // so a terms stamp can never stand on nothing. When the customer can't
+      // physically sign, the "signature" is a system-generated attestation
+      // instead of a pen stroke — still a real, timestamped, staff-attributed
+      // file on record, just not a hand signature.
       let signatureId = existingSignature?.id
       if (!signatureId) {
-        if (!padRef.current || padRef.current.isEmpty()) {
+        const dataUri = noSignature
+          ? renderAgreementAttestation(
+              job.customer.name,
+              user?.full_name ?? 'staff',
+            )
+          : padRef.current && !padRef.current.isEmpty()
+            ? padRef.current.toDataUrl()
+            : null
+        if (!dataUri) {
           throw new Error('Capture the customer’s signature first')
         }
         const uploaded = await api.post<AttachmentWire>(
           '/attachments/signature',
           {
             owner_id: job.id,
-            data_uri: padRef.current.toDataUrl(),
+            data_uri: dataUri,
           },
         )
         signatureId = uploaded.data.id
@@ -498,6 +556,12 @@ function AgreementCard({
             <p className="text-sm text-muted-foreground">
               A signature is already on file for this job.
             </p>
+          ) : noSignature ? (
+            <div className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+              No pad needed — clicking "Record agreement" below files a
+              timestamped note that {job.customer.name} agreed to the terms,
+              attributed to you ({user?.full_name ?? 'you'}).
+            </div>
           ) : (
             <SignaturePad ref={padRef} onChange={setHasInk} />
           )}
@@ -505,6 +569,17 @@ function AgreementCard({
             By signing, the customer accepts the service terms, the data-loss
             disclaimer and the disposal policy.
           </p>
+          {!existingSignature && !disabled && (
+            <label className="mt-2 flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={noSignature}
+                onChange={(e) => setNoSignature(e.target.checked)}
+              />
+              Customer isn't available to sign (phone booking, remote
+              drop-off) — record their agreement instead
+            </label>
+          )}
         </div>
 
         {!disabled && !job.terms_accepted_at && (
@@ -512,7 +587,8 @@ function AgreementCard({
             type="button"
             className="self-start"
             disabled={
-              accept.isPending || (!existingSignature && !hasInk)
+              accept.isPending ||
+              (!existingSignature && !hasInk && !noSignature)
             }
             onClick={() => accept.mutate()}
           >
