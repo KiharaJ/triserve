@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth'
 import { BranchesPage } from '@/pages/admin/branches'
 import { CompanyPage } from '@/pages/admin/company'
 import { ConfigPage } from '@/pages/admin/config'
+import { IntakeConfigPage } from '@/pages/admin/intake-config'
 import { RolesPage } from '@/pages/admin/roles'
 import { SkillsPage } from '@/pages/admin/skills'
 import { UsersPage } from '@/pages/admin/users'
@@ -122,6 +123,7 @@ function App() {
           <Route path="users" element={<UsersPage />} />
           <Route path="roles" element={<RolesPage />} />
           <Route path="config" element={<ConfigPage />} />
+          <Route path="intake-config" element={<IntakeConfigPage />} />
           <Route path="skills" element={<SkillsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
