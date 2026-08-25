@@ -25,7 +25,12 @@ import {
   ZONE_SUGGESTIONS,
 } from '@/lib/intake-suggestions'
 import { cn } from '@/lib/utils'
-import type { ConditionZone, DeviceCategory, SymptomNode } from '@/lib/types'
+import type {
+  ConditionZone,
+  DeviceCategory,
+  FaultCodeWire,
+  SymptomNode,
+} from '@/lib/types'
 
 const CATEGORIES: DeviceCategory[] = ['HHP', 'CE', 'AC', 'REF', 'OTHER']
 const FACES = ['FRONT', 'BACK', 'SIDE']
@@ -84,6 +89,7 @@ interface SymptomFormState {
   code: string
   label: string
   parent_id: string | null
+  fault_code_id: string
   estimate: string
   estimate_minutes: string
   sort_order: string
@@ -95,6 +101,7 @@ function emptySymptomForm(parentId: string | null): SymptomFormState {
     code: '',
     label: '',
     parent_id: parentId,
+    fault_code_id: '',
     estimate: '',
     estimate_minutes: '',
     sort_order: '0',
@@ -144,6 +151,19 @@ function SymptomTreeEditor({
     },
   })
 
+  // For the optional "Fault code" link on a symptom leaf — the same lookup
+  // Admin → Configuration → Fault codes manages, so a symptom can point at
+  // one that already exists rather than duplicating the concept.
+  const faultCodes = useQuery({
+    queryKey: ['fault-codes', 'admin'],
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<FaultCodeWire>>('/fault-codes', {
+          params: { page_size: 100, active: true },
+        })
+      ).data.data,
+  })
+
   const byParent = useMemo(() => {
     const map = new Map<string, SymptomNode[]>()
     for (const n of nodes.data ?? []) {
@@ -188,6 +208,7 @@ function SymptomTreeEditor({
         label: f.label.trim(),
         parent_id: f.parent_id ?? undefined,
         category,
+        fault_code_id: f.fault_code_id || null,
         ...(f.estimate.trim()
           ? {
               estimate_amount: String(Math.round(Number(f.estimate) * 100)),
@@ -227,6 +248,7 @@ function SymptomTreeEditor({
       code: n.code,
       label: n.label,
       parent_id: n.parent_id,
+      fault_code_id: n.fault_code_id ?? '',
       estimate: n.estimate_amount
         ? String(Number(n.estimate_amount) / 100)
         : '',
@@ -372,6 +394,24 @@ function SymptomTreeEditor({
                   value={form.label}
                   onChange={(e) => setForm({ ...form, label: e.target.value })}
                 />
+              </FormField>
+              <FormField
+                label="Fault code"
+                hint="Optional — links this symptom to a code from Admin → Configuration → Fault codes, for reporting."
+              >
+                <Select
+                  value={form.fault_code_id}
+                  onChange={(e) =>
+                    setForm({ ...form, fault_code_id: e.target.value })
+                  }
+                >
+                  <option value="">None</option>
+                  {(faultCodes.data ?? []).map((fc) => (
+                    <option key={fc.id} value={fc.id}>
+                      {fc.code} — {fc.label}
+                    </option>
+                  ))}
+                </Select>
               </FormField>
               <FormField
                 label="Indicative estimate (TZS)"
