@@ -8,6 +8,7 @@ import {
   type ConditionMarkDraft,
 } from '@/components/scms/condition-map'
 import { SymptomPicker } from '@/components/scms/symptom-picker'
+import { FormField } from '@/components/shared/form-field'
 import { SignaturePad, type SignaturePadHandle } from '@/components/shared/signature-pad'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -59,6 +60,7 @@ export function IntakeTab({ job }: { job: JobDetailWire }) {
     <div className="flex flex-col gap-4">
       <ReadinessCard readiness={readiness.data} />
       <ConditionCard job={job} disabled={!canCapture} onSaved={invalidate} />
+      <BeforePhotosCard job={job} onSaved={invalidate} />
       <AgreementCard job={job} disabled={!canCapture} onSaved={invalidate} />
     </div>
   )
@@ -250,6 +252,107 @@ function ConditionCard({
               unmarked.
             </p>
           </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * §2 step 3's "at least one before-photo" — its own card because it was
+ * previously capturable ONLY at booking (the intake wizard's Photos step).
+ * A job booked without one, or with one that failed to upload, had NO way
+ * to add it afterward short of an admin override or the API directly.
+ */
+function BeforePhotosCard({
+  job,
+  onSaved,
+}: {
+  job: JobDetailWire
+  onSaved: () => void
+}) {
+  const { can } = useAuth()
+  const queryClient = useQueryClient()
+
+  // Same query + cache key as AttachmentsTab's — GET /attachments has no
+  // `kind` filter (a job carries a handful at most, per its own docstring),
+  // so both tabs share one fetch and invalidate each other's cache.
+  const attachments = useQuery({
+    queryKey: ['attachments', 'JOB', job.id],
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<AttachmentWire>>('/attachments', {
+          params: { owner_type: 'JOB', owner_id: job.id },
+        })
+      ).data.data,
+    enabled: can('attachment.read'),
+  })
+
+  const upload = useMutation({
+    mutationFn: async (files: File[]) => {
+      for (const file of files) {
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('owner_type', 'JOB')
+        fd.append('owner_id', job.id)
+        fd.append('kind', 'PHOTO_BEFORE')
+        await api.post('/attachments', fd)
+      }
+    },
+    onSuccess: async () => {
+      toast.success('Before-photo uploaded')
+      await queryClient.invalidateQueries({
+        queryKey: ['attachments', 'JOB', job.id],
+      })
+      onSaved()
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
+  })
+
+  const photos = (attachments.data ?? []).filter((a) => a.kind === 'PHOTO_BEFORE')
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          Before-photos
+          {photos.length > 0 ? (
+            <Badge variant="success">{photos.length} on file</Badge>
+          ) : (
+            <Badge variant="warning">None yet</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {photos.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {photos.map((a) => (
+              <a key={a.id} href={a.url} target="_blank" rel="noreferrer">
+                <img
+                  src={a.url}
+                  alt={a.file_name}
+                  className="size-24 rounded-md border object-cover"
+                />
+              </a>
+            ))}
+          </div>
+        )}
+        {can('attachment.create') && (
+          <FormField label="Upload before-photos" htmlFor="before-photos">
+            <Input
+              id="before-photos"
+              type="file"
+              accept="image/*"
+              multiple
+              disabled={upload.isPending}
+              onChange={(e) => {
+                if (e.target.files) upload.mutate(Array.from(e.target.files))
+                e.target.value = ''
+              }}
+            />
+          </FormField>
         )}
       </CardContent>
     </Card>
