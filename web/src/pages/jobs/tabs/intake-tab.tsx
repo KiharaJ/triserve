@@ -401,9 +401,8 @@ function AgreementCard({
         const uploaded = await api.post<AttachmentWire>(
           '/attachments/signature',
           {
-            owner_type: 'JOB',
             owner_id: job.id,
-            data_url: padRef.current.toDataUrl(),
+            data_uri: padRef.current.toDataUrl(),
           },
         )
         signatureId = uploaded.data.id
