@@ -8,6 +8,11 @@ interface TransitionVars {
   jobId: string
   toStateCode: string
   note?: string
+  /** Admin overrides (§4.11): ask for one when a guard blocks the move, then
+   *  retry with the approved id once it's decided — see ConfirmTransitionDialog. */
+  requestOverride?: boolean
+  overrideReason?: string
+  overrideApprovalId?: string
 }
 
 /**
@@ -27,11 +32,23 @@ export function useJobTransition(listQueryKey?: QueryKey) {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async ({ jobId, toStateCode, note }: TransitionVars) =>
+    mutationFn: async ({
+      jobId,
+      toStateCode,
+      note,
+      requestOverride,
+      overrideReason,
+      overrideApprovalId,
+    }: TransitionVars) =>
       (
         await api.post<TransitionResult>(`/jobs/${jobId}/transition`, {
           to_state_code: toStateCode,
           ...(note ? { note } : {}),
+          ...(requestOverride ? { request_override: true } : {}),
+          ...(overrideReason ? { override_reason: overrideReason } : {}),
+          ...(overrideApprovalId
+            ? { override_approval_id: overrideApprovalId }
+            : {}),
         })
       ).data,
 

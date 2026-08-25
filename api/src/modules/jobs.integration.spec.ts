@@ -952,6 +952,75 @@ describe('TECHNICIAN visibility (§3) + scoping (§4.3)', () => {
   });
 });
 
+describe('POST /jobs/{id}/acknowledge-receipt — engineer confirms receipt', () => {
+  it('the assigned engineer can acknowledge once; a second attempt 409s', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Ack1`, phone: '0765550101' },
+      device: { category: 'HHP', imei_serial: testImei('ack1') },
+    });
+    expect((job as unknown as { engineer_received_at: string | null })
+      .engineer_received_at).toBeNull();
+
+    const res = await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(201);
+    expect(
+      (res.body as { engineer_received_at: string | null }).engineer_received_at,
+    ).not.toBeNull();
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
+      .set('Authorization', `Bearer ${tokens.tech1}`)
+      .expect(409);
+  });
+
+  it('another TECHNICIAN cannot even see the job to acknowledge it (404 — same scoping as GET)', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Ack2`, phone: '0765550102' },
+      device: { category: 'HHP', imei_serial: testImei('ack2') },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
+      .set('Authorization', `Bearer ${tokens.tech2}`)
+      .expect(404);
+  });
+
+  it('a non-technician (not scoped to "own jobs only") who is NOT the assignee is refused (403), not silently allowed', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      assigned_engineer_id: ids.tech1,
+      customer: { name: `${TEST_PREFIX} Ack3`, phone: '0765550103' },
+      device: { category: 'HHP', imei_serial: testImei('ack3') },
+    });
+
+    // advisorDar can SEE the job (unlike a technician scoped to their own),
+    // but acknowledging receipt is reserved for the assigned engineer only.
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(403);
+  });
+
+  it('a job with no assigned engineer cannot be acknowledged by anyone', async () => {
+    const job = await createJob(tokens.advisorDar, {
+      branch_id: branchDar,
+      customer: { name: `${TEST_PREFIX} Ack4`, phone: '0765550104' },
+      device: { category: 'HHP', imei_serial: testImei('ack4') },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
+      .set('Authorization', `Bearer ${tokens.advisorDar}`)
+      .expect(403);
+  });
+});
+
 describe('PATCH /jobs/{id} — mutable fields, never status', () => {
   it('updates fault/tech_report/engineer; cannot change status via PATCH', async () => {
     const job = await createJob(tokens.advisorDar, {

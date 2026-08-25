@@ -32,6 +32,7 @@ import { api, apiErrorMessage } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { formatDate, formatDateTime, formatMoney } from '@/lib/format'
 import type {
+  ApprovalEntry,
   AttachmentWire,
   AuditLogEntry,
   BranchWire,
@@ -64,6 +65,29 @@ const detailsSchema = z.object({
   notes: z.string().max(5000).optional(),
 })
 type DetailsValues = z.infer<typeof detailsSchema>
+
+/**
+ * The most recent override request (§4.11) raised for this exact guard-held
+ * edge, if any — used to offer "Apply override" (approved, unspent),
+ * "Override pending" (awaiting a decision) or "Request override" (none yet).
+ */
+function matchOverride(
+  approvals: ApprovalEntry[] | undefined,
+  jobId: string,
+  toStateCode: string,
+  blockedGuard: string,
+): ApprovalEntry | undefined {
+  return approvals
+    ?.filter(
+      (a) =>
+        a.ref_id === jobId &&
+        (a.payload_json as { to_state_code?: string; blocked_by?: string } | null)
+          ?.to_state_code === toStateCode &&
+        (a.payload_json as { to_state_code?: string; blocked_by?: string } | null)
+          ?.blocked_by === blockedGuard,
+    )
+    .sort((a, b) => b.requested_at.localeCompare(a.requested_at))[0]
+}
 
 function warrantyBadge(status: WarrantyStatus) {
   switch (status) {
@@ -659,12 +683,37 @@ function PartsTab({ job }: { job: JobDetailWire }) {
  */
 export function JobDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const { can } = useAuth()
+  const { can, user } = useAuth()
+  const queryClient = useQueryClient()
 
   const jobQuery = useQuery({
     queryKey: ['job', id],
     queryFn: async () => (await api.get<JobDetailWire>(`/jobs/${id}`)).data,
     enabled: Boolean(id),
+  })
+
+  // Admin overrides (§4.11): approvals already raised against THIS job, so a
+  // guard-blocked move can offer "Apply" once approved instead of a dead end.
+  const overrides = useQuery({
+    queryKey: ['approvals', 'job-override', id],
+    enabled: Boolean(id) && can('approval.request'),
+    queryFn: async () =>
+      (
+        await api.get<PaginatedResponse<ApprovalEntry>>('/approvals', {
+          params: { ref_type: 'Job', ref_id: id, page_size: 50 },
+        })
+      ).data.data,
+  })
+
+  const acknowledgeReceipt = useMutation({
+    mutationFn: async () =>
+      (await api.post<JobDetailWire>(`/jobs/${id}/acknowledge-receipt`, {}))
+        .data,
+    onSuccess: () => {
+      toast.success('Receipt acknowledged')
+      void queryClient.invalidateQueries({ queryKey: ['job', id] })
+    },
+    onError: (e) => toast.error(apiErrorMessage(e)),
   })
 
   const serial = jobQuery.data?.device.imei_serial ?? ''
@@ -705,6 +754,12 @@ export function JobDetailPage() {
               </Link>{' '}
               · {job.device.brand} {job.device.model ?? ''} · Received{' '}
               {formatDateTime(job.received_at)}
+              {job.assigned_engineer_id &&
+                (job.engineer_received_at ? (
+                  <> · Engineer received {formatDateTime(job.engineer_received_at)}</>
+                ) : (
+                  <> · Awaiting engineer receipt</>
+                ))}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -716,6 +771,24 @@ export function JobDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {job.assigned_engineer_id === user?.id && !job.engineer_received_at && (
+            <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+              <span>
+                This job is assigned to you. Acknowledge that you have
+                physically received the device before starting work on it.
+              </span>
+              <Button
+                size="sm"
+                className="ml-auto"
+                disabled={acknowledgeReceipt.isPending}
+                onClick={() => acknowledgeReceipt.mutate()}
+              >
+                {acknowledgeReceipt.isPending
+                  ? 'Acknowledging…'
+                  : 'Acknowledge receipt'}
+              </Button>
+            </div>
+          )}
           {coverage && (
             <div
               className={
@@ -749,39 +822,90 @@ export function JobDetailPage() {
           {job.allowed_next_transitions.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs text-muted-foreground">Next:</span>
-              {job.allowed_next_transitions.map((t) => (
-                <Button
-                  key={t.to_state_code}
-                  size="sm"
-                  variant="outline"
-                  // A guard-held move stays VISIBLE but unclickable, with the
-                  // guard's own words as the tooltip — the point of the hold is
-                  // to tell the counter what the job is still waiting for.
-                  disabled={transition.isPending || Boolean(t.blocked_reason)}
-                  title={t.blocked_reason}
-                  onClick={() =>
-                    setPendingMove({
-                      jobId: job.id,
-                      toStateCode: t.to_state_code,
-                      fromLabel: job.state_label,
-                      toLabel: t.to_label,
-                      requiresApproval: t.requires_approval,
-                    })
-                  }
-                >
-                  {t.to_label}
-                  {t.blocked_reason && (
-                    <Badge variant="secondary" className="ml-1">
-                      held
-                    </Badge>
-                  )}
-                  {t.requires_approval && !t.blocked_reason && (
-                    <Badge variant="warning" className="ml-1">
-                      needs approval
-                    </Badge>
-                  )}
-                </Button>
-              ))}
+              {job.allowed_next_transitions.map((t) => {
+                const override =
+                  t.blocked_guard && can('approval.request')
+                    ? matchOverride(overrides.data, job.id, t.to_state_code, t.blocked_guard)
+                    : undefined
+                return (
+                  <span key={t.to_state_code} className="inline-flex items-center gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      // A guard-held move stays VISIBLE but unclickable, with the
+                      // guard's own words as the tooltip — the point of the hold is
+                      // to tell the counter what the job is still waiting for.
+                      disabled={transition.isPending || Boolean(t.blocked_reason)}
+                      title={t.blocked_reason}
+                      onClick={() =>
+                        setPendingMove({
+                          jobId: job.id,
+                          toStateCode: t.to_state_code,
+                          fromLabel: job.state_label,
+                          toLabel: t.to_label,
+                          requiresApproval: t.requires_approval,
+                        })
+                      }
+                    >
+                      {t.to_label}
+                      {t.blocked_reason && (
+                        <Badge variant="secondary" className="ml-1">
+                          held
+                        </Badge>
+                      )}
+                      {t.requires_approval && !t.blocked_reason && (
+                        <Badge variant="warning" className="ml-1">
+                          needs approval
+                        </Badge>
+                      )}
+                    </Button>
+                    {/* Admin overrides (§4.11): offered only for a GUARD hold
+                        (blocked_guard) — a permission hold isn't listed at all,
+                        and isn't something an override can fix. */}
+                    {t.blocked_guard && override?.status === 'PENDING' && (
+                      <Badge variant="warning">override pending</Badge>
+                    )}
+                    {t.blocked_guard &&
+                      override?.status === 'APPROVED' &&
+                      !override.consumed_at && (
+                        <Button
+                          size="xs"
+                          variant="secondary"
+                          disabled={transition.isPending}
+                          onClick={() =>
+                            transition.mutate({
+                              jobId: job.id,
+                              toStateCode: t.to_state_code,
+                              overrideApprovalId: override.id,
+                            })
+                          }
+                        >
+                          Apply override
+                        </Button>
+                      )}
+                    {t.blocked_guard &&
+                      can('approval.request') &&
+                      override?.status !== 'PENDING' &&
+                      !(override?.status === 'APPROVED' && !override.consumed_at) && (
+                        <Button
+                          size="xs"
+                          variant="ghost"
+                          onClick={() =>
+                            setPendingMove({
+                              jobId: job.id,
+                              toStateCode: t.to_state_code,
+                              fromLabel: job.state_label,
+                              toLabel: t.to_label,
+                              overrideReason: '',
+                            })
+                          }
+                        >
+                          Request override
+                        </Button>
+                      )}
+                  </span>
+                )
+              })}
             </div>
           )}
         </CardContent>
@@ -858,15 +982,27 @@ export function JobDetailPage() {
         }}
         onConfirm={(note) => {
           if (!pendingMove) return
+          const isOverride = pendingMove.overrideReason !== undefined
           transition.mutate(
             {
               jobId: pendingMove.jobId,
               toStateCode: pendingMove.toStateCode,
-              note: note || undefined,
+              ...(isOverride
+                ? { requestOverride: true, overrideReason: note }
+                : { note: note || undefined }),
             },
-            // Keep the dialog open on error so the reason (toast) is visible
-            // and the user can retry or cancel; close only once it succeeds.
-            { onSuccess: () => setPendingMove(null) },
+            {
+              // Keep the dialog open on error so the reason (toast) is visible
+              // and the user can retry or cancel; close only once it succeeds.
+              onSuccess: () => {
+                setPendingMove(null)
+                if (isOverride) {
+                  void queryClient.invalidateQueries({
+                    queryKey: ['approvals', 'job-override', pendingMove.jobId],
+                  })
+                }
+              },
+            },
           )
         }}
       />

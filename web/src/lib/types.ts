@@ -144,6 +144,9 @@ export interface ApprovalEntry {
   reason: string
   requested_at: string
   decided_at: string | null
+  /** Set once the override has been spent — it cannot be used again. */
+  consumed_at: string | null
+  consumed_by: string | null
 }
 
 export type AuditAction =
@@ -506,6 +509,9 @@ export interface JobWire {
   state_code: string
   state_label: string
   received_at: string
+  /** When the assigned engineer acknowledged physically receiving the
+   *  device — null until they do. */
+  engineer_received_at: string | null
   ready_at: string | null
   dispatched_at: string | null
   dispatched_by: string | null

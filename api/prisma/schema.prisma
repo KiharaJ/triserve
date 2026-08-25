@@ -1437,6 +1437,12 @@ model Job {
   /// FK → workflow_states — the job's current lifecycle status (§4.10).
   stateId             String    @map("state_id") @db.Char(36)
   receivedAt          DateTime  @map("received_at") @db.DateTime(3)
+  /// Stamped when the ASSIGNED ENGINEER confirms they physically have the
+  /// device — distinct from `receivedAt`, which is the front desk logging
+  /// intake. Deliberately NOT a workflow state: `RECEIVED` already drives the
+  /// SLA intake-stage clock, and reworking that to mean "engineer has it"
+  /// would retarget every Clock-to-Diagnosis figure already computed from it.
+  engineerReceivedAt  DateTime? @map("engineer_received_at") @db.DateTime(3)
   readyAt             DateTime? @map("ready_at") @db.DateTime(3)
   dispatchedAt        DateTime? @map("dispatched_at") @db.DateTime(3)
   dispatchedById      String?   @map("dispatched_by") @db.Char(36)

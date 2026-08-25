@@ -18,7 +18,7 @@ import {
  * Snake_case per API convention.
  */
 
-/** GET /approvals?status=&type=&branch_id=&page=&page_size= */
+/** GET /approvals?status=&type=&branch_id=&ref_type=&ref_id=&page=&page_size= */
 export class ApprovalListQueryDto {
   @IsOptional()
   @IsEnum(ApprovalStatus)
@@ -32,6 +32,19 @@ export class ApprovalListQueryDto {
   @IsString()
   @Length(36, 36)
   branch_id?: string;
+
+  /** Find the approval(s) raised for one entity — e.g. a job's override
+   * requests, so its detail page can offer "apply" instead of "request"
+   * once one is decided. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  ref_type?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(36, 36)
+  ref_id?: string;
 
   @IsOptional()
   @Type(() => Number)

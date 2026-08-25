@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -123,6 +124,9 @@ export interface JobWire {
   state_code: string;
   state_label: string;
   received_at: string;
+  /** When the ASSIGNED ENGINEER acknowledged physically receiving the
+   * device — null until they do. See {@link JobsService.acknowledgeReceipt}. */
+  engineer_received_at: string | null;
   ready_at: string | null;
   dispatched_at: string | null;
   dispatched_by: string | null;
@@ -778,6 +782,31 @@ export class JobsService {
         waybillNo: dto.waybill_no ?? null,
       },
     );
+  }
+
+  /**
+   * POST /jobs/{id}/acknowledge-receipt — the ASSIGNED ENGINEER confirming
+   * they physically have the device. Deliberately NOT a workflow transition:
+   * the job's status is set at intake (front desk) and moves on its own
+   * schedule; this is an orthogonal, one-time stamp only the assignee may
+   * set, so a job can sit "assigned but not yet in the technician's hands"
+   * visibly instead of looking indistinguishable from one they already hold.
+   */
+  async acknowledgeReceipt(id: string, user: AuthUser): Promise<JobDetailWire> {
+    const job = await this.getRow(id, user);
+    if (job.assignedEngineerId !== user.userId) {
+      throw new ForbiddenException(
+        'Only the engineer this job is assigned to can acknowledge receipt',
+      );
+    }
+    if (job.engineerReceivedAt) {
+      throw new ConflictException('Receipt has already been acknowledged');
+    }
+    await this.prisma.job.update({
+      where: { id: job.id },
+      data: { engineerReceivedAt: new Date(), updatedById: user.userId },
+    });
+    return this.get(job.id, user);
   }
 
   // ---------------------------------------------------------------- helpers
@@ -1647,6 +1676,7 @@ function toWire(j: JobWithState): JobWire {
     state_code: j.state.code,
     state_label: j.state.label,
     received_at: j.receivedAt.toISOString(),
+    engineer_received_at: j.engineerReceivedAt?.toISOString() ?? null,
     ready_at: j.readyAt?.toISOString() ?? null,
     dispatched_at: j.dispatchedAt?.toISOString() ?? null,
     dispatched_by: j.dispatchedById,

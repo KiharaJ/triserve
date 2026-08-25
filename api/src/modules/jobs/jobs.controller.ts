@@ -47,6 +47,7 @@ import {
  *   PATCH /jobs/{id}                                    'job.update'
  *   POST  /jobs/{id}/transition {to_state_code, note}   'job.transition' (+ edge perm)
  *   POST  /jobs/{id}/dispatch   {received_by, waybill_no} 'job.transition.dispatch'
+ *   POST  /jobs/{id}/acknowledge-receipt                'job.update' (assignee only)
  *
  * Company + branch scoped; TECHNICIANs see only jobs assigned to them.
  * Status changes ONLY via /transition (and its /dispatch wrapper): the
@@ -141,5 +142,18 @@ export class JobsController {
     @CurrentUser() user: AuthUser,
   ): Promise<TransitionResult> {
     return this.jobs.dispatch(id, dto, user);
+  }
+
+  /**
+   * The assigned engineer confirming they physically have the device — not a
+   * status change (see JobsService.acknowledgeReceipt for why).
+   */
+  @Post(':id/acknowledge-receipt')
+  @RequirePermissions('job.update')
+  acknowledgeReceipt(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: AuthUser,
+  ): Promise<JobDetailWire> {
+    return this.jobs.acknowledgeReceipt(id, user);
   }
 }

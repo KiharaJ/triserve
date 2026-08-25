@@ -436,6 +436,8 @@ export class ApprovalsService {
       ...(query.status ? { status: query.status } : {}),
       ...(query.type ? { type: query.type } : {}),
       ...(query.branch_id ? { branchId: query.branch_id } : {}),
+      ...(query.ref_type ? { refType: query.ref_type } : {}),
+      ...(query.ref_id ? { refId: query.ref_id } : {}),
     };
 
     const [total, rows] = await Promise.all([
