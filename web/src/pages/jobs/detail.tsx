@@ -802,21 +802,24 @@ export function JobDetailPage() {
             </div>
           )}
           {job.allowed_next_transitions.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted-foreground">Next:</span>
+            <div className="flex flex-wrap items-center gap-2.5 rounded-lg border bg-muted/40 p-3">
+              <span className="text-sm font-semibold text-foreground">Next step:</span>
               {job.allowed_next_transitions.map((t) => {
                 const override =
                   t.blocked_guard && can('approval.request')
                     ? matchOverride(overrides.data, job.id, t.to_state_code, t.blocked_guard)
                     : undefined
                 return (
-                  <span key={t.to_state_code} className="inline-flex items-center gap-1">
+                  <span key={t.to_state_code} className="inline-flex items-center gap-1.5">
                     <Button
-                      size="sm"
-                      variant="outline"
-                      // A guard-held move stays VISIBLE but unclickable, with the
-                      // guard's own words as the tooltip — the point of the hold is
-                      // to tell the counter what the job is still waiting for.
+                      size="lg"
+                      // A legal, unblocked move is the PRIMARY action on this
+                      // page — it gets the filled button. A guard-held move
+                      // stays VISIBLE but unclickable, with the guard's own
+                      // words as the tooltip, so it doesn't compete for
+                      // attention with the move that's actually ready.
+                      variant={t.blocked_reason ? 'outline' : 'default'}
+                      className={t.blocked_reason ? 'border-dashed' : 'shadow-sm'}
                       disabled={transition.isPending || Boolean(t.blocked_reason)}
                       title={t.blocked_reason}
                       onClick={() =>
@@ -851,7 +854,7 @@ export function JobDetailPage() {
                       override?.status === 'APPROVED' &&
                       !override.consumed_at && (
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="secondary"
                           disabled={transition.isPending}
                           onClick={() =>
@@ -870,7 +873,7 @@ export function JobDetailPage() {
                       override?.status !== 'PENDING' &&
                       !(override?.status === 'APPROVED' && !override.consumed_at) && (
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="ghost"
                           onClick={() =>
                             setPendingMove({
