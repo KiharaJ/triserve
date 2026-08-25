@@ -385,11 +385,16 @@ export function JobIntakePage() {
       if (selectedCustomer) {
         customerPayload = { customer_id: selectedCustomer.id }
       } else if (newCustomerName.trim()) {
+        if (!customerQuery.trim()) {
+          setStep(0)
+          toast.error('A phone number is required to create a new customer')
+          return
+        }
         isNewCustomer = true
         customerPayload = {
           customer: {
             name: newCustomerName.trim(),
-            phone: customerQuery.trim() || undefined,
+            phone: customerQuery.trim(),
             alt_phone: newCustomerAltPhone.trim() || undefined,
             email: newCustomerEmail.trim() || undefined,
             location: newCustomerLocation.trim() || undefined,
@@ -504,6 +509,10 @@ export function JobIntakePage() {
       }
       if (!selectedCustomer && !newCustomerName.trim()) {
         toast.error('Search for a customer by phone, or enter a name to create one')
+        return false
+      }
+      if (!selectedCustomer && newCustomerName.trim() && !customerQuery.trim()) {
+        toast.error('A phone number is required to create a new customer')
         return false
       }
       return true
@@ -764,7 +773,7 @@ export function JobIntakePage() {
                       </div>
                     ) : (
                       <>
-                        <FormField label="Search by phone" htmlFor="customer-search">
+                        <FormField label="Phone (required — search or enter new)" htmlFor="customer-search">
                           <Input
                             id="customer-search"
                             placeholder="0765 111 222"

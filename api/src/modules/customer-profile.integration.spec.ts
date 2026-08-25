@@ -171,7 +171,7 @@ describe('Customer 360 profile', () => {
 
     expect(body.customer.id).toBe(customerId);
     expect(body.stats.total_jobs).toBe(1);
-    expect(body.stats.active_jobs).toBe(1); // RECEIVED is non-terminal
+    expect(body.stats.active_jobs).toBe(1); // BOOKED is non-terminal
     expect(body.stats.total_devices).toBe(1);
     expect(body.stats.total_invoices).toBe(1);
     expect(body.stats.lifetime_spend).toEqual([

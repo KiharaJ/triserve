@@ -705,17 +705,6 @@ export function JobDetailPage() {
       ).data.data,
   })
 
-  const acknowledgeReceipt = useMutation({
-    mutationFn: async () =>
-      (await api.post<JobDetailWire>(`/jobs/${id}/acknowledge-receipt`, {}))
-        .data,
-    onSuccess: () => {
-      toast.success('Receipt acknowledged')
-      void queryClient.invalidateQueries({ queryKey: ['job', id] })
-    },
-    onError: (e) => toast.error(apiErrorMessage(e)),
-  })
-
   const serial = jobQuery.data?.device.imei_serial ?? ''
   const warranty = useQuery({
     queryKey: ['warranty-lookup', serial],
@@ -752,14 +741,11 @@ export function JobDetailPage() {
               <Link to={`/customers/${job.customer.id}`} className="hover:underline">
                 {job.customer.name}
               </Link>{' '}
-              · {job.device.brand} {job.device.model ?? ''} · Received{' '}
+              · {job.device.brand} {job.device.model ?? ''} · Booked{' '}
               {formatDateTime(job.received_at)}
-              {job.assigned_engineer_id &&
-                (job.engineer_received_at ? (
-                  <> · Engineer received {formatDateTime(job.engineer_received_at)}</>
-                ) : (
-                  <> · Awaiting engineer receipt</>
-                ))}
+              {job.engineer_received_at && (
+                <> · Received {formatDateTime(job.engineer_received_at)}</>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -771,24 +757,20 @@ export function JobDetailPage() {
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
-          {job.assigned_engineer_id === user?.id && !job.engineer_received_at && (
+          {job.state_code === 'BOOKED' && !job.assigned_engineer_id && (
             <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
-              <span>
-                This job is assigned to you. Acknowledge that you have
-                physically received the device before starting work on it.
-              </span>
-              <Button
-                size="sm"
-                className="ml-auto"
-                disabled={acknowledgeReceipt.isPending}
-                onClick={() => acknowledgeReceipt.mutate()}
-              >
-                {acknowledgeReceipt.isPending
-                  ? 'Acknowledging…'
-                  : 'Acknowledge receipt'}
-              </Button>
+              <span>Awaiting engineer assignment — assign one on the Details tab.</span>
             </div>
           )}
+          {job.assigned_engineer_id === user?.id &&
+            !job.engineer_received_at && (
+              <div className="flex items-center gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                <span>
+                  This job is assigned to you. Use the "Received" button below
+                  once you physically have the device, before starting work on it.
+                </span>
+              </div>
+            )}
           {coverage && (
             <div
               className={

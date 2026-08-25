@@ -119,7 +119,7 @@ describe('Operations report', () => {
     expect(body.totals.total_jobs).toBe(1);
     expect(body.totals.active_jobs).toBe(1);
     expect(body.top_models).toEqual([{ model: 'ZZTESTMODEL', count: 1 }]);
-    expect(body.by_state.find((s) => s.code === 'RECEIVED')!.count).toBe(1);
+    expect(body.by_state.find((s) => s.code === 'BOOKED')!.count).toBe(1);
     expect(body.technicians).toHaveLength(0); // no engineer assigned
   });
 });

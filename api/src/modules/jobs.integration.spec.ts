@@ -2,13 +2,13 @@
  * Integration tests (Task 1.3, DESIGN.md §4.3/§5) for the job lifecycle API
  * against the REAL MySQL database over HTTP:
  *   - POST /jobs with a nested new customer+device → job_no matches
- *     /^DAR-2026-\d{6}$/, state=RECEIVED, received_at set, so_number
+ *     /^DAR-2026-\d{6}$/, state=BOOKED, received_at set, so_number
  *     scientific-notation input normalized;
  *   - a 2nd job same branch/year increments the sequence;
  *   - CONCURRENCY: 10 parallel creates → 10 unique sequential job_nos, the
  *     jobs.job_no unique constraint never violated;
- *   - POST /jobs/{id}/transition RECEIVED→DIAGNOSING works + writes a
- *     TRANSITION audit row; illegal RECEIVED→CLOSED → 422;
+ *   - POST /jobs/{id}/transition BOOKED→RECEIVED→DIAGNOSING works + writes a
+ *     TRANSITION audit row per hop; illegal BOOKED→CLOSED → 422;
  *   - walking a job to READY stamps ready_at; /dispatch stamps
  *     dispatched_at / dispatched_by / waybill_no / received_by_customer;
  *   - a TECHNICIAN sees ONLY jobs assigned to them (list + detail);
@@ -78,6 +78,7 @@ interface JobBody {
   branch_name: string;
   state_code: string;
   received_at: string;
+  engineer_received_at: string | null;
   ready_at: string | null;
   dispatched_at: string | null;
   dispatched_by: string | null;
@@ -482,7 +483,7 @@ afterAll(async () => {
 });
 
 describe('POST /jobs — intake + job_no generation (§4.3)', () => {
-  it('creates a job with nested new customer+device; job_no format, RECEIVED, received_at, so_number normalized', async () => {
+  it('creates a job with nested new customer+device; job_no format, BOOKED, received_at, so_number normalized', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       so_number: '4.29260291E9', // Excel scientific-notation artifact
@@ -501,7 +502,7 @@ describe('POST /jobs — intake + job_no generation (§4.3)', () => {
     });
 
     expect(job.job_no).toMatch(new RegExp(`^DAR-${YEAR}-\\d{6}$`));
-    expect(job.state_code).toBe('RECEIVED');
+    expect(job.state_code).toBe('BOOKED');
     expect(job.received_at).toBeTruthy();
     expect(job.so_number).toBe('4292602910'); // expanded, clean string
     expect(job.ready_at).toBeNull();
@@ -649,12 +650,15 @@ describe('GET /jobs?customer_id= (Task 1.5, CRM stub §4.2/E2)', () => {
 });
 
 describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
-  it('RECEIVED→DIAGNOSING allowed (advisor) + writes a TRANSITION audit row', async () => {
+  it('created BOOKED; BOOKED→RECEIVED→DIAGNOSING allowed (advisor) + each writes a TRANSITION audit row', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       customer: { name: `${TEST_PREFIX} Diag`, phone: '0765440001' },
       device: { category: 'HHP', imei_serial: '353000000000011' },
     });
+    expect(job.state_code).toBe('BOOKED');
+
+    await transition(tokens.advisorDar, job.id, 'RECEIVED');
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
 
@@ -668,6 +672,7 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
 
     const audit = await raw.auditLog.findFirst({
       where: { entityType: 'Job', entityId: job.id, action: 'TRANSITION' },
+      orderBy: { at: 'desc' },
     });
     expect(audit).not.toBeNull();
     expect(audit?.actorUserId).toBe(ids.advisorDar);
@@ -676,7 +681,7 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
     ).toBe('DIAGNOSING');
   });
 
-  it('illegal RECEIVED→CLOSED is rejected with 422', async () => {
+  it('illegal BOOKED→CLOSED is rejected with 422', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       customer: { name: `${TEST_PREFIX} Illegal`, phone: '0765440002' },
@@ -704,10 +709,11 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
         purchase_date: '2026-05-13',
       },
     });
+    // admin holds every job.transition.* permission → walk to READY.
+    await transition(tokens.admin, job.id, 'RECEIVED');
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
 
-    // admin holds every job.transition.* permission → walk to READY.
     await transition(tokens.admin, job.id, 'DIAGNOSING');
     // Straight to repair: this job needs no parts, and the AWAITING_PARTS hold
     // now refuses a job with nothing on order (`parts_requested`). The skip
@@ -755,8 +761,11 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
       customer: { name: `${TEST_PREFIX} Atomic`, phone: '0765440060' },
       device: { category: 'HHP', imei_serial: '353000000000060' },
     });
+    await transition(tokens.admin, job.id, 'RECEIVED');
     await completeIntake(tokens.advisorDar, job.id);
 
+    // The move under test is the SECOND hop (RECEIVED → DIAGNOSING) — the
+    // assertions below check ITS effects, not the BOOKED → RECEIVED one above.
     const moved = await transition(tokens.admin, job.id, 'DIAGNOSING');
     expect(moved.job.state_code).toBe('DIAGNOSING');
 
@@ -771,19 +780,22 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
     expect(open).toHaveLength(1);
     expect(open[0].state.code).toBe('DIAGNOSING');
 
-    // The row it replaced was closed, with a duration written.
+    // The row it replaced (RECEIVED) was closed, with a duration written.
     const closed = events.filter((e) => e.exitedAt !== null);
     expect(closed.length).toBeGreaterThanOrEqual(1);
     expect(closed[closed.length - 1].state.code).toBe('RECEIVED');
     expect(closed[closed.length - 1].durationMs).not.toBeNull();
 
-    // The semantic TRANSITION row (written after the transaction commits) —
-    // its absence is what proved the move had thrown midway.
+    // The semantic TRANSITION row for THIS move (written after the
+    // transaction commits) — its absence is what proved the move had thrown
+    // midway. There are two rows on this job by now (BOOKED→RECEIVED too);
+    // the LAST one is this move's.
     const transitions = await raw.auditLog.findMany({
       where: { entityType: 'Job', entityId: job.id, action: 'TRANSITION' },
+      orderBy: { at: 'asc' },
     });
-    expect(transitions).toHaveLength(1);
-    expect(transitions[0].afterJson).toMatchObject({
+    expect(transitions.length).toBeGreaterThanOrEqual(1);
+    expect(transitions[transitions.length - 1].afterJson).toMatchObject({
       state_code: 'DIAGNOSING',
     });
 
@@ -818,9 +830,20 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
       return (res.body as JobBody).allowed_next_transitions ?? [];
     };
 
-    // From RECEIVED an advisor (job.transition) may go to DIAGNOSING/CANCELLED.
+    // From BOOKED an advisor (job.transition) may go to RECEIVED/CANCELLED —
+    // no engineer assigned yet, so engineer_skill_match has nothing to hold.
+    const booked = await read();
+    expect(booked.map((t) => t.to_state_code).sort()).toEqual([
+      'CANCELLED',
+      'RECEIVED',
+    ]);
+    expect(booked.every((t) => !t.blocked_reason)).toBe(true);
+    await transition(tokens.advisorDar, job.id, 'RECEIVED');
+
+    // From RECEIVED an advisor may go to BOOKED/CANCELLED/DIAGNOSING.
     const before = await read();
     expect(before.map((t) => t.to_state_code).sort()).toEqual([
+      'BOOKED',
       'CANCELLED',
       'DIAGNOSING',
     ]);
@@ -837,6 +860,7 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
     await completeIntake(tokens.advisorDar, job.id);
     const after = await read();
     expect(after.map((t) => t.to_state_code).sort()).toEqual([
+      'BOOKED',
       'CANCELLED',
       'DIAGNOSING',
     ]);
@@ -851,6 +875,7 @@ describe('POST /jobs/{id}/transition — lifecycle (§5)', () => {
       customer: { name: `${TEST_PREFIX} StepBack`, phone: '0765440005' },
       device: { category: 'HHP', imei_serial: '353000000000052' },
     });
+    await transition(tokens.advisorDar, job.id, 'RECEIVED');
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
     // Forward RECEIVED → DIAGNOSING, then step back DIAGNOSING → RECEIVED.
@@ -952,72 +977,50 @@ describe('TECHNICIAN visibility (§3) + scoping (§4.3)', () => {
   });
 });
 
-describe('POST /jobs/{id}/acknowledge-receipt — engineer confirms receipt', () => {
-  it('the assigned engineer can acknowledge once; a second attempt 409s', async () => {
+describe('BOOKED → RECEIVED — the engineer receiving the device (§4.10)', () => {
+  it('a booked job stamps engineer_received_at on entering RECEIVED, not before', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       assigned_engineer_id: ids.tech1,
       customer: { name: `${TEST_PREFIX} Ack1`, phone: '0765550101' },
       device: { category: 'HHP', imei_serial: testImei('ack1') },
     });
-    expect((job as unknown as { engineer_received_at: string | null })
-      .engineer_received_at).toBeNull();
+    expect(job.state_code).toBe('BOOKED');
+    expect(job.engineer_received_at).toBeNull();
 
-    const res = await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
-      .set('Authorization', `Bearer ${tokens.tech1}`)
-      .expect(201);
-    expect(
-      (res.body as { engineer_received_at: string | null }).engineer_received_at,
-    ).not.toBeNull();
-
-    await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
-      .set('Authorization', `Bearer ${tokens.tech1}`)
-      .expect(409);
+    const res = await transition(tokens.tech1, job.id, 'RECEIVED');
+    expect(res.job.state_code).toBe('RECEIVED');
+    expect(res.job.engineer_received_at).not.toBeNull();
   });
 
-  it('another TECHNICIAN cannot even see the job to acknowledge it (404 — same scoping as GET)', async () => {
+  it('RECEIVED → DIAGNOSING is refused until intake evidence is complete, independent of receipt', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       assigned_engineer_id: ids.tech1,
       customer: { name: `${TEST_PREFIX} Ack2`, phone: '0765550102' },
       device: { category: 'HHP', imei_serial: testImei('ack2') },
     });
+    await transition(tokens.tech1, job.id, 'RECEIVED');
+    await transition(tokens.tech1, job.id, 'DIAGNOSING', 422);
 
-    await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
-      .set('Authorization', `Bearer ${tokens.tech2}`)
-      .expect(404);
+    await completeIntake(tokens.advisorDar, job.id);
+    const moved = await transition(tokens.tech1, job.id, 'DIAGNOSING');
+    expect(moved.job.state_code).toBe('DIAGNOSING');
   });
 
-  it('a non-technician (not scoped to "own jobs only") who is NOT the assignee is refused (403), not silently allowed', async () => {
+  it('stepping back from DIAGNOSING lands on RECEIVED, not BOOKED', async () => {
     const job = await createJob(tokens.advisorDar, {
       branch_id: branchDar,
       assigned_engineer_id: ids.tech1,
       customer: { name: `${TEST_PREFIX} Ack3`, phone: '0765550103' },
       device: { category: 'HHP', imei_serial: testImei('ack3') },
     });
+    await transition(tokens.tech1, job.id, 'RECEIVED');
+    await completeIntake(tokens.advisorDar, job.id);
+    await transition(tokens.tech1, job.id, 'DIAGNOSING');
 
-    // advisorDar can SEE the job (unlike a technician scoped to their own),
-    // but acknowledging receipt is reserved for the assigned engineer only.
-    await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
-      .set('Authorization', `Bearer ${tokens.advisorDar}`)
-      .expect(403);
-  });
-
-  it('a job with no assigned engineer cannot be acknowledged by anyone', async () => {
-    const job = await createJob(tokens.advisorDar, {
-      branch_id: branchDar,
-      customer: { name: `${TEST_PREFIX} Ack4`, phone: '0765550104' },
-      device: { category: 'HHP', imei_serial: testImei('ack4') },
-    });
-
-    await request(app.getHttpServer())
-      .post(`/api/v1/jobs/${job.id}/acknowledge-receipt`)
-      .set('Authorization', `Bearer ${tokens.advisorDar}`)
-      .expect(403);
+    const back = await transition(tokens.tech1, job.id, 'RECEIVED');
+    expect(back.job.state_code).toBe('RECEIVED');
   });
 });
 
@@ -1038,7 +1041,7 @@ describe('PATCH /jobs/{id} — mutable fields, never status', () => {
       })
       .expect(200);
     const body = res.body as JobBody & { state_code: string };
-    expect(body.state_code).toBe('RECEIVED'); // unchanged
+    expect(body.state_code).toBe('BOOKED'); // unchanged
     expect(body.assigned_engineer_id).toBe(ids.tech1);
     // The resolved name rides on the wire so a technician (no user.read) can
     // see WHO is assigned without a raw UUID.
@@ -1457,9 +1460,9 @@ describe('seed stays pristine', () => {
         where: { companyId, code: { in: ['DAR', 'KRK', 'ARU', 'MLM', 'DOD'] } },
       }),
     ).toBe(5);
-    expect(await raw.workflowState.count({ where: { companyId } })).toBe(11);
+    expect(await raw.workflowState.count({ where: { companyId } })).toBe(12);
     expect(await raw.workflowTransition.count({ where: { companyId } })).toBe(
-      22,
+      25,
     );
     // This suite's jobs exist exactly (scoped to fixtures so pre-existing real
     // data, e.g. imports, doesn't skew the count); cleaned in afterAll.
@@ -1495,6 +1498,7 @@ describe('Admin overrides of the job guards (§4.11)', () => {
       customer: { name: `${TEST_PREFIX} Override`, phone },
       device: { category: 'HHP', imei_serial: imei },
     });
+    await transition(tokens.advisorDar, job.id, 'RECEIVED');
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
     await transition(tokens.advisorDar, job.id, 'DIAGNOSING');
@@ -1559,6 +1563,7 @@ describe('Admin overrides of the job guards (§4.11)', () => {
       customer: { name: `${TEST_PREFIX} Covered`, phone: '0765880003' },
       device: { category: 'HHP', imei_serial: '357000000000033' },
     });
+    await transition(tokens.advisorDar, job.id, 'RECEIVED');
     // SCMS §2: the counter's evidence pack gates the move off the desk.
     await completeIntake(tokens.advisorDar, job.id);
     await transition(tokens.advisorDar, job.id, 'DIAGNOSING');

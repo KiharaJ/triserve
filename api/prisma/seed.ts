@@ -1113,10 +1113,19 @@ const WORKFLOW_STATES: Array<{
   pausesSla?: boolean;
 }> = [
   {
-    code: 'RECEIVED',
-    label: 'Received',
+    code: 'BOOKED',
+    label: 'Booked',
     isInitial: true,
     sortOrder: 10,
+    stage: 'INTAKE',
+  },
+  /// The ASSIGNED ENGINEER's own attestation that they physically have the
+  /// device — distinct from booking (the front desk logging intake). A job
+  /// sits here between being booked/assigned and diagnosis actually starting.
+  {
+    code: 'RECEIVED',
+    label: 'Received',
+    sortOrder: 15,
     stage: 'INTAKE',
   },
   {
@@ -1188,11 +1197,12 @@ const WORKFLOW_STATES: Array<{
  * may name SEVERAL guards, comma-separated — ALL must pass. The proposal's
  * enforcement table maps onto the seeded lifecycle like this:
  *
- *   RECEIVED    → DIAGNOSING  intake_evidence_complete, engineer_skill_match
- *                             (the proposal's BOOKED→ASSIGNED skill rule and
- *                             its intake-integrity rules land on the same edge
- *                             here, because TriServe assigns at intake rather
- *                             than modelling ASSIGNED as its own column)
+ *   BOOKED      → RECEIVED    engineer_skill_match (the proposal's
+ *                             BOOKED→ASSIGNED skill rule — the technician
+ *                             accepting the device must be certified for it)
+ *   RECEIVED    → DIAGNOSING  intake_evidence_complete (the counter's
+ *                             evidence pack must be complete before the
+ *                             device that's now on the bench gets diagnosed)
  *   DIAGNOSING  → IN_REPAIR   — via AWAITING_CUSTOMER_APPROVAL / AWAITING_PARTS
  *   AWAIT_CUST  → IN_REPAIR   ow_quote_approved, ber_not_blocking
  *   AWAIT_PARTS → IN_REPAIR   ber_not_blocking
@@ -1213,12 +1223,23 @@ const WORKFLOW_TRANSITIONS: Array<{
   guardCode?: string | null;
 }> = [
   {
+    from: 'BOOKED',
+    to: 'RECEIVED',
+    requiredPermission: 'job.transition',
+    // §3: the technician holding the job must be certified for the device
+    // class. Nobody-assigned-yet passes (see the guard's own doc comment) —
+    // TriServe's counter flow can hand a device to the bench before anyone
+    // has formally picked it up.
+    guardCode: 'engineer_skill_match',
+  },
+  { from: 'BOOKED', to: 'CANCELLED', requiredPermission: 'job.transition' },
+  {
     from: 'RECEIVED',
     to: 'DIAGNOSING',
     requiredPermission: 'job.transition',
-    // §2: the counter's evidence pack must be complete, and §3: the
-    // technician holding the job must be certified for the device class.
-    guardCode: 'intake_evidence_complete,engineer_skill_match',
+    // §2: the counter's evidence pack must be complete before the device
+    // that's now on the bench gets diagnosed.
+    guardCode: 'intake_evidence_complete',
   },
   { from: 'RECEIVED', to: 'CANCELLED', requiredPermission: 'job.transition' },
   {
@@ -1328,6 +1349,7 @@ const WORKFLOW_TRANSITIONS: Array<{
   // RETURNED_UNREPAIRED) or reversing a dispatch is a bigger decision left out
   // deliberately. QC→IN_REPAIR already exists above as rework.
   { from: 'DIAGNOSING', to: 'RECEIVED', requiredPermission: 'job.transition' },
+  { from: 'RECEIVED', to: 'BOOKED', requiredPermission: 'job.transition' },
   {
     from: 'AWAITING_CUSTOMER_APPROVAL',
     to: 'DIAGNOSING',

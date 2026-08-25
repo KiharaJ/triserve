@@ -1,11 +1,11 @@
 /**
  * Integration tests (Task 1.2, DESIGN.md §4.10/§5/E7) for the configurable
  * workflow engine against the REAL MySQL database over HTTP + the service:
- *   - GET /workflow/graph returns the seeded default lifecycle (11 states
- *     ordered by sort_order, 22 edges incl. step-back reverse edges and
+ *   - GET /workflow/graph returns the seeded default lifecycle (12 states
+ *     ordered by sort_order, 25 edges incl. step-back reverse edges and
  *     the DIAGNOSING→IN_REPAIR skip) to ANY
  *     authenticated user;
- *   - canTransition: legal move allowed; RECEIVED→CLOSED rejected as
+ *   - canTransition: legal move allowed; BOOKED→CLOSED rejected as
  *     illegal (no edge); a TECHNICIAN cannot take the front-desk-only
  *     READY→DISPATCHED edge while a SERVICE_ADVISOR can; an advisor cannot
  *     take the bench-only AWAITING_PARTS→IN_REPAIR edge while a tech can;
@@ -50,6 +50,7 @@ const TECH_EMAIL = 'test-1-2-tech@triserve.test';
 const ADMIN_B_EMAIL = 'test-1-2-admin-b@triserve.test';
 
 const SEEDED_STATE_CODES = [
+  'BOOKED',
   'RECEIVED',
   'DIAGNOSING',
   'AWAITING_CUSTOMER_APPROVAL',
@@ -282,10 +283,10 @@ describe('GET /workflow/graph (§4.10 — board rendering)', () => {
     const body = res.body as GraphWire;
 
     expect(body.states.map((s) => s.code)).toEqual(SEEDED_STATE_CODES); // sort_order
-    expect(body.transitions).toHaveLength(22);
+    expect(body.transitions).toHaveLength(25);
 
-    const received = body.states.find((s) => s.code === 'RECEIVED');
-    expect(received).toMatchObject({ is_initial: true, is_terminal: false });
+    const booked = body.states.find((s) => s.code === 'BOOKED');
+    expect(booked).toMatchObject({ is_initial: true, is_terminal: false });
     for (const terminal of ['CLOSED', 'CANCELLED', 'RETURNED_UNREPAIRED']) {
       expect(body.states.find((s) => s.code === terminal)).toMatchObject({
         is_terminal: true,
@@ -342,7 +343,7 @@ describe('GET /workflow/states + /workflow/transitions', () => {
       page_size: number;
       total: number;
     };
-    expect(body.total).toBe(11);
+    expect(body.total).toBe(12);
     expect(body.data.map((s) => s.code)).toEqual(SEEDED_STATE_CODES);
   });
 
@@ -795,7 +796,7 @@ describe('POST /workflow/states + /workflow/transitions (admin config)', () => {
       .send({ code: 'TEST_1_2_STATE_A', label: 'duplicate' })
       .expect(409);
 
-    // RECEIVED is already the (only) initial state.
+    // BOOKED is already the (only) initial state.
     const res = await request(app.getHttpServer())
       .post('/api/v1/workflow/states')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -807,7 +808,7 @@ describe('POST /workflow/states + /workflow/transitions (admin config)', () => {
       .expect(409);
     expect(
       (res.body as { error: { message: string } }).error.message,
-    ).toContain("'RECEIVED'");
+    ).toContain("'BOOKED'");
   });
 
   it('admin creates a transition; validates codes/permissions/guards; duplicate → 409', async () => {
@@ -891,7 +892,7 @@ describe('POST /workflow/states + /workflow/transitions (admin config)', () => {
 });
 
 describe('seed stays pristine', () => {
-  it('the seeded default workflow is intact (11 states / 22 edges) and only test fixtures were added', async () => {
+  it('the seeded default workflow is intact (12 states / 25 edges) and only test fixtures were added', async () => {
     const seededStates = await raw.workflowState.count({
       where: {
         companyId,
@@ -906,8 +907,8 @@ describe('seed stays pristine', () => {
         toState: { NOT: { code: { startsWith: 'TEST_1_2_' } } },
       },
     });
-    expect(seededStates).toBe(11);
-    expect(seededTransitions).toBe(22);
+    expect(seededStates).toBe(12);
+    expect(seededTransitions).toBe(25);
 
     // Every extra row this suite created is test-prefixed (removed in afterAll).
     const extraStates = await raw.workflowState.count({
@@ -918,6 +919,6 @@ describe('seed stays pristine', () => {
     const initialStates = await raw.workflowState.count({
       where: { companyId, isInitial: true, deletedAt: null },
     });
-    expect(initialStates).toBe(1); // RECEIVED only
+    expect(initialStates).toBe(1); // BOOKED only
   });
 });

@@ -38,6 +38,7 @@ import { useEffect, useState } from 'react'
 import type { Permission } from '@triserve/shared'
 import { Menu, Moon, Sun, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { AttentionPanel } from '@/components/layout/attention-panel'
 import { useAuth } from '@/lib/auth'
 import { useTheme } from '@/lib/theme'
 import { cn } from '@/lib/utils'
@@ -453,6 +454,7 @@ export function AppShell() {
               <span className="size-1.5 rounded-full bg-emerald-500" />
               Samsung Authorized Service Centre
             </span>
+            <AttentionPanel />
             <ThemeToggle />
           </div>
         </header>

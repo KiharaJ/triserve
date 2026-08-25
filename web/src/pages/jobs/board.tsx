@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   CircleDot,
   ClipboardCheck,
+  Hand,
   Inbox,
   PackageCheck,
   AlertTriangle,
@@ -79,7 +80,8 @@ function warrantyBadge(status: WarrantyStatus) {
  * (by column position) and a neutral dot icon, so a reconfigured workflow
  * still renders sensibly. */
 const STATE_ICON: Record<string, LucideIcon> = {
-  RECEIVED: Inbox,
+  BOOKED: Inbox,
+  RECEIVED: Hand,
   DIAGNOSING: Stethoscope,
   AWAITING_CUSTOMER_APPROVAL: UserCheck,
   AWAITING_PARTS: PackageSearch,

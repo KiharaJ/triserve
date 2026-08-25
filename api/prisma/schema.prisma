@@ -1315,7 +1315,9 @@ model TaxRate {
 // Jobs (§4.3 / §5, Task 1.3) — the heart of the system.
 //
 // A job is a device brought in for service. It is created at the workflow
-// INITIAL state (RECEIVED), carries a branch-prefixed human `job_no`
+// INITIAL state (BOOKED — front-desk intake; the ASSIGNED ENGINEER moves it
+// to RECEIVED once they physically have the device), carries a
+// branch-prefixed human `job_no`
 // (generated concurrency-safely via JobCounter), and moves through the
 // configurable workflow (Task 1.2) EXCLUSIVELY via POST /jobs/{id}/transition
 // — validated by WorkflowService. Jobs are COMPANY- AND BRANCH-scoped (a
@@ -1436,12 +1438,14 @@ model Job {
   repairWarrantyUntil DateTime? @map("repair_warranty_until") @db.Date
   /// FK → workflow_states — the job's current lifecycle status (§4.10).
   stateId             String    @map("state_id") @db.Char(36)
+  /// Despite the name, this is BOOKING time (front-desk intake, the workflow
+  /// INITIAL state) — kept as `received_at` because it already drives the
+  /// SLA intake-stage clock and reports computed from it. For when the
+  /// ENGINEER received the device, see `engineerReceivedAt` / the RECEIVED
+  /// workflow state.
   receivedAt          DateTime  @map("received_at") @db.DateTime(3)
-  /// Stamped when the ASSIGNED ENGINEER confirms they physically have the
-  /// device — distinct from `receivedAt`, which is the front desk logging
-  /// intake. Deliberately NOT a workflow state: `RECEIVED` already drives the
-  /// SLA intake-stage clock, and reworking that to mean "engineer has it"
-  /// would retarget every Clock-to-Diagnosis figure already computed from it.
+  /// Stamped on first entry to the RECEIVED workflow state — the assigned
+  /// engineer's own attestation that they physically have the device.
   engineerReceivedAt  DateTime? @map("engineer_received_at") @db.DateTime(3)
   readyAt             DateTime? @map("ready_at") @db.DateTime(3)
   dispatchedAt        DateTime? @map("dispatched_at") @db.DateTime(3)

@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -123,9 +122,12 @@ export interface JobWire {
   state_id: string;
   state_code: string;
   state_label: string;
+  /** When the job was BOOKED (front-desk intake) — despite the column name,
+   * this is NOT when the engineer received the device; see `state_code` /
+   * `engineer_received_at` for that. */
   received_at: string;
-  /** When the ASSIGNED ENGINEER acknowledged physically receiving the
-   * device — null until they do. See {@link JobsService.acknowledgeReceipt}. */
+  /** Stamped on first entry to the RECEIVED state — the assigned engineer's
+   * own attestation that they physically have the device. Null until then. */
   engineer_received_at: string | null;
   ready_at: string | null;
   dispatched_at: string | null;
@@ -784,31 +786,6 @@ export class JobsService {
     );
   }
 
-  /**
-   * POST /jobs/{id}/acknowledge-receipt — the ASSIGNED ENGINEER confirming
-   * they physically have the device. Deliberately NOT a workflow transition:
-   * the job's status is set at intake (front desk) and moves on its own
-   * schedule; this is an orthogonal, one-time stamp only the assignee may
-   * set, so a job can sit "assigned but not yet in the technician's hands"
-   * visibly instead of looking indistinguishable from one they already hold.
-   */
-  async acknowledgeReceipt(id: string, user: AuthUser): Promise<JobDetailWire> {
-    const job = await this.getRow(id, user);
-    if (job.assignedEngineerId !== user.userId) {
-      throw new ForbiddenException(
-        'Only the engineer this job is assigned to can acknowledge receipt',
-      );
-    }
-    if (job.engineerReceivedAt) {
-      throw new ConflictException('Receipt has already been acknowledged');
-    }
-    await this.prisma.job.update({
-      where: { id: job.id },
-      data: { engineerReceivedAt: new Date(), updatedById: user.userId },
-    });
-    return this.get(job.id, user);
-  }
-
   // ---------------------------------------------------------------- helpers
 
   /**
@@ -926,6 +903,13 @@ export class JobsService {
       stateId: to.id,
       updatedById: user.userId,
     };
+    // BOOKED → RECEIVED: the assigned engineer's own attestation that they
+    // physically have the device. Stamped once, on first entry — a later
+    // step-back-and-forward (RECEIVED → BOOKED → RECEIVED) must not read as
+    // a SECOND receipt.
+    if (to.code === 'RECEIVED' && !job.engineerReceivedAt) {
+      data.engineerReceivedAt = now;
+    }
     if (to.code === 'READY' && !job.readyAt) {
       data.readyAt = now;
     }

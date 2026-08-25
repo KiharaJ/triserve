@@ -95,10 +95,12 @@ export class JobCustomerInput {
   @MaxLength(255)
   name!: string;
 
-  @IsOptional()
+  /** Required at booking (§4.2/§4.10) — a job with no way to reach the
+   * customer cannot be notified of status changes or collection. */
   @IsString()
+  @MinLength(6)
   @MaxLength(50)
-  phone?: string;
+  phone!: string;
 
   @IsOptional()
   @IsString()

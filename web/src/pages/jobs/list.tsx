@@ -314,7 +314,7 @@ export function JobsListView() {
                 <TableHead>State</TableHead>
                 <TableHead>Warranty</TableHead>
                 <TableHead>Engineer</TableHead>
-                <TableHead className="text-right">Received</TableHead>
+                <TableHead className="text-right">Booked</TableHead>
                 <TableHead className="text-right">Age</TableHead>
               </TableRow>
             </TableHeader>
